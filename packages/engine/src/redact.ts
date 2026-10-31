@@ -3,8 +3,44 @@
  * Covers: secret-looking object keys, `KEY=value` lines (e.g. from .env files),
  * bearer tokens, and common token formats.
  */
-const SECRET_KEY =
-  /(pass(word)?|secret|token|api[-_]?key|auth(orization)?|credential|private[-_]?key|cookie|session)/i;
+const SECRET_WORDS = new Set([
+  "pass",
+  "password",
+  "passwd",
+  "pwd",
+  "passphrase",
+  "secret",
+  "token",
+  "auth",
+  "authorization",
+  "credential",
+  "credentials",
+  "cookie",
+  "apikey",
+  "privatekey",
+  "session",
+]);
+const SECRET_PAIRS = new Set(["api key", "private key", "access key", "client secret", "session id"]);
+
+/**
+ * Does this key or variable name hold a secret? Names are split into words (snake, kebab,
+ * camelCase), so `GITHUB_TOKEN`, `dbPassword` and `api-key` match while `passed`,
+ * `completionTokens` and `bypass` do not.
+ */
+export function isSecretName(name: string): boolean {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i] as string;
+    if (SECRET_WORDS.has(w)) return true;
+    if (i + 1 < words.length && SECRET_PAIRS.has(`${w} ${words[i + 1]}`)) return true;
+  }
+  return false;
+}
+const SECRET_KEY = { test: isSecretName };
 
 const PATTERNS: RegExp[] = [
   /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi,

@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { ChatPanel } from "@/components/panels/ChatPanel";
+import { DiffReviewPanel } from "@/components/panels/DiffReviewPanel";
+import { FilesPanel } from "@/components/panels/FilesPanel";
 import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { cn } from "@/lib/cn";
@@ -27,20 +29,8 @@ interface TabDef {
 
 export const CENTER_TABS: TabDef[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
-  {
-    id: "files",
-    label: "Files",
-    icon: FolderTree,
-    phase: "Phase 1",
-    blurb: "Browse the project and its shadow workspace, with Monaco previews.",
-  },
-  {
-    id: "diff",
-    label: "Diff Review",
-    icon: FileDiff,
-    phase: "Phase 1",
-    blurb: "Review change sets side by side. Approve all, per file or per hunk, then undo from the timeline.",
-  },
+  { id: "files", label: "Files", icon: FolderTree },
+  { id: "diff", label: "Diff Review", icon: FileDiff },
   {
     id: "diagrams",
     label: "Diagrams",
@@ -141,6 +131,10 @@ export function CenterTabs() {
         >
           {current.id === "chat" ? (
             <ChatPanel />
+          ) : current.id === "files" ? (
+            <FilesPanel />
+          ) : current.id === "diff" ? (
+            <DiffReviewPanel />
           ) : current.id === "models" ? (
             <ModelsPanel />
           ) : (

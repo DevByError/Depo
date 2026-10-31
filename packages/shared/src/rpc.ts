@@ -102,6 +102,225 @@ export const PullJobSchema = z.object({
 });
 export type PullJob = z.infer<typeof PullJobSchema>;
 
+export const ProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  rootPath: z.string(),
+  lastOpenedAt: z.string(),
+  createdAt: z.string(),
+  isGit: z.boolean(),
+  branch: z.string().nullable(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+export const HunkSchema = z.object({
+  oldStart: z.number().int(),
+  oldLines: z.number().int(),
+  newStart: z.number().int(),
+  newLines: z.number().int(),
+  /** Unified diff lines, each starting with " ", "+", "-" or "\\". */
+  lines: z.array(z.string()),
+});
+export type Hunk = z.infer<typeof HunkSchema>;
+
+export const FileChangeSchema = z.object({
+  path: z.string(),
+  kind: z.enum(["added", "modified", "deleted"]),
+  binary: z.boolean(),
+  additions: z.number().int(),
+  deletions: z.number().int(),
+  hunks: z.array(HunkSchema),
+  /** Hash of the project file when the workspace was created (null = did not exist). */
+  baseHash: z.string().nullable(),
+  /** The project file changed since the workspace was made: applying needs care. */
+  conflict: z.boolean(),
+  status: z.enum(["pending", "applied", "partially_applied", "skipped"]),
+});
+export type FileChange = z.infer<typeof FileChangeSchema>;
+
+export const ChangeSetSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  taskId: z.string().nullable(),
+  status: z.enum(["pending", "applied", "partially_applied", "discarded", "superseded", "reverted"]),
+  title: z.string(),
+  files: z.array(FileChangeSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ChangeSet = z.infer<typeof ChangeSetSchema>;
+
+export const CheckpointSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  changeSetId: z.string().nullable(),
+  label: z.string(),
+  status: z.enum(["active", "restored"]),
+  files: z.array(z.object({ path: z.string(), existed: z.boolean(), appliedHash: z.string().nullable() })),
+  createdAt: z.string(),
+});
+export type Checkpoint = z.infer<typeof CheckpointSchema>;
+
+export const TaskStatusSchema = z.enum([
+  "queued",
+  "running",
+  "waiting",
+  "review",
+  "done",
+  "failed",
+  "cancelled",
+]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+export const TaskSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  title: z.string(),
+  prompt: z.string(),
+  status: TaskStatusSchema,
+  model: z.string().nullable(),
+  summary: z.string().nullable(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Task = z.infer<typeof TaskSchema>;
+
+/** A chat transcript entry, flattened for display. */
+export const ChatItemSchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant", "tool"]),
+  text: z.string(),
+  toolName: z.string().nullable(),
+  isError: z.boolean(),
+  createdAt: z.string(),
+});
+export type ChatItem = z.infer<typeof ChatItemSchema>;
+
+const TaskMethods = {
+  "tasks.list": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({ tasks: z.array(TaskSchema) }),
+  },
+  "tasks.get": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ task: TaskSchema, messages: z.array(ChatItemSchema) }),
+  },
+  "tasks.send": {
+    params: z
+      .object({ projectId: z.string(), text: z.string().min(1).max(20_000), taskId: z.string().optional() })
+      .strict(),
+    result: TaskSchema,
+  },
+  "tasks.cancel": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ cancelled: z.boolean() }),
+  },
+} as const;
+
+const ProjectMethods = {
+  "projects.list": {
+    params: z.object({}).strict(),
+    result: z.object({ projects: z.array(ProjectSchema) }),
+  },
+  "projects.open": {
+    params: z.object({ path: z.string().min(1).max(1000) }).strict(),
+    result: ProjectSchema,
+  },
+  "projects.forget": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "files.list": {
+    params: z.object({ projectId: z.string(), path: z.string().max(1000).default(".") }).strict(),
+    result: z.object({
+      entries: z.array(
+        z.object({
+          name: z.string(),
+          path: z.string(),
+          type: z.enum(["file", "dir"]),
+          size: z.number().nullable(),
+        }),
+      ),
+    }),
+  },
+  "files.read": {
+    params: z.object({ projectId: z.string(), path: z.string().min(1).max(1000) }).strict(),
+    result: z.object({
+      path: z.string(),
+      text: z.string().nullable(),
+      binary: z.boolean(),
+      size: z.number(),
+      truncated: z.boolean(),
+    }),
+  },
+  "changes.list": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({ changeSets: z.array(ChangeSetSchema) }),
+  },
+  "changes.get": {
+    params: z.object({ id: z.string() }).strict(),
+    result: ChangeSetSchema,
+  },
+  "changes.apply": {
+    params: z
+      .object({
+        id: z.string(),
+        /** Files to apply; omitted = all pending files. `hunks` = indexes to apply (omitted = whole file). */
+        files: z
+          .array(z.object({ path: z.string(), hunks: z.array(z.number().int().min(0)).optional() }))
+          .optional(),
+      })
+      .strict(),
+    result: z.object({
+      changeSet: ChangeSetSchema,
+      checkpointId: z.string().nullable(),
+      applied: z.array(z.string()),
+      conflicts: z.array(z.string()),
+    }),
+  },
+  "changes.discard": {
+    params: z.object({ id: z.string() }).strict(),
+    result: ChangeSetSchema,
+  },
+  "checkpoints.list": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({ checkpoints: z.array(CheckpointSchema) }),
+  },
+  "checkpoints.restore": {
+    params: z.object({ id: z.string(), force: z.boolean().default(false) }).strict(),
+    result: z.object({
+      restored: z.array(z.string()),
+      conflicts: z.array(z.string()),
+      checkpoint: CheckpointSchema,
+    }),
+  },
+} as const;
+
+export const PendingApprovalSchema = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  projectId: z.string().nullable(),
+  taskId: z.string().nullable(),
+  agent: z.string(),
+  kind: z.enum(["command", "apply", "other"]),
+  title: z.string(),
+  reason: z.string(),
+  details: z.record(z.string(), JsonValueSchema).optional(),
+});
+export type PendingApprovalDto = z.infer<typeof PendingApprovalSchema>;
+
+const ApprovalMethods = {
+  "approvals.list": {
+    params: z.object({}).strict(),
+    result: z.object({ approvals: z.array(PendingApprovalSchema) }),
+  },
+  "approvals.respond": {
+    params: z.object({ id: z.string(), approve: z.boolean() }).strict(),
+    result: z.object({ ok: z.boolean() }),
+  },
+} as const;
+
 const ModelMethods = {
   "hardware.get": {
     params: z.object({}).strict(),
@@ -224,6 +443,9 @@ export const ApiSchema = {
     result: z.object({ settings: z.record(z.string(), JsonValueSchema) }),
   },
   ...ModelMethods,
+  ...ApprovalMethods,
+  ...ProjectMethods,
+  ...TaskMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

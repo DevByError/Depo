@@ -1,13 +1,16 @@
 import path from "node:path";
 import { DEPO_VERSION, type HeartbeatDetails } from "@depo/shared";
+import { TaskManager } from "./agent/tasks";
 import { handlers } from "./api/handlers";
 import { type ApiServer, startApiServer } from "./api/server";
+import { ApprovalCenter } from "./approvals";
 import { type OpenedDatabase, openDatabase } from "./db";
 import { EventBus } from "./events/bus";
 import { createLogger, type Logger, type LogLevel } from "./logger";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { SettingsRepo } from "./settings";
+import { ProjectService } from "./workspace/service";
 
 export interface EngineOptions {
   dataRoot: string;
@@ -19,6 +22,8 @@ export interface EngineOptions {
   heartbeatMs?: number;
   /** Test hooks for the model manager (fake hardware, fake providers). */
   models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
+  /** Test hooks for the agent loop. */
+  tasks?: { maxSteps?: number; retryDelayMs?: number };
 }
 
 export interface Engine {
@@ -27,6 +32,9 @@ export interface Engine {
   readonly bus: EventBus;
   readonly settings: SettingsRepo;
   readonly models: ModelManager;
+  readonly approvals: ApprovalCenter;
+  readonly projects: ProjectService;
+  readonly tasks: TaskManager;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -50,6 +58,9 @@ export function createEngine(opts: EngineOptions): Engine {
   const bus = new EventBus(database.db, logger);
   const settings = new SettingsRepo(database.db);
   const models = new ModelManager({ settings, bus, logger, ...opts.models });
+  const approvals = new ApprovalCenter(bus);
+  const projects = new ProjectService(database.db, bus, logger, dirs);
+  const tasks = new TaskManager({ db: database.db, bus, logger, models, projects, approvals, ...opts.tasks });
   const startedAt = new Date();
 
   let server: ApiServer | null = null;
@@ -80,6 +91,9 @@ export function createEngine(opts: EngineOptions): Engine {
     bus,
     settings,
     models,
+    approvals,
+    projects,
+    tasks,
     database,
     async start() {
       server = startApiServer({
@@ -92,6 +106,9 @@ export function createEngine(opts: EngineOptions): Engine {
           bus,
           settings,
           models,
+          approvals,
+          projects,
+          tasks,
           info: {
             startedAt,
             dataDir: dirs.root,
@@ -131,6 +148,7 @@ export function createEngine(opts: EngineOptions): Engine {
         text: `Engine stopping (${reason})`,
         details: { reason },
       });
+      await tasks.cancelAll();
       await server?.stop();
       database.close();
       logger.info("engine stopped", { reason });

@@ -27,6 +27,14 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
 
+      # The Phase 1 acceptance test runs the FastAPI demo's pytest suite inside the agent workspace.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test tools
+        run: python -m pip install fastapi httpx pytest
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 

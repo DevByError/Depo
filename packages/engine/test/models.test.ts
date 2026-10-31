@@ -125,6 +125,9 @@ async function call<M extends ApiMethod>(e: Engine, method: M, params: ApiParams
     bus: e.bus,
     settings: e.settings,
     models: e.models,
+    approvals: e.approvals,
+    projects: e.projects,
+    tasks: e.tasks,
     info: { startedAt: new Date(), dataDir: e.dirs.root, dbPath: e.database.path, schemaVersion: 1 },
   };
   const fn = handlers[method] as (p: unknown, c: typeof ctx) => unknown;

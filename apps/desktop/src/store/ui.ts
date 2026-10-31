@@ -31,6 +31,15 @@ interface UiState extends Layout {
   settingsOpen: boolean;
   feedQuery: string;
   showHeartbeats: boolean;
+  /** The open project (one at a time in Phase 1). */
+  projectId: string | null;
+  /** Change set shown in Diff Review. */
+  changeSetId: string | null;
+  /** Task shown in Chat; null starts a new task. */
+  taskId: string | null;
+  setProjectId(id: string | null): void;
+  setTaskId(id: string | null): void;
+  setChangeSetId(id: string | null): void;
   setTheme(t: Theme): void;
   setCenterTab(t: CenterTab): void;
   setBottomTab(t: BottomTab): void;
@@ -98,6 +107,12 @@ export const useUi = create<UiState>((set, get) => ({
   settingsOpen: false,
   feedQuery: "",
   showHeartbeats: false,
+  projectId: null,
+  changeSetId: null,
+  taskId: null,
+  setProjectId: (projectId) => set({ projectId, changeSetId: null, taskId: null }),
+  setTaskId: (taskId) => set({ taskId }),
+  setChangeSetId: (changeSetId) => set({ changeSetId }),
   setTheme: (theme) => {
     document.documentElement.dataset.theme = theme;
     save(THEME_KEY, theme);

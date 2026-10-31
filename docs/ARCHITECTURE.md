@@ -1,6 +1,6 @@
 # Depo architecture
 
-Status: Phase 0 (foundations). This document describes what exists now and the boundaries later phases build on. Planned parts are marked *(Phase N)*.
+Status: Phase 1 (single agent core). This document describes what exists now and the boundaries later phases build on. Planned parts are marked *(Phase N)*.
 
 ## Processes
 
@@ -52,6 +52,15 @@ All methods have Zod schemas for params (validated by the engine) and results (v
 | `events.emit` | UI records an `info` or `warning` in the audit log |
 | `settings.get` / `settings.set` / `settings.all` | Key/value settings (JSON values, dotted lowercase keys), with defaults |
 
+| `hardware.get` / `hardware.profile` | Saved hardware profile; profile this PC again |
+| `models.*` | Runtimes (`providers`, `providers.set`), `installed`, `catalog` and `catalog.import`, Auto-Fit `plan`, role `assignments` and `assign`, downloads (`pull`, `pull.cancel`, `pulls`), `delete`, `benchmark` |
+| `projects.list` / `projects.open` / `projects.forget` | Projects (one open at a time in the UI) |
+| `files.list` / `files.read` | Read-only project browsing |
+| `tasks.list` / `tasks.get` / `tasks.send` / `tasks.cancel` | Coding tasks and their transcripts |
+| `approvals.list` / `approvals.respond` | Commands waiting for the user |
+| `changes.list` / `changes.get` / `changes.apply` / `changes.discard` | Change sets from the shadow workspace; apply whole files or chosen hunks |
+| `checkpoints.list` / `checkpoints.restore` | Undo an apply |
+
 Server push: `{"jsonrpc":"2.0","method":"event","params": DepoEvent}` for every event.
 
 ## Events (packages/shared/src/events.ts)
@@ -95,7 +104,29 @@ Paths longer than 248 characters are prefixed with `\\?\` (or `\\?\UNC\`) before
 - CSP restricts the WebView to its own assets, IPC and `ws://127.0.0.1:*`.
 - JSON payloads are capped at 1 MB; every request is schema-validated; method lookup ignores prototype keys.
 
+## Phase 1: the single agent core
+
+```
+Chat (tasks.send) ─► TaskManager ─► ModelManager.resolve("coder") ─► model-gateway ─► Ollama / llama.cpp / LM Studio
+                         │  tool loop (≤ 40 steps)
+                         ▼
+                    tools (read · list · find · search · write · edit · delete · run_command · git)
+                         │  all paths resolved inside ──►  workspaces/<task>/   (shadow copy)
+                         │  run_command ─► policy ─► ask? ─► ApprovalCenter ─► approval card in Chat
+                         │                └► cmd.exe in a Job Object (Windows) / process group
+                         ▼
+                    ProjectService.collectChanges ─► change set ─► Diff Review ─► apply (checkpoint first) ─► undo
+```
+
+- **Model gateway** (`packages/model-gateway`): `ModelProvider` interface, Ollama and OpenAI-compatible adapters, catalog, hardware schema, Auto-Fit planner. No cloud adapters exist.
+- **ModelManager** (`engine/src/models`): runtimes, installed models, downloads with progress events, benchmark, role assignments; `resolve(role)` returns the provider and model for a role (manual choice, else the Auto-Fit pick if it is installed).
+- **Tools** (`engine/src/tools`): each tool has a JSON schema for the model and returns text; `executeTool` never throws. Every tool emits activity events (`reading_file`, `editing_file`, `running_command`, `testing`, `test_result`, …).
+- **Workspace** (`engine/src/workspace`): projects, shadow copies with a hash manifest, change sets (`change_sets` table, jsdiff hunks), checkpoints (`checkpoints` table + copied files under `checkpoints/<id>/`).
+- **Agent** (`engine/src/agent`): project detection and system prompt, text tool-call parser, `TaskManager` (tasks and messages tables). Streaming text goes out as ephemeral `thinking` events with a `jobId`, which the UI merges into one live line.
+- **UI**: Chat (task list, transcript, live row, approvals, stop), Files, Diff Review (selection per file and hunk, History with Undo), Models. Engine events with a `taskId` refresh task and approval queries.
+
+Tables added in migration 2: `projects`, `tasks`, `messages`, `change_sets`, `checkpoints`.
+
 ## Coming next
 
-- *(Phase 1)* model gateway, hardware profiler and Auto-Fit, tool layer with Job Objects and command policy, shadow workspace, diff review/apply/checkpoints/undo, one project, chat.
 - *(Phase 2)* projects, import, code index, project memory, multi-project scheduler.

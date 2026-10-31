@@ -37,6 +37,11 @@ export function startEngineConnection(): void {
   engine.onEvent((e) => {
     store.receive(e);
     invalidateFor(e.type, e.status);
+    // Task transcripts and approvals change with every finished agent step.
+    if (e.taskId && !e.ephemeral) {
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["approvals"] });
+    }
   });
   engine.onStatus((status, error) => {
     useEngine.getState().setStatus(status, error);
@@ -60,6 +65,14 @@ function invalidateFor(type: string, status: string): void {
   } else if (type === "hardware_profiled" || type === "model_benchmark") {
     void queryClient.invalidateQueries({ queryKey: ["hardware"] });
     void queryClient.invalidateQueries({ queryKey: ["models", "plan"] });
+  } else if (
+    type === "applied_changes" ||
+    type === "checkpoint_created" ||
+    type === "info" ||
+    type === "handoff"
+  ) {
+    void queryClient.invalidateQueries({ queryKey: ["changes"] });
+    void queryClient.invalidateQueries({ queryKey: ["checkpoints"] });
   } else if (type === "settings_changed") {
     void queryClient.invalidateQueries({ queryKey: ["models"] });
   }
@@ -80,6 +93,8 @@ async function onConnected() {
     void call("events.emit", { type: "warning", text });
   }
   s.loadBacklog(recent.events);
+  const projectId = settings.settings["ui.project_id"];
+  if (typeof projectId === "string" && !useUi.getState().projectId) useUi.getState().setProjectId(projectId);
   const theme = settings.settings["ui.theme"];
   if (theme === "light" || theme === "dark") useUi.getState().setTheme(theme);
   if (info.engineVersion !== DEPO_VERSION) {

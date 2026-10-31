@@ -1,12 +1,18 @@
 import { type ApiMethod, type ApiParsedParams, type ApiResult, DEPO_VERSION } from "@depo/shared";
+import type { TaskManager } from "../agent/tasks";
+import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
 import type { ModelManager } from "../models/manager";
 import type { SettingsRepo } from "../settings";
+import type { ProjectService } from "../workspace/service";
 
 export interface HandlerContext {
   bus: EventBus;
   settings: SettingsRepo;
   models: ModelManager;
+  approvals: ApprovalCenter;
+  projects: ProjectService;
+  tasks: TaskManager;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -80,4 +86,26 @@ export const handlers: Handlers = {
     return { deleted: true as const };
   },
   "models.benchmark": async (p, ctx) => ({ benchmark: await ctx.models.benchmark(p) }),
+
+  "approvals.list": (_p, ctx) => ({ approvals: ctx.approvals.list() }),
+  "approvals.respond": (p, ctx) => ({ ok: ctx.approvals.respond(p.id, p.approve) }),
+
+  "projects.list": async (_p, ctx) => ({ projects: await ctx.projects.list() }),
+  "projects.open": (p, ctx) => ctx.projects.open(p.path),
+  "projects.forget": (p, ctx) => {
+    ctx.projects.forget(p.id);
+    return { ok: true as const };
+  },
+  "files.list": (p, ctx) => ({ entries: ctx.projects.listFiles(p.projectId, p.path) }),
+  "files.read": (p, ctx) => ctx.projects.readFile(p.projectId, p.path),
+  "changes.list": (p, ctx) => ({ changeSets: ctx.projects.listChangeSets(p.projectId) }),
+  "changes.get": (p, ctx) => ctx.projects.getChangeSet(p.id),
+  "changes.apply": (p, ctx) => ctx.projects.applyChangeSet(p.id, ctx.projects.workspaceFor(p.id), p.files),
+  "changes.discard": (p, ctx) => ctx.projects.discardChangeSet(p.id),
+  "tasks.list": (p, ctx) => ({ tasks: ctx.tasks.list(p.projectId) }),
+  "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
+  "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId),
+  "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),
+  "checkpoints.list": (p, ctx) => ({ checkpoints: ctx.projects.listCheckpoints(p.projectId) }),
+  "checkpoints.restore": (p, ctx) => ctx.projects.restoreCheckpoint(p.id, p.force),
 };

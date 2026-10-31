@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { DepoEventSchema, type RpcResponse } from "@depo/shared";
 import { isAllowedOrigin } from "../src/api/server";
+import { LATEST_SCHEMA_VERSION } from "../src/db/migrations";
 import { createEngine, type Engine } from "../src/engine";
 import { TEST_TOKEN, tempDir, waitFor } from "./helpers";
 
@@ -87,7 +88,10 @@ describe("json-rpc", () => {
     expect("result" in ping && ping.result).toMatchObject({ pong: true });
 
     const info = await c.call("system.info");
-    expect("result" in info && info.result).toMatchObject({ schemaVersion: 1, engineVersion: "0.1.0" });
+    expect("result" in info && info.result).toMatchObject({
+      schemaVersion: LATEST_SCHEMA_VERSION,
+      engineVersion: "0.1.0",
+    });
 
     const def = await c.call("settings.get", { key: "ui.theme" });
     expect("result" in def && def.result).toEqual({ key: "ui.theme", value: "dark" });

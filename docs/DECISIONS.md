@@ -78,3 +78,22 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Choice rule:** strongest model first; full GPU at the best precision, else GPU + RAM split or CPU at the best precision that is comfortably fast (else the fastest usable one); a minimum speed per role and mode rejects unusable plans. A model within 2 score points that is 3× faster wins the tie.
 - **Reason:** Simple, explainable, and testable against the spec's reference profiles (tests in `model-gateway/test/autofit.test.ts`).
 - **Catalog caveat:** the build container cannot reach ollama.com, so the shipped catalog (`packages/model-gateway/catalog/models-catalog.json`) was written from knowledge of the Ollama library. `bun scripts/verify-catalog.ts` checks every tag against the Ollama registry and must be run on a machine with internet before a release.
+
+## ADR-0017: Shadow workspace is a filtered copy with linked dependency folders
+- **Decision:** Each task gets a copy of the project in `workspaces/<task>/` that leaves out `.git`, build output and caches. `node_modules`, `.venv`, `venv` and `env` are linked (junctions on Windows, symlinks elsewhere) instead of copied, so tests run without reinstalling. A `manifest.json` records the sha1 of every copied file; the diff is the shadow compared with that baseline, and a project file whose hash moved since the baseline is a conflict that blocks apply for that file.
+- **Reason:** A git worktree needs a clean git repo and misses untracked files; a filtered copy works for any folder. Linking dependencies keeps a copy fast on large projects. Agents can still change dependency folders through the link, so installs are gated by the command policy (ADR-0018).
+- **Apply and undo:** applying saves a checkpoint (copies of the files about to change) first, then applies the selected files or hunks (jsdiff). Undo restores the checkpoint and refuses, unless forced, if the user edited those files since.
+
+## ADR-0018: Command policy with deny, ask and allow, and approvals in the chat
+- **Decision:** Every `run_command` is split into its parts (`&&`, `||`, `;`, `|`, `&`, with `2>&1` kept as a redirect) and each part is classified. Deny: destructive or system-wide commands (format, disk tools, registry edits, `rm -rf /`, encoded PowerShell, shutdown, credential tools). Ask: installs, network fetches, git push/reset, deletes outside the workspace. Allow: tests, builds, linters and read-only commands. The strictest part wins. "Ask" pauses the agent and shows an approval card in Chat; a declined command returns an error the model can react to.
+- **Reason:** The spec requires a command policy and Job Objects; asking per command keeps the user in control without stopping on every test run.
+- **Containment:** on Windows each command runs in a Job Object (kill on close, memory limit), so stopping a task kills the whole process tree. Elsewhere a process group is used.
+
+## ADR-0019: Files viewer and Diff Review without Monaco for now
+- **Decision:** Phase 1 ships a read-only file viewer with line numbers and a hand-built unified diff view with per-file and per-hunk checkboxes. Monaco arrives when in-app editing does.
+- **Reason:** Monaco adds about 3 MB and a worker setup, while review only needs a readable diff and selection. Keeping it out keeps the UI bundle and startup small (ADR-0009).
+
+## ADR-0020: Phase 1 coding agent runs a plain tool loop, with text tool-call fallback
+- **Decision:** One agent (`coder@1.0.0`) loops: model call with tool definitions → run the tool calls → repeat, up to 40 steps, until the model answers without tools. Models that print tool calls as text (`<tool_call>` tags, JSON fences, bare JSON) are parsed too. Transient model errors are retried twice. Old tool outputs are shortened when the history approaches the context window. Follow-up messages continue the same task and the same shadow copy.
+- **Reason:** Small local models vary a lot in how well they follow native tool calling; the text fallback makes 7B-class models usable. The multi-agent Manager arrives in Phase 3 on top of this loop.
+- **Testing:** `scripts/fake-ollama-lib.ts` is a scripted Ollama that performs the acceptance task through real tool calls, so the whole flow (agent, real pytest, diff, apply, undo) is tested without a GPU.

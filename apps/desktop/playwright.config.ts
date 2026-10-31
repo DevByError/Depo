@@ -13,6 +13,8 @@ const dataDir = mkdtempSync(path.join(tmpdir(), "depo e2e "));
 export default defineConfig({
   testDir: "e2e",
   timeout: 30_000,
+  // One engine is shared by every spec, and specs change its settings, so they run one at a time.
+  workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {

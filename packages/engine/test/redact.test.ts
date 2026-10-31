@@ -33,3 +33,30 @@ test("redacts cmd, PowerShell and inline assignments", () => {
   );
   expect(redactString("PORT=3000 node server.js")).toBe("PORT=3000 node server.js");
 });
+
+test("secret names are matched by word, not substring", async () => {
+  const { isSecretName } = await import("../src/redact");
+  for (const yes of [
+    "GITHUB_TOKEN",
+    "dbPassword",
+    "api-key",
+    "API_KEY",
+    "x-auth",
+    "sessionId",
+    "PASS",
+    "clientSecret",
+  ]) {
+    expect(isSecretName(yes)).toBe(true);
+  }
+  for (const no of [
+    "passed",
+    "completionTokens",
+    "bypass",
+    "tokensPerSec",
+    "author",
+    "keyboard",
+    "passing",
+  ]) {
+    expect(isSecretName(no)).toBe(false);
+  }
+});

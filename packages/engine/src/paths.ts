@@ -8,6 +8,7 @@ export interface DataDirs {
   backups: string;
   logs: string;
   workspaces: string;
+  checkpoints: string;
   agents: string;
   skills: string;
   knowledge: string;
@@ -44,6 +45,7 @@ export function dataDirs(root: string): DataDirs {
     backups: path.join(root, "db", "backups"),
     logs: path.join(root, "logs"),
     workspaces: path.join(root, "workspaces"),
+    checkpoints: path.join(root, "checkpoints"),
     agents: path.join(root, "agents"),
     skills: path.join(root, "skills"),
     knowledge: path.join(root, "knowledge"),

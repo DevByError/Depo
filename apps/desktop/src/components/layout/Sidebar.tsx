@@ -1,8 +1,10 @@
-import { FolderPlus, Moon, Play, Search, Settings, Sun } from "lucide-react";
+import { Moon, Search, Settings, Sun } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
 import { setTheme } from "@/lib/engine";
 import { useUi } from "@/store/ui";
 import { Logo } from "./Logo";
+import { ProjectsSection } from "./ProjectsSection";
+import { RunningSection } from "./RunningSection";
 
 export function Sidebar() {
   const query = useUi((s) => s.feedQuery);
@@ -35,16 +37,10 @@ export function Sidebar() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2">
-        <SectionTitle>Projects</SectionTitle>
-        <div className="mx-1 rounded-lg border border-dashed border-border p-3 text-xs leading-relaxed text-subtle">
-          <FolderPlus className="mb-1.5 size-4 text-muted" aria-hidden />
-          No projects yet. Opening a project arrives in Phase 1, and running many at once in Phase 2.
-        </div>
+        <ProjectsSection />
 
         <SectionTitle>Running</SectionTitle>
-        <div className="mx-1 flex items-center gap-2 px-2 py-1 text-xs text-subtle">
-          <Play className="size-3.5" aria-hidden /> Nothing running
-        </div>
+        <RunningSection />
       </div>
 
       <div className="flex items-center gap-1 border-t border-border p-2">
