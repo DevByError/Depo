@@ -195,7 +195,12 @@ export class EngineClient {
     clearTimeout(p.timer);
     if ("error" in res.data) {
       const e: RpcError = res.data.error;
-      p.reject(new EngineCallError(e.message, e.code, e.data));
+      // An unknown method almost always means an engine left over from an older install.
+      const message =
+        e.code === -32601
+          ? `${e.message}. The engine is older than this window: quit Depo, end depo-engine.exe in Task Manager, and start Depo again.`
+          : e.message;
+      p.reject(new EngineCallError(message, e.code, e.data));
       return;
     }
     const parsed = ApiSchema[p.method].result.safeParse(res.data.result);

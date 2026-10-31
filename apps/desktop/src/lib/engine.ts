@@ -1,4 +1,4 @@
-import { type ApiMethod, type ApiParams, type ApiResult, DEPO_VERSION } from "@depo/shared";
+import { API_FINGERPRINT, type ApiMethod, type ApiParams, type ApiResult, DEPO_VERSION } from "@depo/shared";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 import { isTauri, resolveEngineUrl } from "./connection";
@@ -102,6 +102,10 @@ async function onConnected() {
       type: "warning",
       text: `UI ${DEPO_VERSION} is talking to engine ${info.engineVersion}. Restart Depo to update both.`,
     });
+  } else if (info.apiFingerprint !== API_FINGERPRINT) {
+    const text =
+      "The engine is older than this window. Quit Depo, end any depo-engine.exe left in Task Manager, and reinstall or restart.";
+    void call("events.emit", { type: "warning", text }).catch(() => {});
   }
 }
 

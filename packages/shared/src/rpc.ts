@@ -406,6 +406,8 @@ export const ApiSchema = {
       dataDir: z.string(),
       dbPath: z.string(),
       schemaVersion: z.number().int(),
+      /** Fingerprint of the engine's method list; missing on engines older than Phase 1. */
+      apiFingerprint: z.string().optional(),
     }),
   },
   "events.recent": {
@@ -465,3 +467,14 @@ export const EngineReadySchema = z.object({
   version: z.string(),
 });
 export type EngineReady = z.infer<typeof EngineReadySchema>;
+
+/**
+ * A short fingerprint of the API method names. The UI compares its own with the engine's to
+ * notice an engine left over from an older install (same version number, fewer methods).
+ */
+export const API_FINGERPRINT: string = (() => {
+  const text = Object.keys(ApiSchema).sort().join(",");
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return `${Object.keys(ApiSchema).length}-${h.toString(16)}`;
+})();

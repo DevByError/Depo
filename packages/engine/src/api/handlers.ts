@@ -1,4 +1,10 @@
-import { type ApiMethod, type ApiParsedParams, type ApiResult, DEPO_VERSION } from "@depo/shared";
+import {
+  API_FINGERPRINT,
+  type ApiMethod,
+  type ApiParsedParams,
+  type ApiResult,
+  DEPO_VERSION,
+} from "@depo/shared";
 import type { TaskManager } from "../agent/tasks";
 import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
@@ -39,6 +45,7 @@ export const handlers: Handlers = {
     dataDir: ctx.info.dataDir,
     dbPath: ctx.info.dbPath,
     schemaVersion: ctx.info.schemaVersion,
+    apiFingerprint: API_FINGERPRINT,
   }),
 
   "events.recent": (params, ctx) => ({
