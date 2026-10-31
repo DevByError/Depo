@@ -11,7 +11,10 @@ import type {
   ToolCall,
 } from "./types";
 
-const DEFAULT_IDLE_MS = 120_000;
+// Slow PCs: a tool call can be generated silently at ~2 tokens/s, and prompt reading can take
+// many minutes. The user can always stop a task, so these limits only catch a hung runtime.
+const DEFAULT_IDLE_MS = 600_000;
+const DEFAULT_FIRST_BYTE_MS = 1_200_000;
 
 /**
  * Adapter for any OpenAI-compatible local server: llama.cpp `llama-server`, LM Studio,
@@ -97,7 +100,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       kind: this.kind,
       signal: req.signal,
       body,
-      timeoutMs: req.idleTimeoutMs ?? DEFAULT_IDLE_MS,
+      timeoutMs: req.firstByteTimeoutMs ?? DEFAULT_FIRST_BYTE_MS,
     });
 
     const partial = new Map<number, { id: string; name: string; args: string }>();

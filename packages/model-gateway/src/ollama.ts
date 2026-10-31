@@ -10,7 +10,10 @@ import type {
   PullProgress,
 } from "./types";
 
-const DEFAULT_IDLE_MS = 120_000;
+// Slow PCs: a tool call can be generated silently at ~2 tokens/s, and prompt reading can take
+// many minutes. The user can always stop a task, so these limits only catch a hung runtime.
+const DEFAULT_IDLE_MS = 600_000;
+const DEFAULT_FIRST_BYTE_MS = 1_200_000;
 
 /**
  * Ollama via its native API (`/api/*`). Native rather than `/v1` because only the native API
@@ -124,7 +127,7 @@ export class OllamaProvider implements ModelProvider {
       kind: this.kind,
       signal: req.signal,
       body,
-      timeoutMs: req.idleTimeoutMs ?? DEFAULT_IDLE_MS,
+      timeoutMs: req.firstByteTimeoutMs ?? DEFAULT_FIRST_BYTE_MS,
     });
 
     let sawTool = false;

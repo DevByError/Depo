@@ -25,6 +25,9 @@ export async function request(url: string, opts: FetchOptions): Promise<Response
       headers: opts.body === undefined ? undefined : { "content-type": "application/json" },
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       signal,
+      // No connection reuse: a runtime that closed an idle kept-alive socket would otherwise make
+      // the next request fail as "dropped". Local requests are cheap to open.
+      keepalive: false,
     });
   } catch (err) {
     throw toGatewayError(err, opts.kind, opts.signal);

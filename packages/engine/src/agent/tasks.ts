@@ -236,6 +236,14 @@ export class TaskManager {
       steps++;
       compressHistory(history, contextLength);
       const messageId = newId("msg");
+      // Runtimes send nothing while they read the prompt; say so, since it can take minutes.
+      emit({
+        type: "planning",
+        text: `Waiting for ${model} to answer (step ${steps})`,
+        details: { jobId: `wait-${taskId}`, step: steps },
+        ephemeral: true,
+        status: "running",
+      });
       let streamed = "";
       let lastEmit = 0;
       const res = await this.chatWithRetry(

@@ -35,8 +35,13 @@ export interface ChatRequest {
   /** Context window to request (Ollama `num_ctx`). */
   contextLength?: number;
   signal?: AbortSignal;
-  /** Abort if no data arrives for this long. Default 120 s (model loading can be slow). */
+  /** Abort if the stream goes quiet for this long once it has started. Default 10 min. */
   idleTimeoutMs?: number;
+  /**
+   * Abort if the first byte has not arrived after this long. Runtimes send nothing while they
+   * load the model and read the prompt, which takes minutes on a slow PC. Default 20 min.
+   */
+  firstByteTimeoutMs?: number;
 }
 
 export interface Usage {
