@@ -35,6 +35,8 @@ _Last updated: 2026-10-31_
 
 ## Known issues
 
+- On Windows the engine's database file stays locked for a moment after `close()` (seen as an EBUSY warning when engine tests delete their temp folders). Tests tolerate it; fix properly in Phase 1 before backups, moves and shadow workspaces rely on it.
+
 - Nothing has run on Windows yet (see acceptance table). Windows-specific paths are unit-tested with Windows inputs, but the installer, WebView2, tray and sidecar must be checked on a real Windows 10/11 machine.
 - Installers are unsigned, so SmartScreen will warn on first run.
 - When the desktop process is killed abruptly, the engine exits (no orphan) but may not write its "engine stopped" log line. Normal quit is unaffected.
