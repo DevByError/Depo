@@ -5,7 +5,7 @@ import type { ChatMessage } from "@depo/model-gateway";
 import type { DepoEvent } from "@depo/shared";
 import { startFakeOllama } from "../../../scripts/fake-ollama-lib";
 import { compressHistory } from "../src/agent/tasks";
-import { parseTextToolCalls } from "../src/agent/textcalls";
+import { parseTextToolCalls, stripToolMarkup } from "../src/agent/textcalls";
 import { createEngine, type Engine } from "../src/engine";
 import { TEST_TOKEN, tempDir } from "./helpers";
 
@@ -194,4 +194,10 @@ describe("agent helpers", () => {
     expect(h.reduce((n, m) => n + m.content.length, 0)).toBeLessThan(8192 * 0.7 * 3.5);
     expect(h.at(-1)?.content).toBe(big);
   });
+});
+
+test("stray tool-call tags are removed from a final answer", () => {
+  expect(stripToolMarkup("All 2 tests pass.<tool_call>\n")).toBe("All 2 tests pass.");
+  expect(stripToolMarkup("Done.</tool_call>")).toBe("Done.");
+  expect(stripToolMarkup("Use <tool_call> tags like this.")).toBe("Use <tool_call> tags like this.");
 });

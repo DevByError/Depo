@@ -20,7 +20,7 @@ import type { ModelManager } from "../models/manager";
 import { executeTool, TOOLS, type ToolContext, toolDefinitions } from "../tools/index";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { codingSystemPrompt, venvEnv } from "./prompt";
-import { parseTextToolCalls } from "./textcalls";
+import { parseTextToolCalls, stripToolMarkup } from "./textcalls";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
@@ -296,6 +296,7 @@ export class TaskManager {
       badOutputs = 0;
       let calls: ToolCall[] = res.toolCalls;
       if (calls.length === 0) calls = parseTextToolCalls(res.text, toolNames);
+      if (calls.length === 0) res.text = stripToolMarkup(res.text);
       const assistant: ChatMessage = {
         role: "assistant",
         content: res.text,

@@ -1,6 +1,6 @@
 # Progress
 
-**Current phase:** Phase 1 (single agent core) is complete in code and passes its acceptance test in the development container. It still needs a check on Windows with a real Ollama model. Phase 2 has not started.
+**Current phase:** Phase 1 (single agent core) is complete and accepted: on the owner's Windows PC (GTX 1650 4 GB, 25 GB RAM) the agent with `qwen3-coder:30b` on Ollama added the /health endpoint and its test, ran pytest (2 passed) and handed over a diff for review. Phase 2 has not started.
 
 _Last updated: 2026-10-31_
 
@@ -8,7 +8,7 @@ _Last updated: 2026-10-31_
 
 | Criterion | Status |
 |---|---|
-| User asks "add a /health endpoint to this FastAPI project"; the agent edits in the shadow workspace, runs the tests, shows a diff, and applies it on approval | **Passes in the app** (Playwright `e2e/chat.spec.ts`, 18 of 18 repeated runs) and in the engine (`test/agent.test.ts`). Both use the scripted fake Ollama and the real pytest on `scripts/fixtures/fastapi-demo`. **Not yet run on Windows with a real model.** |
+| User asks "add a /health endpoint to this FastAPI project"; the agent edits in the shadow workspace, runs the tests, shows a diff, and applies it on approval | **Passes in the app** (Playwright `e2e/chat.spec.ts`, 18 of 18 repeated runs) and in the engine (`test/agent.test.ts`). Both use the scripted fake Ollama and the real pytest on `scripts/fixtures/fastapi-demo`. **Also passed on Windows 11 with `qwen3-coder:30b` on Ollama (dev build).** |
 
 ## Completed in Phase 1
 
@@ -37,7 +37,8 @@ _Last updated: 2026-10-31_
 ## Known issues
 
 - **Nothing in Phase 1 has run on Windows yet.** Windows-only code is unit-tested where possible but needs a real run: Job Objects through FFI, `cmd.exe` quoting, registry GPU query, CPU-flag FFI, junctions for `node_modules`/`.venv`.
-- **Not yet tried with a real model.** The acceptance test uses a scripted fake Ollama. Real small models (for example `qwen2.5-coder:7b`) will make more mistakes; the loop has a text tool-call fallback and repeated-failure hints for that.
+- **Speed on modest PCs.** On a GTX 1650 + 25 GB RAM, `qwen3-coder:30b` reads prompts at ~10 tokens/s and writes at ~2 tokens/s, about 5× slower than Auto-Fit's estimate before a benchmark. Timeouts now allow 20 min for the first byte. Auto-Fit should model prompt-reading speed and recommend smaller coders on such PCs (Phase 2).
+- Qwen3-Coder sometimes writes a malformed tool call that Ollama rejects ("XML syntax error"); the agent retries and then asks the model to try again.
 - **Model catalog tags are unverified** because the container cannot reach ollama.com. Run `bun scripts/verify-catalog.ts` on a PC with internet.
 - On Windows the database file can stay locked for a moment after `close()` (EBUSY when tests delete temp folders). Tests tolerate it; still to be confirmed fixed.
 - Installers are unsigned, so SmartScreen warns on first run.

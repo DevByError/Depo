@@ -41,3 +41,14 @@ export function parseTextToolCalls(text: string, toolNames: string[]): ToolCall[
   }
   return calls;
 }
+
+/**
+ * Remove leftover tool-call markup from a reply that made no tool call, e.g. a final summary
+ * ending in a stray `<tool_call>` that some models emit before deciding to stop.
+ */
+export function stripToolMarkup(text: string): string {
+  return text
+    .replace(/<\/?(tool_call|tool_response|function_call)>\s*$/gi, "")
+    .replace(/<\/?(tool_call|tool_response|function_call)>\s*$/gi, "")
+    .trimEnd();
+}
