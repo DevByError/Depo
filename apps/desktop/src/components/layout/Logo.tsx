@@ -1,26 +1,25 @@
-/** Depo mark: a stacked depot of three layers (team, engine, your files). */
+/** Depo mark ("Bracket D"): the D of Depo, drawn as a crate with planks, between code brackets. */
 export function Logo({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden>
-      <rect x="2" y="2" width="28" height="28" rx="8" fill="var(--accent)" />
-      <path d="M9 11.5 16 8l7 3.5-7 3.5z" fill="var(--accent-fg)" />
-      <path
-        d="m9 16 7 3.5 7-3.5"
-        fill="none"
-        stroke="var(--accent-fg)"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
+    <svg viewBox="0 0 64 64" className={className} aria-hidden>
+      <rect
+        x="0.75"
+        y="0.75"
+        width="62.5"
+        height="62.5"
+        rx="15"
+        fill="#1b1f27"
+        stroke="#ffffff"
+        strokeOpacity="0.14"
+        strokeWidth="1.5"
       />
-      <path
-        d="m9 20.5 7 3.5 7-3.5"
-        fill="none"
-        stroke="var(--accent-fg)"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        opacity="0.7"
-      />
+      <g fill="none" stroke="#8a93a6" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="14,20 6,32 14,44" />
+        <polyline points="50,20 58,32 50,44" />
+      </g>
+      <path d="M20 16h11c10 0 16 6.5 16 16s-6 16-16 16H20z" fill="#ffffff" />
+      <rect x="20" y="23" width="25" height="2.2" fill="#c7ccd6" />
+      <rect x="20" y="39" width="25" height="2.2" fill="#c7ccd6" />
     </svg>
   );
 }
