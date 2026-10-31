@@ -113,7 +113,7 @@ describe("coding agent", () => {
     e.models.setProviders([{ id: "ollama", kind: "ollama", baseUrl: "http://127.0.0.1:9", enabled: true }]);
     const task = e.tasks.send(project.id, "add a /health endpoint");
     await e.tasks.settled(task.id);
-    expect(events.filter((ev) => ev.type === "retrying")).toHaveLength(2);
+    expect(events.filter((ev) => ev.type === "retrying")).toHaveLength(4);
     expect(e.tasks.get(task.id).task.error).toContain("not running");
   });
 

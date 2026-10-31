@@ -26,7 +26,9 @@ export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
 const DEFAULT_CONTEXT = 16_384;
 /** A model call may be retried this many times after a transient failure. */
-const MODEL_RETRIES = 2;
+const MODEL_RETRIES = 4;
+/** Waits between retries grow, so a runtime that is busy (re)loading a model gets about a minute. */
+const RETRY_BACKOFF = [1, 3, 8, 15];
 
 export interface TaskManagerOptions {
   db: AppDb;
@@ -409,7 +411,7 @@ export class TaskManager {
           details: { attempt: attempt + 1 },
           status: "running",
         });
-        await Bun.sleep(this.o.retryDelayMs ?? 2000);
+        await Bun.sleep(this.o.retryDelayMs ?? (RETRY_BACKOFF[attempt] ?? 15) * 1000);
         if (req.signal?.aborted) return null;
       }
     }

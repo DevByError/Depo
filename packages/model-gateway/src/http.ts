@@ -57,11 +57,14 @@ export function toGatewayError(err: unknown, kind: string, userSignal?: AbortSig
   // A refused connection means nothing is listening; anything else (reset, closed socket) means
   // the runtime was there but dropped the request, usually because it crashed or ran out of memory.
   const refused = /ECONNREFUSED|ConnectionRefused|refused/i.test(cause);
+  const noConnect = /Unable to connect|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH/i.test(cause);
   return new ModelGatewayError(
     "unreachable",
     refused
       ? `${providerLabel(kind)} is not running or not reachable. Start it and try again.`
-      : `${providerLabel(kind)} dropped the connection (${cause}). It may have run out of memory or restarted; check its log, or try a smaller model.`,
+      : noConnect
+        ? `Could not connect to ${providerLabel(kind)} in time (${cause}). It may be busy loading a model or stuck; check that it is running, or restart it.`
+        : `${providerLabel(kind)} dropped the connection (${cause}). It may have run out of memory or restarted; check its log, or try a smaller model.`,
     undefined,
     cause,
   );
