@@ -1,0 +1,6 @@
+{
+  "build": {
+    "devUrl": null,
+    "beforeDevCommand": { "script": "bun run build:ui", "wait": true }
+  }
+}
