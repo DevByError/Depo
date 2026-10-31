@@ -14,6 +14,9 @@ describe("resolveDataRoot", () => {
   });
   test("DEPO_DATA_DIR overrides", () => {
     expect(resolveDataRoot({ DEPO_DATA_DIR: "/tmp/x", LOCALAPPDATA: "C:\\L" }, "linux")).toBe("/tmp/x");
+    expect(resolveDataRoot({ DEPO_DATA_DIR: "D:\\Depo Data", LOCALAPPDATA: "C:\\L" }, "win32")).toBe(
+      "D:\\Depo Data",
+    );
   });
 });
 

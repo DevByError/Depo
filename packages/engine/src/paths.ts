@@ -27,7 +27,7 @@ export function resolveDataRoot(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const override = env.DEPO_DATA_DIR?.trim();
-  if (override) return path.resolve(override);
+  if (override) return (platform === "win32" ? path.win32 : path.posix).resolve(override);
   if (platform === "win32") {
     const local =
       env.LOCALAPPDATA?.trim() || path.win32.join(env.USERPROFILE ?? homedir(), "AppData", "Local");
