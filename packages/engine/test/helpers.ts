@@ -5,7 +5,21 @@ import path from "node:path";
 /** Temp dir with a space and non-ASCII characters, like many real Windows user profiles. */
 export function tempDir(label = "depo test"): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(path.join(tmpdir(), `${label} Ünïcødé-`));
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  let done = false;
+  const cleanup = () => {
+    if (done) return;
+    done = true;
+    try {
+      // Windows keeps files locked briefly after close (SQLite, Defender, indexer): retry before giving up.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EBUSY" && code !== "EPERM") throw err;
+      // A leftover temp folder must not fail a test; the OS temp cleaner removes it later.
+      console.warn(`could not remove temp dir (${code}): ${dir}`);
+    }
+  };
+  return { dir, cleanup };
 }
 
 export const TEST_TOKEN = "t".repeat(48);

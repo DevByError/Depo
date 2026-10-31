@@ -88,7 +88,17 @@ export function openDatabase(opts: OpenDatabaseOptions): OpenedDatabase {
     path: opts.file,
     schemaVersion,
     backupPath,
-    close: () => sqlite.close(),
+    close: () => {
+      // Fold the WAL back into the main file, finalize statements nobody references any more,
+      // then close. On Windows an open statement keeps the file locked after close.
+      try {
+        sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      } catch {
+        // Another connection may hold the WAL; closing still works.
+      }
+      Bun.gc(true);
+      sqlite.close(false);
+    },
   };
 }
 

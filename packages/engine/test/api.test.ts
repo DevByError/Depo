@@ -10,6 +10,7 @@ afterEach(async () => {
   await engine?.stop("test");
   engine = null;
   cleanup();
+  cleanup = () => {};
 });
 
 async function boot(heartbeatMs = 100) {

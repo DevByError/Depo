@@ -9,7 +9,7 @@ function Check($name, $test, $hint) {
 }
 
 Write-Host "Checking prerequisites for Depo..."
-Check "Bun 1.4+" { Get-Command bun -ErrorAction SilentlyContinue } 'powershell -c "irm bun.sh/install.ps1 | iex"'
+Check "Bun 1.4+" { (Get-Command bun -ErrorAction SilentlyContinue) -and ([version](bun --version) -ge [version]"1.4.0") } "Run: bun upgrade   (or install: powershell -c `"irm bun.sh/install.ps1 | iex`")"
 Check "Rust (MSVC toolchain)" { (Get-Command rustc -ErrorAction SilentlyContinue) -and ((rustc -vV) -match "host: .*-pc-windows-msvc") } "Install from https://rustup.rs (default host: x86_64-pc-windows-msvc)"
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 Check "Visual Studio C++ build tools" { (Test-Path $vswhere) -and (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath) } "Install 'Visual Studio 2022 Build Tools' with 'Desktop development with C++'"

@@ -7,7 +7,10 @@ import { createLogger } from "../src/logger";
 import { tempDir } from "./helpers";
 
 let cleanup = () => {};
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  cleanup = () => {};
+});
 
 function setup() {
   const t = tempDir();

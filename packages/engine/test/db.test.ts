@@ -6,7 +6,10 @@ import { MIGRATIONS } from "../src/db/migrations";
 import { tempDir } from "./helpers";
 
 let cleanup = () => {};
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  cleanup = () => {};
+});
 
 test("creates the database in WAL mode at the latest schema", () => {
   const t = tempDir();

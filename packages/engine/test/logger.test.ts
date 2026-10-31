@@ -5,7 +5,10 @@ import { createLogger } from "../src/logger";
 import { tempDir } from "./helpers";
 
 let cleanup = () => {};
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  cleanup = () => {};
+});
 
 test("writes JSON lines with redaction and rotates by size", () => {
   const t = tempDir();
