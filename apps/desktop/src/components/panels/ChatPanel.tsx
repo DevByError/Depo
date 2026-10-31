@@ -222,6 +222,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
         <span className="flex items-center gap-1.5 text-xs text-muted" data-testid="task-status">
           <span className={cn("size-1.5 rounded-full", STATUS_DOT[task.status])} aria-hidden />
           {STATUS_TEXT[task.status]}
+          <RunTime task={task} items={items} />
           {task.model && <span className="text-subtle">· {task.model}</span>}
         </span>
       </header>
@@ -447,4 +448,33 @@ function Composer({ task }: { task: Task | undefined }) {
       </div>
     </div>
   );
+}
+
+export function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2, "0")}s`;
+  return `${sec}s`;
+}
+
+/** "for 1m 20s" while working, "took 3m 05s" once the latest run has finished. */
+function RunTime({ task, items }: { task: Task; items: ChatItem[] }) {
+  const active = isActive(task.status);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [active]);
+  // The latest run starts at the latest user message; its end is the task's last status change.
+  const lastUser = [...items].reverse().find((m) => m.role === "user");
+  const start = Date.parse(lastUser?.createdAt ?? task.createdAt);
+  if (Number.isNaN(start)) return null;
+  if (active) return <span className="tabular-nums">for {formatDuration(now - start)}</span>;
+  const end = Date.parse(task.updatedAt);
+  if (Number.isNaN(end) || end < start) return null;
+  return <span className="tabular-nums">· took {formatDuration(end - start)}</span>;
 }

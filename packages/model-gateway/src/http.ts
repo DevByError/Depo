@@ -50,12 +50,25 @@ export function toGatewayError(err: unknown, kind: string, userSignal?: AbortSig
   if (name === "TimeoutError" || name === "AbortError") {
     return new ModelGatewayError("timeout", `${providerLabel(kind)} did not respond in time.`);
   }
+  const cause = describeCause(err);
+  // A refused connection means nothing is listening; anything else (reset, closed socket) means
+  // the runtime was there but dropped the request, usually because it crashed or ran out of memory.
+  const refused = /ECONNREFUSED|ConnectionRefused|refused/i.test(cause);
   return new ModelGatewayError(
     "unreachable",
-    `${providerLabel(kind)} is not running or not reachable. Start it and try again.`,
+    refused
+      ? `${providerLabel(kind)} is not running or not reachable. Start it and try again.`
+      : `${providerLabel(kind)} dropped the connection (${cause}). It may have run out of memory or restarted; check its log, or try a smaller model.`,
     undefined,
-    err instanceof Error ? err.message : String(err),
+    cause,
   );
+}
+
+function describeCause(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const code = (err as { code?: unknown }).code;
+  const parts = [typeof code === "string" ? code : "", err.message].filter(Boolean);
+  return parts.join(": ").slice(0, 200) || err.name;
 }
 
 /**
