@@ -1,0 +1,142 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Design tokens. Components use only these, never raw colours. */
+:root,
+[data-theme="light"] {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --raised: #eff1f4;
+  --hover: #e8ebef;
+  --border: #dfe3e8;
+  --fg: #15181d;
+  --muted: #586170;
+  --subtle: #5f6773;
+  --accent: #3350e0;
+  --accent-fg: #ffffff;
+  --accent-soft: #e6ebfe;
+  --success: #1c8551;
+  --warning: #9a6500;
+  --danger: #c43737;
+  --info: #1d6aad;
+  --ring: #3350e0;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0d0f13;
+  --panel: #13161b;
+  --raised: #1a1e24;
+  --hover: #20252c;
+  --border: #272c34;
+  --fg: #e5e8ec;
+  --muted: #9aa3af;
+  --subtle: #8a939f;
+  --accent: #7d97ff;
+  --accent-fg: #0d0f13;
+  --accent-soft: #1e2540;
+  --success: #45b883;
+  --warning: #e2a842;
+  --danger: #f06666;
+  --info: #57a8e6;
+  --ring: #7d97ff;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Code", Consolas, ui-monospace, monospace;
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-ring: var(--ring);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes depo-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.pulse-ring {
+  animation: depo-pulse 900ms ease-out;
+}
+
+/* biome-ignore-start lint/complexity/noImportantStyles: reduced motion must override every component animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: end of reduced-motion block */
+
+/* Horizontal tab strips scroll without a visible bar (WebView2 and WebKitGTK show one otherwise). */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -1,0 +1,9 @@
+# Normalise line endings in the repo; check out with native endings where tools need it.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ico binary
+*.png binary
+*.icns binary
+*.woff2 binary
