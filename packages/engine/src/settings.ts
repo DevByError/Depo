@@ -8,6 +8,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "ui.theme": "dark",
   "engine.heartbeat_ms": 2000,
   "quality.mode": "max_quality",
+  /** Model requests served at once across all projects (one local GPU: usually 1). */
+  "scheduler.max_parallel": 1,
 };
 
 export class SettingsRepo {

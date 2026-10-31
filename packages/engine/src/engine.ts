@@ -4,11 +4,15 @@ import { TaskManager } from "./agent/tasks";
 import { handlers } from "./api/handlers";
 import { type ApiServer, startApiServer } from "./api/server";
 import { ApprovalCenter } from "./approvals";
+import { CodeIndexer } from "./codeindex/indexer";
 import { type OpenedDatabase, openDatabase } from "./db";
 import { EventBus } from "./events/bus";
 import { createLogger, type Logger, type LogLevel } from "./logger";
+import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
+import { ProjectRegistry } from "./projects/registry";
+import { ModelScheduler } from "./scheduler/scheduler";
 import { SettingsRepo } from "./settings";
 import { ProjectService } from "./workspace/service";
 
@@ -24,6 +28,8 @@ export interface EngineOptions {
   models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
   /** Test hooks for the agent loop. */
   tasks?: { maxSteps?: number; retryDelayMs?: number };
+  /** Test hook: replaces the git runner used for clones. */
+  git?: ConstructorParameters<typeof ProjectRegistry>[0]["git"];
 }
 
 export interface Engine {
@@ -35,6 +41,10 @@ export interface Engine {
   readonly approvals: ApprovalCenter;
   readonly projects: ProjectService;
   readonly tasks: TaskManager;
+  readonly registry: ProjectRegistry;
+  readonly memory: MemoryStore;
+  readonly scheduler: ModelScheduler;
+  readonly indexer: CodeIndexer;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -60,7 +70,46 @@ export function createEngine(opts: EngineOptions): Engine {
   const models = new ModelManager({ settings, bus, logger, ...opts.models });
   const approvals = new ApprovalCenter(bus);
   const projects = new ProjectService(database.db, bus, logger, dirs);
-  const tasks = new TaskManager({ db: database.db, bus, logger, models, projects, approvals, ...opts.tasks });
+  const memory = new MemoryStore(database.db, bus, dirs.projects);
+  const registry = new ProjectRegistry({
+    db: database.db,
+    bus,
+    logger,
+    projects,
+    memory,
+    ...(opts.git ? { git: opts.git } : {}),
+  });
+  const scheduler = new ModelScheduler({
+    bus,
+    maxParallel: () => {
+      const v = settings.get("scheduler.max_parallel");
+      return typeof v === "number" && v >= 1 ? Math.floor(v) : 1;
+    },
+    projectCap: (id) => safeSettings(registry, id)?.maxParallel ?? 1,
+    isProjectPaused: (id) => safeSettings(registry, id)?.paused ?? false,
+  });
+  const embeddings = embeddingSource(models);
+  const indexer = new CodeIndexer({
+    db: database.db,
+    bus,
+    logger,
+    scheduler,
+    embeddings,
+    enabled: (id) => safeSettings(registry, id)?.indexEnabled ?? true,
+  });
+  const tasks = new TaskManager({
+    db: database.db,
+    bus,
+    logger,
+    models,
+    projects,
+    approvals,
+    memory,
+    scheduler,
+    indexer,
+    projectSettings: (id) => registry.getSettings(id),
+    ...opts.tasks,
+  });
   const startedAt = new Date();
 
   let server: ApiServer | null = null;
@@ -94,6 +143,10 @@ export function createEngine(opts: EngineOptions): Engine {
     approvals,
     projects,
     tasks,
+    registry,
+    memory,
+    scheduler,
+    indexer,
     database,
     async start() {
       server = startApiServer({
@@ -109,6 +162,10 @@ export function createEngine(opts: EngineOptions): Engine {
           approvals,
           projects,
           tasks,
+          registry,
+          memory,
+          scheduler,
+          indexer,
           info: {
             startedAt,
             dataDir: dirs.root,
@@ -148,10 +205,43 @@ export function createEngine(opts: EngineOptions): Engine {
         text: `Engine stopping (${reason})`,
         details: { reason },
       });
+      indexer.stopAll();
       await tasks.cancelAll();
       await server?.stop();
       database.close();
       logger.info("engine stopped", { reason });
+    },
+  };
+}
+
+function safeSettings(registry: ProjectRegistry, id: string) {
+  try {
+    return registry.getSettings(id);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The embedding model, only when it is actually installed: an assigned but missing model
+ * would make every index pass fail. The installed list is cached for a minute.
+ */
+function embeddingSource(models: ModelManager) {
+  let cache: { at: number; names: Set<string> } | null = null;
+  return {
+    async embedder() {
+      const resolved = models.resolve("embedding");
+      if (!resolved) return null;
+      if (!cache || Date.now() - cache.at > 60_000) {
+        try {
+          const list = await models.installed();
+          cache = { at: Date.now(), names: new Set(list.map((m) => m.name.replace(/:latest$/, ""))) };
+        } catch {
+          cache = { at: Date.now(), names: new Set() };
+        }
+      }
+      if (!cache.names.has(resolved.model.replace(/:latest$/, ""))) return null;
+      return { provider: resolved.provider, model: resolved.model };
     },
   };
 }

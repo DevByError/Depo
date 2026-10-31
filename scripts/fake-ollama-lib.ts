@@ -1,7 +1,7 @@
 /**
  * A stand-in for Ollama's HTTP API used by tests. It keeps an in-memory model list, streams
  * download progress, and answers /api/chat with a scripted coding agent: given the FastAPI demo
- * fixture and a request mentioning "/health", it explores, edits, adds a test, runs pytest and
+ * fixture and a request like "add a /health endpoint", it explores, edits, adds a test, runs pytest and
  * summarises, exactly like a real model would through tool calls.
  */
 
@@ -19,48 +19,85 @@ type Step =
   | { say: string; tool: string; args: Record<string, unknown> }
   | { final: (lastTool: string) => string };
 
-const HEALTH_SCRIPT: Step[] = [
-  { say: "Let me look at the project first.", tool: "list_dir", args: { path: ".", depth: 2 } },
-  { say: "", tool: "read_file", args: { path: "app/main.py" } },
-  { say: "", tool: "read_file", args: { path: "tests/test_main.py" } },
+/** The scripted agent for "add a /<name> endpoint": explore, edit, add a test, run pytest, summarise. */
+function endpointScript(name: string): Step[] {
+  const fn = name.replace(/[^a-zA-Z0-9_]/g, "_");
+  return [
+    { say: "Let me look at the project first.", tool: "list_dir", args: { path: ".", depth: 2 } },
+    { say: "", tool: "read_file", args: { path: "app/main.py" } },
+    { say: "", tool: "read_file", args: { path: "tests/test_main.py" } },
+    {
+      say: "I'll add the endpoint next to the existing routes.",
+      tool: "edit_file",
+      args: {
+        path: "app/main.py",
+        edits: [
+          {
+            search: '@app.get("/items/{item_id}")',
+            replace: `@app.get("/${name}")\ndef ${fn}():\n    return {"status": "ok"}\n\n\n@app.get("/items/{item_id}")`,
+          },
+        ],
+      },
+    },
+    {
+      say: "Now a test for it.",
+      tool: "edit_file",
+      args: {
+        path: "tests/test_main.py",
+        edits: [
+          {
+            search: "def test_root():",
+            replace: `def test_${fn}():\n    response = client.get("/${name}")\n    assert response.status_code == 200\n    assert response.json() == {"status": "ok"}\n\n\ndef test_root():`,
+          },
+        ],
+      },
+    },
+    { say: "Running the tests.", tool: "run_command", args: { command: "python -m pytest -q" } },
+    {
+      final: (last) =>
+        /\b2 passed\b/.test(last) && !/failed/.test(last)
+          ? `Added a \`GET /${name}\` endpoint in \`app/main.py\` that returns \`{"status": "ok"}\`, and a test for it in \`tests/test_main.py\`. All tests pass (2 passed).`
+          : `The tests did not pass:\n${last.slice(-500)}`,
+    },
+  ];
+}
+
+/** "add a slugify helper": a test that fails on a missing module, the fix, and a green run. */
+const SLUGIFY_SCRIPT: Step[] = [
   {
-    say: "I'll add the endpoint next to the existing routes.",
-    tool: "edit_file",
+    say: "First a test.",
+    tool: "write_file",
     args: {
-      path: "app/main.py",
-      edits: [
-        {
-          search: '@app.get("/items/{item_id}")',
-          replace:
-            '@app.get("/health")\ndef health():\n    return {"status": "ok"}\n\n\n@app.get("/items/{item_id}")',
-        },
-      ],
+      path: "tests/test_slug.py",
+      content:
+        "from app.slug import slugify\n\n\ndef test_slugify():\n    assert slugify('Hello World') == 'hello-world'\n",
     },
   },
+  { say: "", tool: "run_command", args: { command: "python -m pytest -q" } },
   {
-    say: "Now a test for it.",
-    tool: "edit_file",
-    args: {
-      path: "tests/test_main.py",
-      edits: [
-        {
-          search: "def test_root():",
-          replace:
-            'def test_health():\n    response = client.get("/health")\n    assert response.status_code == 200\n    assert response.json() == {"status": "ok"}\n\n\ndef test_root():',
-        },
-      ],
-    },
+    say: "The module is missing; adding it.",
+    tool: "write_file",
+    args: { path: "app/slug.py", content: "def slugify(text):\n    return '-'.join(text.lower().split())\n" },
   },
-  { say: "Running the tests.", tool: "run_command", args: { command: "python -m pytest -q" } },
+  { say: "", tool: "run_command", args: { command: "python -m pytest -q" } },
   {
     final: (last) =>
-      /\b2 passed\b/.test(last) && !/failed/.test(last)
-        ? 'Added a `GET /health` endpoint in `app/main.py` that returns `{"status": "ok"}`, and a test for it in `tests/test_main.py`. All tests pass (2 passed).'
-        : `The tests did not pass:\n${last.slice(-500)}`,
+      /\b2 passed\b/.test(last) ? "Added slugify with a test (2 passed)." : `Not yet:\n${last}`,
   },
 ];
 
-function scriptedChat(messages: WireMessage[]): Response {
+/** Deterministic bag-of-words vectors, so semantic search can be tested without a model. */
+export function fakeEmbedding(text: string, dims = 64): number[] {
+  const v = new Array<number>(dims).fill(0);
+  for (const w of text.toLowerCase().match(/[a-z]{3,}/g) ?? []) {
+    let h = 2166136261;
+    for (let i = 0; i < w.length; i++) h = Math.imul(h ^ w.charCodeAt(i), 16777619);
+    v[(h >>> 0) % dims] += 1;
+  }
+  return v;
+}
+
+function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
   const firstUser = messages.find((m) => m.role === "user")?.content ?? "";
   const toolMsgs = messages.filter((m) => m.role === "tool");
   const words = (s: string) => s.split(/(?<= )/).filter(Boolean);
@@ -91,7 +128,9 @@ function scriptedChat(messages: WireMessage[]): Response {
         ctl.close();
         return;
       }
-      if (!/\/health/.test(firstUser)) {
+      const endpoint = /add an? \/([a-z][a-z0-9_-]*) endpoint/i.exec(firstUser)?.[1];
+      const slug = /slugify helper/.test(firstUser);
+      if (!endpoint && !slug) {
         for (const w of words("I can only run the scripted /health demo in this test model.")) {
           ctl.enqueue(line({ message: { role: "assistant", content: w } }));
         }
@@ -99,7 +138,9 @@ function scriptedChat(messages: WireMessage[]): Response {
         ctl.close();
         return;
       }
-      const step = HEALTH_SCRIPT[Math.min(toolMsgs.length, HEALTH_SCRIPT.length - 1)] as Step;
+      if (stepDelayMs > 0) await Bun.sleep(stepDelayMs);
+      const script = slug ? SLUGIFY_SCRIPT : endpointScript((endpoint ?? "").toLowerCase());
+      const step = script[Math.min(toolMsgs.length, script.length - 1)] as Step;
       if ("final" in step) {
         for (const w of words(step.final(toolMsgs.at(-1)?.content ?? ""))) {
           ctl.enqueue(line({ message: { role: "assistant", content: w } }));
@@ -128,13 +169,24 @@ function scriptedChat(messages: WireMessage[]): Response {
   return new Response(body);
 }
 
-export function startFakeOllama(port = 0): {
+export interface FakeOllamaOptions {
+  /** Delay before each scripted agent step, so concurrent tasks overlap in tests. */
+  stepDelayMs?: number;
+}
+
+export function startFakeOllama(
+  port = 0,
+  opts: FakeOllamaOptions = {},
+): {
   url: string;
   port: number;
   models: Map<string, number>;
   stop: () => void;
 } {
-  const models = new Map<string, number>([["qwen2.5-coder:1.5b", 986_000_000]]);
+  const models = new Map<string, number>([
+    ["qwen2.5-coder:1.5b", 986_000_000],
+    ["nomic-embed-text:latest", 274_000_000],
+  ]);
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",
@@ -171,6 +223,10 @@ export function startFakeOllama(port = 0): {
             }),
           );
         }
+        case "/api/embed": {
+          const { input } = (await req.json()) as { input: string[] };
+          return Response.json({ embeddings: input.map((t) => fakeEmbedding(t)) });
+        }
         case "/api/delete": {
           const { model } = (await req.json()) as { model: string };
           models.delete(model);
@@ -178,7 +234,7 @@ export function startFakeOllama(port = 0): {
         }
         case "/api/chat": {
           const body = (await req.json()) as { messages: WireMessage[]; tools?: unknown[] };
-          if (body.tools?.length) return scriptedChat(body.messages);
+          if (body.tools?.length) return scriptedChat(body.messages, opts.stepDelayMs ?? 0);
           // Benchmarks and plain chats: a short streamed answer.
           const words = "def merge_intervals(intervals):\n    return sorted(intervals)\n".split(/(?<= )/);
           return new Response(

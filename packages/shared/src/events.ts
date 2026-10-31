@@ -26,6 +26,8 @@ export const AGENT_EVENT_TYPES = [
   "retrying",
   "applied_changes",
   "checkpoint_created",
+  "queued",
+  "memory_updated",
 ] as const;
 
 export const SYSTEM_EVENT_TYPES = [
@@ -40,6 +42,8 @@ export const SYSTEM_EVENT_TYPES = [
   "hardware_profiled",
   "model_download",
   "model_benchmark",
+  "indexing",
+  "project_changed",
 ] as const;
 
 export const EventTypeSchema = z.enum([...AGENT_EVENT_TYPES, ...SYSTEM_EVENT_TYPES]);

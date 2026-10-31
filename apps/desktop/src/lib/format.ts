@@ -33,3 +33,13 @@ export function formatAgo(ms: number): string {
   if (ms < 1000) return "just now";
   return `${formatDuration(ms)} ago`;
 }
+
+/** "just now", "5m ago", "3h ago", or a date for anything older than a day. */
+export function formatRelative(iso: string, now = Date.now()): string {
+  const ms = now - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return new Date(iso).toLocaleDateString();
+}

@@ -100,7 +100,9 @@ export function createShadow(
 
 /** Remove a shadow workspace without following its links into the real project. */
 export function removeShadow(dest: string): void {
-  for (const name of LINKED_DIRS) {
+  // Unlink dependency links first so deleting never walks into the real project's folders.
+  // `dest` may be the shadow tree itself or a workspace folder that holds it in `tree/`.
+  for (const name of [...LINKED_DIRS].flatMap((n) => [n, path.join("tree", n)])) {
     const p = path.join(dest, name);
     try {
       const st = fs.lstatSync(p);

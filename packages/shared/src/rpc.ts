@@ -110,8 +110,96 @@ export const ProjectSchema = z.object({
   createdAt: z.string(),
   isGit: z.boolean(),
   branch: z.string().nullable(),
+  description: z.string(),
+  /** Stack preferences in the user's words; "" lets the agents decide. */
+  stack: z.string(),
+  origin: z.enum(["opened", "created", "imported", "duplicated"]),
+  archivedAt: z.string().nullable(),
+  /** False when the folder was moved or deleted outside Depo. */
+  exists: z.boolean(),
 });
 export type Project = z.infer<typeof ProjectSchema>;
+
+const CommandPatternSchema = z.string().min(1).max(200);
+export const ProjectSettingsSchema = z.object({
+  /** Keep a code index (symbols + embeddings) for this project. */
+  indexEnabled: z.boolean().default(true),
+  /** How many of this project's tasks may run at the same time. */
+  maxParallel: z.number().int().min(1).max(8).default(1),
+  /** Paused projects keep their queue but start no new model work. */
+  paused: z.boolean().default(false),
+  /** Extra commands to run without asking (a command prefix such as "npm run lint"). Never overrides a deny. */
+  commandAllow: z.array(CommandPatternSchema).max(50).default([]),
+  /** Extra commands to refuse (prefix match). */
+  commandDeny: z.array(CommandPatternSchema).max(50).default([]),
+  /** Most model steps a task may take before it stops and hands over. */
+  maxSteps: z.number().int().min(5).max(200).default(40),
+});
+export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
+
+export const MemoryKindSchema = z.enum(["fact", "preference", "decision", "lesson"]);
+export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+export const MemoryFactSchema = z.object({
+  id: z.string(),
+  projectId: z.string().nullable(),
+  kind: MemoryKindSchema,
+  text: z.string(),
+  signature: z.string().nullable(),
+  source: z.enum(["user", "agent", "system"]),
+  uses: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type MemoryFact = z.infer<typeof MemoryFactSchema>;
+
+export const IndexStatusSchema = z.object({
+  projectId: z.string(),
+  state: z.enum(["idle", "indexing", "disabled", "error"]),
+  files: z.number().int(),
+  symbols: z.number().int(),
+  chunks: z.number().int(),
+  /** Model used for embeddings, or null when no embedding model is available (symbols only). */
+  embeddingModel: z.string().nullable(),
+  progress: z.object({ done: z.number().int(), total: z.number().int() }).nullable(),
+  lastIndexedAt: z.string().nullable(),
+  watching: z.boolean(),
+  error: z.string().nullable(),
+});
+export type IndexStatus = z.infer<typeof IndexStatusSchema>;
+
+export const SearchHitSchema = z.object({
+  path: z.string(),
+  startLine: z.number().int(),
+  endLine: z.number().int(),
+  score: z.number(),
+  kind: z.enum(["symbol", "semantic", "text"]),
+  title: z.string(),
+  preview: z.string(),
+});
+export type SearchHit = z.infer<typeof SearchHitSchema>;
+
+export const SchedulerPrioritySchema = z.enum(["chat", "task", "background"]);
+export type SchedulerPriority = z.infer<typeof SchedulerPrioritySchema>;
+export const SchedulerJobSchema = z.object({
+  id: z.string(),
+  projectId: z.string().nullable(),
+  taskId: z.string().nullable(),
+  model: z.string(),
+  priority: SchedulerPrioritySchema,
+  label: z.string(),
+  since: z.string(),
+});
+export type SchedulerJob = z.infer<typeof SchedulerJobSchema>;
+export const SchedulerStatusSchema = z.object({
+  maxParallel: z.number().int(),
+  pausedAll: z.boolean(),
+  pausedProjects: z.array(z.string()),
+  running: z.array(SchedulerJobSchema),
+  queued: z.array(SchedulerJobSchema),
+  /** Model most recently used, kept warm to avoid reloading. */
+  residentModel: z.string().nullable(),
+});
+export type SchedulerStatus = z.infer<typeof SchedulerStatusSchema>;
 
 export const HunkSchema = z.object({
   oldStart: z.number().int(),
@@ -212,16 +300,169 @@ const TaskMethods = {
       .strict(),
     result: TaskSchema,
   },
+  "tasks.active": {
+    params: z.object({}).strict(),
+    result: z.object({ tasks: z.array(TaskSchema) }),
+  },
   "tasks.cancel": {
     params: z.object({ id: z.string() }).strict(),
     result: z.object({ cancelled: z.boolean() }),
   },
 } as const;
 
+const ProjectNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are invalid in Windows file names
+  .regex(/^[^<>:"/\\|?*\x00-\x1f]+$/, 'A project name cannot contain < > : " / \\ | ? *')
+  .refine((n) => !/[. ]$/.test(n), "A project name cannot end with a dot or a space");
+
 const ProjectMethods = {
   "projects.list": {
-    params: z.object({}).strict(),
+    params: z.object({ includeArchived: z.boolean().optional() }).strict(),
     result: z.object({ projects: z.array(ProjectSchema) }),
+  },
+  "projects.create": {
+    params: z
+      .object({
+        name: ProjectNameSchema,
+        parentDir: z.string().min(1).max(1000),
+        description: z.string().max(2000).optional(),
+        stack: z.string().max(500).optional(),
+        initGit: z.boolean().optional(),
+      })
+      .strict(),
+    result: ProjectSchema,
+  },
+  "projects.import": {
+    params: z
+      .object({
+        /** A local folder, or a git URL (https://, ssh or git@host:path). */
+        source: z.string().min(1).max(1000),
+        /** Where a cloned repo goes; the folder name comes from the URL. Ignored for local folders. */
+        parentDir: z.string().max(1000).optional(),
+      })
+      .strict(),
+    result: ProjectSchema,
+  },
+  "projects.update": {
+    params: z
+      .object({
+        id: z.string(),
+        name: ProjectNameSchema.optional(),
+        description: z.string().max(2000).optional(),
+        stack: z.string().max(500).optional(),
+        archived: z.boolean().optional(),
+      })
+      .strict(),
+    result: ProjectSchema,
+  },
+  "projects.duplicate": {
+    params: z.object({ id: z.string(), name: ProjectNameSchema.optional() }).strict(),
+    result: ProjectSchema,
+  },
+  "projects.export": {
+    params: z.object({ id: z.string(), destDir: z.string().max(1000).optional() }).strict(),
+    result: z.object({ path: z.string(), bytes: z.number().int(), files: z.number().int() }),
+  },
+  "projects.delete": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "projects.settings.get": {
+    params: z.object({ id: z.string() }).strict(),
+    result: ProjectSettingsSchema,
+  },
+  "projects.settings.set": {
+    params: z.object({ id: z.string(), patch: ProjectSettingsSchema.partial() }).strict(),
+    result: ProjectSettingsSchema,
+  },
+  "projects.overview": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({
+      project: ProjectSchema,
+      taskCounts: z.record(z.string(), z.number().int()),
+      lastTestRun: z
+        .object({ at: z.string(), passed: z.boolean(), text: z.string(), taskId: z.string().nullable() })
+        .nullable(),
+      recentChanges: z.array(
+        z.object({
+          id: z.string(),
+          title: z.string(),
+          status: z.string(),
+          files: z.number().int(),
+          at: z.string(),
+        }),
+      ),
+      index: IndexStatusSchema,
+      memory: z.object({
+        facts: z.number().int(),
+        lessons: z.number().int(),
+        markdownChars: z.number().int(),
+      }),
+    }),
+  },
+  "memory.get": {
+    params: z.object({ projectId: z.string().nullable() }).strict(),
+    result: z.object({ markdown: z.string(), facts: z.array(MemoryFactSchema) }),
+  },
+  "memory.setMarkdown": {
+    params: z.object({ projectId: z.string().nullable(), markdown: z.string().max(100_000) }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "memory.addFact": {
+    params: z
+      .object({
+        projectId: z.string().nullable(),
+        kind: MemoryKindSchema,
+        text: z.string().trim().min(1).max(2000),
+      })
+      .strict(),
+    result: MemoryFactSchema,
+  },
+  "memory.updateFact": {
+    params: z.object({ id: z.string(), text: z.string().trim().min(1).max(2000) }).strict(),
+    result: MemoryFactSchema,
+  },
+  "memory.deleteFact": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "index.status": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: IndexStatusSchema,
+  },
+  "index.rebuild": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: IndexStatusSchema,
+  },
+  "index.search": {
+    params: z
+      .object({
+        projectId: z.string(),
+        query: z.string().min(1).max(500),
+        limit: z.number().int().min(1).max(50).optional(),
+      })
+      .strict(),
+    result: z.object({ hits: z.array(SearchHitSchema) }),
+  },
+  "scheduler.status": {
+    params: z.object({}).strict(),
+    result: SchedulerStatusSchema,
+  },
+  "scheduler.pause": {
+    params: z.object({ projectId: z.string().optional() }).strict(),
+    result: SchedulerStatusSchema,
+  },
+  "scheduler.resume": {
+    params: z.object({ projectId: z.string().optional() }).strict(),
+    result: SchedulerStatusSchema,
+  },
+  "scheduler.configure": {
+    params: z.object({ maxParallel: z.number().int().min(1).max(8) }).strict(),
+    result: SchedulerStatusSchema,
   },
   "projects.open": {
     params: z.object({ path: z.string().min(1).max(1000) }).strict(),

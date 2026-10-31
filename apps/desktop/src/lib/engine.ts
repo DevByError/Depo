@@ -75,6 +75,21 @@ function invalidateFor(type: string, status: string): void {
     void queryClient.invalidateQueries({ queryKey: ["checkpoints"] });
   } else if (type === "settings_changed") {
     void queryClient.invalidateQueries({ queryKey: ["models"] });
+    void queryClient.invalidateQueries({ queryKey: ["projectSettings"] });
+    void queryClient.invalidateQueries({ queryKey: ["scheduler"] });
+  } else if (type === "queued") {
+    void queryClient.invalidateQueries({ queryKey: ["scheduler"] });
+  } else if (type === "project_changed") {
+    void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    void queryClient.invalidateQueries({ queryKey: ["overview"] });
+  } else if (type === "memory_updated") {
+    void queryClient.invalidateQueries({ queryKey: ["memory"] });
+    void queryClient.invalidateQueries({ queryKey: ["overview"] });
+  } else if (type === "indexing" && status !== "running") {
+    void queryClient.invalidateQueries({ queryKey: ["overview"] });
+  }
+  if (type === "handoff" || type === "test_result") {
+    void queryClient.invalidateQueries({ queryKey: ["overview"] });
   }
 }
 

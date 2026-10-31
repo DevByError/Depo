@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@depo/model-gateway";
-import { type JsonValue, newId } from "@depo/shared";
+import { type JsonValue, newId, type SearchHit } from "@depo/shared";
 import { z } from "zod";
 import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
@@ -26,6 +26,26 @@ export interface ToolContext {
   onFileChanged?: (path: string) => void;
   /** Extra environment for commands (e.g. the project's virtual environment). */
   env?: Record<string, string>;
+  /** Project command rules on top of the built-in policy (prefix match). */
+  commandRules?: { allow: string[]; deny: string[] };
+  /** Code index and memory of the project, when available. */
+  knowledge?: ProjectKnowledge;
+  /** Called after each test run; may return text to add to what the model sees (lessons learned). */
+  onTestResult?: (r: { command: string; passed: boolean; output: string }) => string | undefined;
+}
+
+export interface ProjectKnowledge {
+  repoMap(prefix: string): string;
+  findSymbols(name: string): SearchHit[];
+  search(query: string, limit: number, signal?: AbortSignal): Promise<SearchHit[]>;
+  remember(kind: "fact" | "decision" | "preference", text: string): void;
+}
+
+/** Does a project rule (a command prefix) match this command? */
+export function matchesRule(command: string, rule: string): boolean {
+  const c = command.trim().replace(/\s+/g, " ").toLowerCase();
+  const r = rule.trim().replace(/\s+/g, " ").toLowerCase();
+  return r.length > 0 && (c === r || c.startsWith(`${r} `));
 }
 
 export interface ToolResult {
@@ -238,7 +258,12 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       timeout_seconds: z.number().int().min(1).max(1800).default(300),
     }),
     async run(a, ctx) {
-      const verdict = classifyCommand(a.command, ctx.root);
+      let verdict = classifyCommand(a.command, ctx.root);
+      const rules = ctx.commandRules;
+      if (rules?.deny.some((r) => matchesRule(a.command, r)))
+        verdict = { ...verdict, decision: "deny", reason: "blocked by this project's command rules" };
+      else if (verdict.decision === "ask" && rules?.allow.some((r) => matchesRule(a.command, r)))
+        verdict = { ...verdict, decision: "allow", reason: "allowed by this project's command rules" };
       if (verdict.decision === "deny") {
         emit(ctx, {
           type: "error",
@@ -339,7 +364,12 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         : res.cancelled
           ? "Cancelled."
           : `Exit code ${res.exitCode}.`;
-      return `${head}\n${res.output.length > MAX_TOOL_OUTPUT ? "[earlier output omitted]\n" : ""}${tail}`.trimEnd();
+      const extra =
+        isTest && !res.cancelled
+          ? ctx.onTestResult?.({ command: a.command, passed: ok, output: res.output })
+          : undefined;
+      // Lessons go right after the exit code, where they are seen even when the output is long.
+      return `${head}\n${extra ? `${extra}\n\n` : ""}${res.output.length > MAX_TOOL_OUTPUT ? "[earlier output omitted]\n" : ""}${tail}`.trimEnd();
     },
   }),
   tool({
@@ -362,7 +392,96 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       return d ? d.slice(0, MAX_TOOL_OUTPUT) : "No differences.";
     },
   }),
+  tool({
+    name: "repo_map",
+    description:
+      "Show the project's files with their classes, functions and methods (name and line). Use it first to find where things are instead of reading whole files. Optionally limit to a folder.",
+    schema: z.object({ folder: z.string().max(300).default("") }),
+    async run(a, ctx) {
+      const k = needKnowledge(ctx);
+      const prefix = a.folder
+        .replace(/\\/g, "/")
+        .replace(/^\.\/?/, "")
+        .replace(/\/?$/, a.folder ? "/" : "");
+      const map = k.repoMap(prefix === "/" ? "" : prefix);
+      emit(ctx, {
+        type: "searching",
+        text: `Repo map${a.folder ? ` of ${a.folder}` : ""}`,
+        status: "succeeded",
+      });
+      return (
+        map || "The code index is empty (still indexing, or no source files). Use list_dir and find_files."
+      );
+    },
+  }),
+  tool({
+    name: "find_symbol",
+    description: "Find where a class, function, method or type is declared, by name (partial names work).",
+    schema: z.object({ name: z.string().min(1).max(200) }),
+    async run(a, ctx) {
+      const hits = needKnowledge(ctx).findSymbols(a.name);
+      emit(ctx, {
+        type: "searching",
+        text: `Finding symbol ${a.name}`,
+        details: { hits: hits.length },
+        status: "succeeded",
+      });
+      if (hits.length === 0) return `No declaration named like "${a.name}". Try search for usages.`;
+      return hits
+        .map((h) => `${h.path}:${h.startLine}-${h.endLine}  ${h.title}\n    ${h.preview}`)
+        .join("\n");
+    },
+  }),
+  tool({
+    name: "semantic_search",
+    description:
+      "Search the code by meaning, e.g. 'where are users authenticated' or 'database connection setup'. Returns the most relevant file ranges. Use search for exact text.",
+    schema: z.object({
+      query: z.string().min(3).max(300),
+      limit: z.number().int().min(1).max(20).default(8),
+    }),
+    async run(a, ctx) {
+      const hits = await needKnowledge(ctx).search(a.query, a.limit, ctx.signal);
+      emit(ctx, {
+        type: "searching",
+        text: `Searching for "${a.query}"`,
+        details: { hits: hits.length },
+        status: "succeeded",
+      });
+      if (hits.length === 0)
+        return "Nothing found. The index may still be building, or no embedding model is installed; use search instead.";
+      return hits
+        .map(
+          (h) =>
+            `${h.path}:${h.startLine}-${h.endLine}  (${h.kind}, ${h.score.toFixed(2)})\n${indent(h.preview)}`,
+        )
+        .join("\n");
+    },
+  }),
+  tool({
+    name: "remember",
+    description:
+      "Save a lasting fact about this project to its memory (a convention, a decision and why, or a user preference), so future tasks know it. Keep it to one sentence. Do not save things that are obvious from the code.",
+    schema: z.object({ kind: z.enum(["fact", "decision", "preference"]), text: z.string().min(5).max(500) }),
+    async run(a, ctx) {
+      needKnowledge(ctx).remember(a.kind, a.text);
+      return "Saved to project memory.";
+    },
+  }),
 ];
+
+function needKnowledge(ctx: ToolContext): ProjectKnowledge {
+  if (!ctx.knowledge)
+    throw new ToolError("The code index is not available here. Use list_dir, find_files and search.");
+  return ctx.knowledge;
+}
+
+function indent(s: string): string {
+  return s
+    .split("\n")
+    .map((l) => `    ${l}`)
+    .join("\n");
+}
 
 /** Tool definitions in the provider-neutral format the model gateway sends to the model. */
 export function toolDefinitions(names?: string[]): ToolDefinition[] {

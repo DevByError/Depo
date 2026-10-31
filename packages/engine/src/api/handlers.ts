@@ -7,8 +7,12 @@ import {
 } from "@depo/shared";
 import type { TaskManager } from "../agent/tasks";
 import type { ApprovalCenter } from "../approvals";
+import type { CodeIndexer } from "../codeindex/indexer";
 import type { EventBus } from "../events/bus";
+import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
+import type { ProjectRegistry } from "../projects/registry";
+import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
 import type { ProjectService } from "../workspace/service";
 
@@ -19,12 +23,29 @@ export interface HandlerContext {
   approvals: ApprovalCenter;
   projects: ProjectService;
   tasks: TaskManager;
+  registry: ProjectRegistry;
+  memory: MemoryStore;
+  scheduler: ModelScheduler;
+  indexer: CodeIndexer;
   info: {
     startedAt: Date;
     dataDir: string;
     dbPath: string;
     schemaVersion: number;
   };
+}
+
+async function schedulerStatus(ctx: HandlerContext) {
+  const all = await ctx.projects.list(true);
+  const paused = all.filter((p) => ctx.registry.getSettings(p.id).paused).map((p) => p.id);
+  return ctx.scheduler.status(paused);
+}
+
+function removeProject(id: string, ctx: HandlerContext) {
+  ctx.registry.delete(id);
+  ctx.indexer.forget(id);
+  ctx.scheduler.refresh();
+  return { ok: true as const };
 }
 
 export type Handlers = {
@@ -97,11 +118,93 @@ export const handlers: Handlers = {
   "approvals.list": (_p, ctx) => ({ approvals: ctx.approvals.list() }),
   "approvals.respond": (p, ctx) => ({ ok: ctx.approvals.respond(p.id, p.approve) }),
 
-  "projects.list": async (_p, ctx) => ({ projects: await ctx.projects.list() }),
-  "projects.open": (p, ctx) => ctx.projects.open(p.path),
-  "projects.forget": (p, ctx) => {
-    ctx.projects.forget(p.id);
+  "projects.list": async (p, ctx) => ({ projects: await ctx.projects.list(p.includeArchived ?? false) }),
+  "projects.open": async (p, ctx) => {
+    const project = await ctx.projects.open(p.path);
+    ctx.indexer.ensure(project.id);
+    return project;
+  },
+  "projects.forget": (p, ctx) => removeProject(p.id, ctx),
+  "projects.create": async (p, ctx) => {
+    const project = await ctx.registry.create(p);
+    ctx.indexer.ensure(project.id);
+    return project;
+  },
+  "projects.import": async (p, ctx) => {
+    const project = await ctx.registry.importSource(p);
+    ctx.indexer.ensure(project.id);
+    return project;
+  },
+  "projects.update": async (p, ctx) => {
+    const { id, ...patch } = p;
+    const project = await ctx.registry.update(id, patch);
+    if (patch.archived === true) ctx.indexer.stop(id);
+    if (patch.archived === false) ctx.indexer.ensure(id);
+    return project;
+  },
+  "projects.duplicate": async (p, ctx) => {
+    const project = await ctx.registry.duplicate(p.id, p.name);
+    ctx.indexer.ensure(project.id);
+    return project;
+  },
+  "projects.export": (p, ctx) => ctx.registry.exportProject(p.id, p.destDir),
+  "projects.delete": (p, ctx) => removeProject(p.id, ctx),
+  "projects.settings.get": (p, ctx) => ctx.registry.getSettings(p.id),
+  "projects.settings.set": (p, ctx) => {
+    const next = ctx.registry.setSettings(p.id, p.patch);
+    ctx.scheduler.refresh();
+    if (next.indexEnabled) ctx.indexer.ensure(p.id);
+    else ctx.indexer.stop(p.id);
+    return next;
+  },
+  "projects.overview": async (p, ctx) => {
+    const project = await ctx.projects.get(p.id);
+    const facts = ctx.memory.list(p.id);
+    return {
+      project,
+      taskCounts: ctx.registry.taskCounts(p.id),
+      lastTestRun: ctx.registry.lastTestRun(p.id),
+      recentChanges: ctx.registry.recentChanges(p.id),
+      index: ctx.indexer.status(p.id),
+      memory: {
+        facts: facts.filter((f) => f.kind !== "lesson").length,
+        lessons: facts.filter((f) => f.kind === "lesson").length,
+        markdownChars: ctx.memory.getMarkdown(p.id).length,
+      },
+    };
+  },
+  "memory.get": (p, ctx) => ({
+    markdown: ctx.memory.getMarkdown(p.projectId),
+    facts: ctx.memory.list(p.projectId),
+  }),
+  "memory.setMarkdown": (p, ctx) => {
+    ctx.memory.setMarkdown(p.projectId, p.markdown, "user");
     return { ok: true as const };
+  },
+  "memory.addFact": (p, ctx) => ctx.memory.add(p.projectId, p.kind, p.text, "user"),
+  "memory.updateFact": (p, ctx) => ctx.memory.update(p.id, p.text),
+  "memory.deleteFact": (p, ctx) => {
+    ctx.memory.remove(p.id);
+    return { ok: true as const };
+  },
+  "index.status": (p, ctx) => ctx.indexer.status(p.projectId),
+  "index.rebuild": (p, ctx) => ctx.indexer.rebuild(p.projectId),
+  "index.search": async (p, ctx) => ({ hits: await ctx.indexer.search(p.projectId, p.query, p.limit ?? 10) }),
+  "scheduler.status": (_p, ctx) => schedulerStatus(ctx),
+  "scheduler.pause": (p, ctx) => {
+    if (p.projectId) ctx.registry.setSettings(p.projectId, { paused: true });
+    ctx.scheduler.pause(p.projectId);
+    return schedulerStatus(ctx);
+  },
+  "scheduler.resume": (p, ctx) => {
+    if (p.projectId) ctx.registry.setSettings(p.projectId, { paused: false });
+    ctx.scheduler.resume(p.projectId);
+    return schedulerStatus(ctx);
+  },
+  "scheduler.configure": (p, ctx) => {
+    ctx.settings.set("scheduler.max_parallel", p.maxParallel);
+    ctx.scheduler.refresh();
+    return schedulerStatus(ctx);
   },
   "files.list": (p, ctx) => ({ entries: ctx.projects.listFiles(p.projectId, p.path) }),
   "files.read": (p, ctx) => ctx.projects.readFile(p.projectId, p.path),
@@ -110,6 +213,7 @@ export const handlers: Handlers = {
   "changes.apply": (p, ctx) => ctx.projects.applyChangeSet(p.id, ctx.projects.workspaceFor(p.id), p.files),
   "changes.discard": (p, ctx) => ctx.projects.discardChangeSet(p.id),
   "tasks.list": (p, ctx) => ({ tasks: ctx.tasks.list(p.projectId) }),
+  "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId),
   "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),

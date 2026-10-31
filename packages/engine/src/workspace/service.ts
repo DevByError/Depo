@@ -41,7 +41,8 @@ export class ProjectService {
 
   // ---- projects --------------------------------------------------------------------------
 
-  async open(rawPath: string): Promise<Project> {
+  /** Check a folder can be a project; returns its absolute path. */
+  validateFolder(rawPath: string): string {
     const root = path.resolve(rawPath.trim().replace(/^"(.*)"$/, "$1"));
     let st: fs.Stats;
     try {
@@ -54,12 +55,29 @@ export class ProjectService {
     if (isWithin(this.dirs.root, root) || isWithin(root, this.dirs.root)) {
       throw new Error("That folder contains Depo's own data. Choose a project folder.");
     }
+    return root;
+  }
+
+  async open(
+    rawPath: string,
+    meta: {
+      origin?: "opened" | "created" | "imported" | "duplicated";
+      description?: string;
+      stack?: string;
+    } = {},
+  ): Promise<Project> {
+    const root = this.validateFolder(rawPath);
     const now = new Date().toISOString();
     const existing = this.db.select().from(projects).where(eq(projects.rootPath, root)).get();
     let id: string;
     if (existing) {
       id = existing.id;
-      this.db.update(projects).set({ lastOpenedAt: now, updatedAt: now }).where(eq(projects.id, id)).run();
+      // Opening an archived project brings it back.
+      this.db
+        .update(projects)
+        .set({ lastOpenedAt: now, updatedAt: now, archivedAt: null })
+        .where(eq(projects.id, id))
+        .run();
     } else {
       id = newId("prj");
       this.db
@@ -69,16 +87,22 @@ export class ProjectService {
           name: path.basename(root),
           rootPath: root,
           lastOpenedAt: now,
+          description: meta.description ?? "",
+          stack: meta.stack ?? "",
+          origin: meta.origin ?? "opened",
           createdAt: now,
           updatedAt: now,
         })
         .run();
+      const verb = { opened: "Opened", created: "Created", imported: "Imported", duplicated: "Duplicated" }[
+        meta.origin ?? "opened"
+      ];
       this.bus.emit({
         projectId: id,
         agent: "engine",
-        type: "info",
-        text: `Opened project ${path.basename(root)}`,
-        details: { path: root },
+        type: "project_changed",
+        text: `${verb} project ${path.basename(root)}`,
+        details: { path: root, change: meta.origin ?? "opened" },
         status: "succeeded",
       });
     }
@@ -88,7 +112,8 @@ export class ProjectService {
   async get(id: string): Promise<Project> {
     const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
     if (!row) throw new Error(`Unknown project: ${id}`);
-    const git = fs.existsSync(row.rootPath) && (await isGitRepo(row.rootPath));
+    const exists = fs.existsSync(row.rootPath);
+    const git = exists && (await isGitRepo(row.rootPath));
     let branch: string | null = null;
     if (git)
       branch = await gitStatus(row.rootPath)
@@ -102,16 +127,39 @@ export class ProjectService {
       createdAt: row.createdAt,
       isGit: git,
       branch,
+      description: row.description,
+      stack: row.stack,
+      origin:
+        (["opened", "created", "imported", "duplicated"] as const).find((o) => o === row.origin) ?? "opened",
+      archivedAt: row.archivedAt,
+      exists,
     };
   }
 
-  async list(): Promise<Project[]> {
+  async list(includeArchived = false): Promise<Project[]> {
     const rows = this.db.select().from(projects).orderBy(desc(projects.lastOpenedAt)).all();
-    return Promise.all(rows.map((r) => this.get(r.id)));
+    return Promise.all(rows.filter((r) => includeArchived || !r.archivedAt).map((r) => this.get(r.id)));
   }
 
+  /** Remove the project from Depo with its tasks, change sets, checkpoints and workspaces. The folder stays. */
   forget(id: string): void {
+    const row = this.db.select().from(projects).where(eq(projects.id, id)).get();
+    if (!row) return;
+    const taskRows = this.db.select().from(tasks).where(eq(tasks.projectId, id)).all();
+    const cps = this.db.select().from(checkpoints).where(eq(checkpoints.projectId, id)).all();
     this.db.delete(projects).where(eq(projects.id, id)).run();
+    for (const t of taskRows) {
+      if (t.workspacePath) removeShadow(t.workspacePath);
+    }
+    for (const c of cps) fs.rmSync(path.join(this.dirs.checkpoints, c.id), { recursive: true, force: true });
+    this.bus.emit({
+      projectId: id,
+      agent: "engine",
+      type: "project_changed",
+      text: `Removed project ${row.name} from Depo (its folder was not touched)`,
+      details: { change: "deleted", path: row.rootPath },
+      status: "succeeded",
+    });
   }
 
   // ---- read-only browsing (Files tab) ------------------------------------------------------

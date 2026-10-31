@@ -1,8 +1,10 @@
 import {
+  BookMarked,
   BookOpen,
   Boxes,
   FileDiff,
   FlaskConical,
+  FolderKanban,
   FolderTree,
   type LucideIcon,
   MessageSquare,
@@ -14,7 +16,9 @@ import type { KeyboardEvent } from "react";
 import { ChatPanel } from "@/components/panels/ChatPanel";
 import { DiffReviewPanel } from "@/components/panels/DiffReviewPanel";
 import { FilesPanel } from "@/components/panels/FilesPanel";
+import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import { ModelsPanel } from "@/components/panels/ModelsPanel";
+import { OverviewPanel } from "@/components/panels/OverviewPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
@@ -28,9 +32,11 @@ interface TabDef {
 }
 
 export const CENTER_TABS: TabDef[] = [
+  { id: "overview", label: "Project", icon: FolderKanban },
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "files", label: "Files", icon: FolderTree },
   { id: "diff", label: "Diff Review", icon: FileDiff },
+  { id: "memory", label: "Memory", icon: BookMarked },
   {
     id: "diagrams",
     label: "Diagrams",
@@ -129,7 +135,11 @@ export function CenterTabs() {
           aria-labelledby={`tab-${current.id}`}
           className="min-h-0 flex-1"
         >
-          {current.id === "chat" ? (
+          {current.id === "overview" ? (
+            <OverviewPanel />
+          ) : current.id === "memory" ? (
+            <MemoryPanel />
+          ) : current.id === "chat" ? (
             <ChatPanel />
           ) : current.id === "files" ? (
             <FilesPanel />

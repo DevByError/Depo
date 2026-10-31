@@ -9,14 +9,24 @@ import {
   PARSE_ERROR,
   type ToolCall,
 } from "@depo/model-gateway";
-import { type ChatItem, newId, type Task, TaskSchema, type TaskStatus } from "@depo/shared";
-import { asc, desc, eq } from "drizzle-orm";
+import {
+  type ChatItem,
+  newId,
+  type ProjectSettings,
+  type Task,
+  TaskSchema,
+  type TaskStatus,
+} from "@depo/shared";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import type { ApprovalCenter } from "../approvals";
+import type { CodeIndexer } from "../codeindex/indexer";
 import type { AppDb } from "../db";
 import { messages, projects, tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
 import type { Logger } from "../logger";
+import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
+import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, TOOLS, type ToolContext, toolDefinitions } from "../tools/index";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { codingSystemPrompt, venvEnv } from "./prompt";
@@ -37,9 +47,17 @@ export interface TaskManagerOptions {
   models: Pick<ModelManager, "resolve">;
   projects: ProjectService;
   approvals: ApprovalCenter;
+  memory?: MemoryStore;
+  scheduler?: ModelScheduler;
+  indexer?: CodeIndexer;
+  projectSettings?: (projectId: string) => ProjectSettings;
   maxSteps?: number;
   retryDelayMs?: number;
 }
+
+/** Budgets (characters) for what is added to the system prompt. */
+const MEMORY_BUDGET = 5000;
+const REPO_MAP_BUDGET = 3500;
 
 /**
  * Runs coding tasks: one agent, one shadow workspace per task, a tool loop until the model
@@ -61,6 +79,17 @@ export class TaskManager {
       .where(eq(tasks.projectId, projectId))
       .orderBy(desc(tasks.createdAt))
       .limit(100)
+      .all()
+      .map((r) => toTask(r));
+  }
+
+  /** Tasks that are queued, running or waiting for approval, across every project. */
+  active(): Task[] {
+    return this.o.db
+      .select()
+      .from(tasks)
+      .where(inArray(tasks.status, ["queued", "running", "waiting"]))
+      .orderBy(desc(tasks.updatedAt))
       .all()
       .map((r) => toTask(r));
   }
@@ -208,14 +237,19 @@ export class TaskManager {
       status: "started",
     });
 
+    const settings = this.o.projectSettings?.(project.id);
+    this.o.indexer?.ensure(project.id);
     const history = this.loadHistory(taskId);
+    // The system prompt is rebuilt on every run so it carries the latest memory and repo map.
+    const sys: ChatMessage = {
+      role: "system",
+      content: this.systemPrompt(project.id, project.name, ws.root),
+    };
     if (history[0]?.role !== "system") {
-      const sys: ChatMessage = {
-        role: "system",
-        content: codingSystemPrompt({ projectName: project.name, root: ws.root }),
-      };
       history.unshift(sys);
-      this.addMessage(taskId, sys, "0");
+      this.addMessage(taskId, { role: "system", content: "(system prompt, rebuilt for each run)" }, "0");
+    } else {
+      history[0] = sys;
     }
 
     const ctx: ToolContext = {
@@ -227,10 +261,14 @@ export class TaskManager {
       agent: CODER_AGENT,
       signal,
       env: venvEnv(ws.root),
+      ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
+      ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
+      onTestResult: (r) => lessons.onTest(r),
     };
+    const lessons = this.lessonTracker(project.id);
     const tools = toolDefinitions();
     const toolNames = TOOLS.map((t) => t.name);
-    const maxSteps = this.o.maxSteps ?? DEFAULT_MAX_STEPS;
+    const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const failures = new Map<string, number>();
     let finalText = "";
     let steps = 0;
@@ -252,6 +290,7 @@ export class TaskManager {
       let streamed = "";
       let lastEmit = 0;
       const res = await this.chatWithRetry(
+        { projectId: project.id, taskId, label: row.title },
         provider,
         { model, messages: history, tools, contextLength, signal },
         (delta) => {
@@ -320,6 +359,7 @@ export class TaskManager {
       }
       for (const call of calls) {
         if (signal.aborted) break;
+        lessons.onCall(call.name, (call.arguments ?? {}) as Record<string, unknown>);
         const result = await executeTool(call.name, call.arguments, ctx);
         let content = result.content;
         if (result.isError) {
@@ -384,6 +424,7 @@ export class TaskManager {
   }
 
   private async chatWithRetry(
+    job: { projectId: string; taskId: string; label: string },
     provider: ModelProvider,
     req: Parameters<ModelProvider["chat"]>[0],
     onText: (d: string) => void,
@@ -391,7 +432,10 @@ export class TaskManager {
   ): Promise<ChatResult | { badOutput: string } | null> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await collectChat(provider.chat(req), onText);
+        const call = () => collectChat(provider.chat(req), onText);
+        return await (this.o.scheduler
+          ? this.o.scheduler.run({ ...job, model: req.model, priority: "task" }, call, req.signal)
+          : call());
       } catch (err) {
         if (err instanceof ModelGatewayError && err.kind === "cancelled") return null;
         if (isBadModelOutput(err)) {
@@ -415,6 +459,77 @@ export class TaskManager {
         if (req.signal?.aborted) return null;
       }
     }
+  }
+
+  // ---- memory, index and lessons ---------------------------------------------------------
+
+  private systemPrompt(projectId: string, projectName: string, root: string): string {
+    const parts = [codingSystemPrompt({ projectName, root })];
+    const memory = this.o.memory?.contextFor(projectId, MEMORY_BUDGET).trim();
+    if (memory) parts.push(`# What you know about this project\n${memory}`);
+    const map = this.o.indexer?.repoMap(projectId, REPO_MAP_BUDGET).trim();
+    if (map) {
+      parts.push(
+        `# Repo map (files and their main symbols; use repo_map, find_symbol and semantic_search for more)\n${map}`,
+      );
+    }
+    if (this.o.memory) {
+      parts.push(
+        "When you learn something lasting about this project (a convention, a decision, a user preference), save it with the remember tool.",
+      );
+    }
+    return parts.join("\n\n");
+  }
+
+  private knowledge(projectId: string): ToolContext["knowledge"] | undefined {
+    const { indexer, memory } = this.o;
+    if (!indexer && !memory) return undefined;
+    return {
+      repoMap: (prefix) => indexer?.repoMap(projectId, 6000, prefix) ?? "",
+      findSymbols: (name) => indexer?.findSymbols(projectId, name) ?? [],
+      search: (query, limit, signal) =>
+        indexer?.search(projectId, query, limit, signal) ?? Promise.resolve([]),
+      remember: (kind, text) => {
+        if (!memory) throw new Error("Memory is not available here.");
+        memory.add(projectId, kind, text, "agent");
+      },
+    };
+  }
+
+  /**
+   * Lessons learned: when tests fail, show fixes that worked before for the same error; when
+   * they pass again, store what changed in between as a new lesson.
+   */
+  private lessonTracker(projectId: string) {
+    const memory = this.o.memory;
+    let failure: string | null = null;
+    const touched = new Set<string>();
+    return {
+      onCall: (name: string, args: Record<string, unknown>) => {
+        if (failure && (name === "edit_file" || name === "write_file") && typeof args.path === "string")
+          touched.add(args.path);
+      },
+      onTest: (r: { passed: boolean; output: string }): string | undefined => {
+        if (!memory) return undefined;
+        if (!r.passed) {
+          if (!failure) touched.clear();
+          failure = r.output;
+          const found = memory.findLessons(projectId, r.output);
+          if (!found.length) return undefined;
+          return `Lessons from earlier fixes of a similar error:\n${found.map((f) => `- ${f.text}`).join("\n")}`;
+        }
+        if (failure && touched.size > 0) {
+          memory.recordLesson(
+            projectId,
+            failure,
+            `fixed by changing ${[...touched].slice(0, 6).join(", ")}.`,
+          );
+        }
+        failure = null;
+        touched.clear();
+        return undefined;
+      },
+    };
   }
 
   // ---- persistence -----------------------------------------------------------------------

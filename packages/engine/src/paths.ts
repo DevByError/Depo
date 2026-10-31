@@ -9,6 +9,8 @@ export interface DataDirs {
   logs: string;
   workspaces: string;
   checkpoints: string;
+  /** Per-project Depo data (memory file, exports). */
+  projects: string;
   agents: string;
   skills: string;
   knowledge: string;
@@ -46,6 +48,7 @@ export function dataDirs(root: string): DataDirs {
     logs: path.join(root, "logs"),
     workspaces: path.join(root, "workspaces"),
     checkpoints: path.join(root, "checkpoints"),
+    projects: path.join(root, "projects"),
     agents: path.join(root, "agents"),
     skills: path.join(root, "skills"),
     knowledge: path.join(root, "knowledge"),

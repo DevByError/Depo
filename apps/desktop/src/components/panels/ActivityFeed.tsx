@@ -1,12 +1,14 @@
 import type { DepoEvent } from "@depo/shared";
+import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronRight, HeartPulse, Search } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { call } from "@/lib/engine";
 import { EVENT_STYLE, TONE_TEXT } from "@/lib/event-style";
 import { formatBytes, formatClock, formatDuration } from "@/lib/format";
 import { useEngine } from "@/store/engine";
-import { useUi } from "@/store/ui";
+import { type FeedScope, useUi } from "@/store/ui";
 import { HeartbeatPulse } from "./HeartbeatPulse";
 
 export function filterEvents(events: DepoEvent[], query: string): DepoEvent[] {
@@ -17,6 +19,12 @@ export function filterEvents(events: DepoEvent[], query: string): DepoEvent[] {
   );
 }
 
+/** "This project" keeps the open project's events plus engine-wide ones (no project). */
+export function filterByScope(events: DepoEvent[], scope: FeedScope, projectId: string | null): DepoEvent[] {
+  if (scope === "all" || !projectId) return events;
+  return events.filter((e) => e.projectId === projectId || e.projectId === null);
+}
+
 export function ActivityFeed() {
   const events = useEngine((s) => s.events);
   const heartbeats = useEngine((s) => s.heartbeats);
@@ -25,6 +33,19 @@ export function ActivityFeed() {
   const showHeartbeats = useUi((s) => s.showHeartbeats);
   const setShowHeartbeats = useUi((s) => s.setShowHeartbeats);
   const deferredQuery = useDeferredValue(query);
+  const scope = useUi((s) => s.feedScope);
+  const setScope = useUi((s) => s.setFeedScope);
+  const projectId = useUi((s) => s.projectId);
+  const connected = useEngine((s) => s.status === "open");
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => call("projects.list", { includeArchived: true }),
+    enabled: connected,
+  });
+  const names = useMemo(
+    () => new Map((projects.data?.projects ?? []).map((p) => [p.id, p.name])),
+    [projects.data],
+  );
 
   const rows = useMemo(() => {
     const base = showHeartbeats
@@ -32,8 +53,8 @@ export function ActivityFeed() {
           a.ts === b.ts ? a.seq - b.seq : a.ts.localeCompare(b.ts),
         )
       : events;
-    return filterEvents(base, deferredQuery);
-  }, [events, heartbeats, showHeartbeats, deferredQuery]);
+    return filterEvents(filterByScope(base, scope, projectId), deferredQuery);
+  }, [events, heartbeats, showHeartbeats, deferredQuery, scope, projectId]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -88,6 +109,28 @@ export function ActivityFeed() {
           Heartbeats
         </button>
       </div>
+      <div
+        className="flex items-center gap-1 border-b border-border px-3 py-1.5"
+        role="radiogroup"
+        aria-label="Show activity from"
+      >
+        {(["project", "all"] as const).map((s) => (
+          // biome-ignore lint/a11y/useSemanticElements: segmented control; role and aria-checked are set.
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={scope === s}
+            onClick={() => setScope(s)}
+            className={cn(
+              "rounded-md px-2 py-0.5 text-[11px]",
+              scope === s ? "bg-accent-soft text-fg" : "text-muted hover:bg-hover hover:text-fg",
+            )}
+          >
+            {s === "project" ? "This project" : "All projects"}
+          </button>
+        ))}
+      </div>
 
       <LiveHeartbeatRow />
 
@@ -125,7 +168,16 @@ export function ActivityFeed() {
                     transform: `translateY(${item.start}px)`,
                   }}
                 >
-                  <EventRow event={ev} open={expanded.has(ev.id)} onToggle={() => toggle(ev.id)} />
+                  <EventRow
+                    event={ev}
+                    open={expanded.has(ev.id)}
+                    onToggle={() => toggle(ev.id)}
+                    projectName={
+                      scope === "all" && ev.projectId && ev.projectId !== projectId
+                        ? (names.get(ev.projectId) ?? "Other project")
+                        : null
+                    }
+                  />
                 </div>
               );
             })}
@@ -157,10 +209,13 @@ const EventRow = memo(function EventRow({
   event,
   open,
   onToggle,
+  projectName,
 }: {
   event: DepoEvent;
   open: boolean;
   onToggle: () => void;
+  /** Shown when the event belongs to a project other than the open one. */
+  projectName: string | null;
 }) {
   const style = EVENT_STYLE[event.type];
   const Icon = style.icon;
@@ -178,6 +233,9 @@ const EventRow = memo(function EventRow({
       >
         <Icon className={cn("mt-0.5 size-3.5 shrink-0", TONE_TEXT[style.tone])} aria-hidden />
         <span className="min-w-0 flex-1">
+          {projectName && (
+            <span className="mr-1.5 rounded bg-raised px-1 py-px text-[10px] text-muted">{projectName}</span>
+          )}
           <span className="font-medium text-fg">{agentLabel(event.agent)}</span>
           <span className="text-subtle"> · </span>
           <span className="break-words text-muted">{event.text}</span>

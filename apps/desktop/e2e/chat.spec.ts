@@ -1,38 +1,9 @@
-import { cpSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
-import { FAKE_OLLAMA_PORT } from "../playwright.config";
+import { expect, test } from "@playwright/test";
+import { fixtureCopy, seriousA11yViolations, useFakeOllamaAsCoder } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
-
-const FIXTURE = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../../scripts/fixtures/fastapi-demo",
-);
-
-/** A fresh copy of the FastAPI demo project, so applying changes never touches the repo. */
-function fixtureCopy(): string {
-  const dir = path.join(mkdtempSync(path.join(tmpdir(), "depo chat ")), "fastapi-demo");
-  cpSync(FIXTURE, dir, { recursive: true });
-  return dir;
-}
-
-async function useFakeOllamaAsCoder(page: Page) {
-  await page.getByRole("tab", { name: "Models" }).click();
-  const panel = page.getByRole("region", { name: "Models" });
-  const runtimes = panel.getByRole("region", { name: "Runtimes" });
-  await runtimes.getByRole("button", { name: "Edit" }).click();
-  await runtimes.getByLabel("Ollama address").fill(`http://127.0.0.1:${FAKE_OLLAMA_PORT}`);
-  await runtimes.getByRole("button", { name: "Save" }).click();
-  await expect(runtimes).toContainText("0.0.0-fake");
-  const plan = panel.getByRole("region", { name: "Auto-Fit plan" });
-  const coder = plan.getByLabel("Use").first();
-  await coder.selectOption({ label: "qwen2.5-coder:1.5b · ollama" });
-  await expect(coder).toHaveValue(/qwen2\.5-coder/);
-}
 
 test('Phase 1 acceptance: "add a /health endpoint to this FastAPI project"', async ({ page }) => {
   test.setTimeout(120_000);
@@ -48,7 +19,7 @@ test('Phase 1 acceptance: "add a /health endpoint to this FastAPI project"', asy
   await page.getByRole("button", { name: "Open a project folder", exact: true }).click();
   await page.getByLabel("Project folder path").fill(project);
   await page.getByRole("button", { name: "Open", exact: true }).click();
-  await expect(page.getByRole("list", { name: "Projects" })).toContainText("fastapi-demo");
+  await expect(page.getByRole("list", { name: "Projects", exact: true })).toContainText("fastapi-demo");
 
   // Ask for the change.
   await page.getByRole("tab", { name: "Chat" }).click();
@@ -96,10 +67,6 @@ for (const theme of ["dark", "light"] as const) {
     await page.evaluate((t) => {
       document.documentElement.dataset.theme = t;
     }, theme);
-    const results = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
-      .analyze();
-    const serious = results.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
-    expect(serious.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
+    expect(await seriousA11yViolations(page)).toEqual([]);
   });
 }

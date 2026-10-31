@@ -92,7 +92,7 @@ Paths longer than 248 characters are prefixed with `\\?\` (or `\\?\UNC\`) before
 - `lib/engine.ts`: the window's single client, wired to the stores.
 - `store/engine.ts` (Zustand): connection status, engine info, event buffer (5,000 newest), heartbeat ring (60).
 - `store/ui.ts` (Zustand): theme, tabs, panel sizes (saved in localStorage, guarded), filters.
-- Layout: sidebar · center tabs (Chat, Files, Diff Review, Diagrams, Slides, Agent Lab, Skills, Models, Knowledge) · right panel (Activity, Agents) · bottom panel (Engine, Terminal, Problems, Test results) · status bar. Panels resize by drag or keyboard and give way on small windows.
+- Layout: sidebar · center tabs (Project, Chat, Files, Diff Review, Memory, Diagrams, Slides, Agent Lab, Skills, Models, Knowledge) · right panel (Activity, Agents) · bottom panel (Engine, Terminal, Problems, Test results) · status bar. Panels resize by drag or keyboard and give way on small windows.
 - Tabs whose features belong to later phases say which phase, instead of showing fake content.
 - Theme tokens in `styles.css`, dark default, light alternative; all text meets WCAG AA (checked by axe in e2e).
 - Shortcuts: Ctrl+B sidebar, Ctrl+J bottom panel, Ctrl+L activity panel, Ctrl+, settings, arrow keys across tabs.
@@ -127,6 +127,30 @@ Chat (tasks.send) ─► TaskManager ─► ModelManager.resolve("coder") ─►
 
 Tables added in migration 2: `projects`, `tasks`, `messages`, `change_sets`, `checkpoints`.
 
+## Phase 2: projects, memory, code index, scheduler
+
+```
+            ┌──────────── ProjectRegistry ── create · import (folder / git clone) · rename · archive · duplicate · export · remove
+UI ─► API ──┼──────────── MemoryStore ────── project-memory.md · facts · lessons · global memory
+            ├──────────── CodeIndexer ────── watcher ─► tree-sitter symbols ─► chunks ─► embeddings (via scheduler, background)
+            └── tasks.send ─► TaskManager ── system prompt + memory + repo map
+                                   │ every model call
+                                   ▼
+                             ModelScheduler ── one queue for all projects: chat > task > background, loaded model first,
+                                   │            round-robin between projects, max parallel, pause all / per project
+                                   ▼
+                             model-gateway ─► Ollama / llama.cpp / LM Studio
+```
+
+- **ProjectRegistry** (`engine/src/projects`): project lifecycle and per-project settings (`project_settings`: index on/off, tasks at once, pause, command allow/deny lists, max steps). Git runs with prompts turned off; clones time out after 15 minutes. `zip.ts` is a small streaming zip writer for export.
+- **MemoryStore** (`engine/src/memory`): Markdown files under `<data>/projects/<id>/` and `_global/`, the `memory_facts` table, lessons with error signatures, and `contextFor()` for prompts.
+- **CodeIndexer** (`engine/src/codeindex`): `code_files` (hash per file), `code_symbols`, `embeddings`; `repoMap`, `findSymbols`, `search` (symbols + semantic). Agent tools: `repo_map`, `find_symbol`, `semantic_search`, `remember`.
+- **ModelScheduler** (`engine/src/scheduler`): `run(request, fn)` wraps each model call; emits ephemeral `queued` events while a job waits.
+- **Separate feeds:** every task event carries its `projectId`; the Activity feed shows "This project" (plus engine-wide events) or "All projects" with a project tag.
+- **UI:** Project tab (dashboard: tasks, last test run, code index with Rebuild, memory counts, recent changes, project settings), Memory tab (project and global notes, facts, lessons), New project and Import dialogs, project menu (edit, duplicate, export, archive, remove), archived list, Running section for every project with the model queue and Pause all, and "Model requests at once" in Settings.
+
+Tables added in migration 3: `project_settings`, `memory_facts`, `code_files`, `code_symbols`, `embeddings`; `projects` gained `description`, `stack`, `origin`, `archived_at`.
+
 ## Coming next
 
-- *(Phase 2)* projects, import, code index, project memory, multi-project scheduler.
+- *(Phase 3)* the Manager and multiple agents per task.

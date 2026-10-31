@@ -1,7 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Moon, Sun, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { setTheme } from "@/lib/engine";
+import { call, setTheme } from "@/lib/engine";
+import { queryClient } from "@/lib/query";
 import { useEngine } from "@/store/engine";
 import { type Theme, useUi } from "@/store/ui";
 
@@ -59,6 +61,8 @@ export function SettingsDialog() {
             </div>
           </fieldset>
 
+          <ParallelSetting />
+
           {info && (
             <dl className="mt-5 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
               <dt className="text-subtle">Data folder</dt>
@@ -72,5 +76,51 @@ export function SettingsDialog() {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/** How many model requests run at once across all projects. One GPU usually serves one well. */
+function ParallelSetting() {
+  const connected = useEngine((s) => s.status === "open");
+  const status = useQuery({
+    queryKey: ["scheduler"],
+    queryFn: () => call("scheduler.status", {}),
+    enabled: connected,
+  });
+  const set = useMutation({
+    mutationFn: (maxParallel: number) => call("scheduler.configure", { maxParallel }),
+    onSuccess: (s) => queryClient.setQueryData(["scheduler"], s),
+  });
+  const value = status.data?.maxParallel ?? 1;
+  return (
+    <fieldset className="mt-5">
+      <legend className="mb-1 text-xs font-medium text-fg">Model requests at once</legend>
+      <p className="mb-2 text-[11px] leading-relaxed text-muted">
+        Tasks from every project share this. With one GPU, 1 is fastest overall: other tasks wait in a queue
+        and their tests and builds still run in parallel. Raise it only if your runtime serves several
+        requests at once.
+      </p>
+      <div className="flex gap-1.5" role="radiogroup" aria-label="Model requests at once">
+        {[1, 2, 3, 4].map((n) => (
+          // biome-ignore lint/a11y/useSemanticElements: styled radio cards; role and aria-checked are set.
+          <button
+            key={n}
+            type="button"
+            role="radio"
+            aria-checked={value === n}
+            disabled={!connected || set.isPending}
+            onClick={() => set.mutate(n)}
+            className={cn(
+              "h-8 w-10 rounded-md border text-[13px] tabular-nums",
+              value === n
+                ? "border-accent bg-accent-soft text-fg"
+                : "border-border text-muted hover:bg-hover",
+            )}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+    </fieldset>
   );
 }

@@ -97,3 +97,24 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Decision:** One agent (`coder@1.0.0`) loops: model call with tool definitions → run the tool calls → repeat, up to 40 steps, until the model answers without tools. Models that print tool calls as text (`<tool_call>` tags, JSON fences, bare JSON) are parsed too. Transient model errors are retried twice. Old tool outputs are shortened when the history approaches the context window. Follow-up messages continue the same task and the same shadow copy.
 - **Reason:** Small local models vary a lot in how well they follow native tool calling; the text fallback makes 7B-class models usable. The multi-agent Manager arrives in Phase 3 on top of this loop.
 - **Testing:** `scripts/fake-ollama-lib.ts` is a scripted Ollama that performs the acceptance task through real tool calls, so the whole flow (agent, real pytest, diff, apply, undo) is tested without a GPU.
+
+## ADR-0021: Code index uses tree-sitter WebAssembly grammars embedded in the engine
+- **Decision:** Symbols (classes, functions, methods, types) come from `web-tree-sitter` 0.25.10 with the prebuilt grammars of `tree-sitter-wasms` 0.1.13 for Python, TypeScript, TSX, JavaScript, Go, Rust, Java, C#, Kotlin, PHP, Dart, Ruby and C. The `.wasm` files are imported with `with { type: "file" }`, so `bun build --compile` embeds them and the engine works offline. One generic walker maps node types to symbol kinds for every language.
+- **Reason:** Native tree-sitter bindings need a C toolchain on Windows and per-language builds; WebAssembly grammars are portable and already compiled. Newer web-tree-sitter releases cannot load these grammar files (ABI mismatch), so the two versions are pinned together.
+- **Cost:** about 14 MB more in the engine executable.
+
+## ADR-0022: Embeddings are stored as float32 blobs and searched in memory
+- **Decision:** Code is split into 60-line chunks (10 lines overlap), embedded with the `embedding` role model through the scheduler at background priority, and stored in the `embeddings` table as normalised float32 blobs. Search loads a project's vectors once and does a brute-force dot product. Without an installed embedding model the index keeps symbols only and says so.
+- **Reason:** A project of a few thousand files gives tens of thousands of vectors; a linear scan takes milliseconds and needs no native SQLite extension (sqlite-vec would have to be shipped and loaded per platform). Revisit if projects get much larger.
+- **Updates:** a recursive file watcher (1.5 s debounce) re-indexes changed files only, detected by content hash.
+
+## ADR-0023: Project memory is a Markdown file plus structured facts; lessons come from fix loops
+- **Decision:** Each project has `projects/<id>/project-memory.md` in the data folder (seeded with name, description and stack) and rows in `memory_facts` (fact, decision, preference, lesson). Global memory is `projects/_global/global-memory.md` plus facts with no project. Before each run the agent's system prompt gets the memory (5,000 characters) and a repo map (3,500 characters). Agents save facts with a `remember` tool. When tests fail and later pass in the same task, Depo stores a lesson keyed by an error signature (the first error line with paths, numbers and quoted values removed); the next failing run with the same signature shows the lesson with the test output.
+- **Reason:** Memory stays readable and editable by the user, and is never written into the user's project folder.
+
+## ADR-0024: One model queue for all projects
+- **Decision:** Every model call goes through `ModelScheduler`. Order: priority (chat > task > background), then the model that is already loaded (to avoid slow reloads, with a 20 s starvation guard), then round-robin between projects, then first come. Limits: `scheduler.max_parallel` (default 1, set in Settings) across all projects and `maxParallel` per project. Pause all, or pause one project; waiting tasks keep their place and show "Waiting for the model to finish another job". Tests and builds do not go through the queue, so they run in parallel.
+- **Reason:** A single consumer GPU serves one request well; running two at once mostly makes both slower and can push a model out of VRAM.
+
+## ADR-0025: Project lifecycle never deletes the user's files
+- **Decision:** "Remove from Depo" deletes Depo's rows, task copies, checkpoints, memory and index for the project; the project folder is left alone. Create, clone and duplicate only write into a folder that did not exist (or is empty). Duplicate copies the folder without installed packages and caches, plus memory and settings. Export writes a .zip (project files without packages, plus `.depo-export/project.json` and `project-memory.md`) to Downloads. Removing task copies unlinks the dependency links first, so the real `node_modules` or `.venv` can never be deleted through them.

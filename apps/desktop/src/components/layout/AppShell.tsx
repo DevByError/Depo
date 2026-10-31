@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SettingsDialog } from "@/components/panels/SettingsDialog";
+import { ProjectDialogs } from "@/components/projects/ProjectDialogs";
 import { Splitter } from "@/components/ui/splitter";
 import { clamp, LAYOUT_LIMITS, useUi } from "@/store/ui";
 import { CenterTabs } from "./CenterTabs";
@@ -131,6 +132,7 @@ export function AppShell() {
       </div>
       <StatusBar />
       <SettingsDialog />
+      <ProjectDialogs />
     </div>
   );
 }

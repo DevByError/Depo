@@ -99,6 +99,74 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX checkpoints_project ON checkpoints (project_id, created_at);
     `,
   },
+  {
+    version: 3,
+    name: "projects_admin_memory_code_index",
+    sql: `
+      ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN stack TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN origin TEXT NOT NULL DEFAULT 'opened';
+      ALTER TABLE projects ADD COLUMN archived_at TEXT;
+      CREATE TABLE project_settings (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, key)
+      );
+      CREATE TABLE memory_facts (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        signature TEXT,
+        source TEXT NOT NULL,
+        uses INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX memory_facts_project ON memory_facts (project_id, kind);
+      CREATE INDEX memory_facts_signature ON memory_facts (signature);
+      CREATE TABLE code_files (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        lang TEXT,
+        size INTEGER NOT NULL,
+        lines INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, path)
+      );
+      CREATE TABLE code_symbols (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        parent TEXT,
+        start_line INTEGER NOT NULL,
+        end_line INTEGER NOT NULL,
+        signature TEXT NOT NULL
+      );
+      CREATE INDEX code_symbols_path ON code_symbols (project_id, path);
+      CREATE INDEX code_symbols_name ON code_symbols (project_id, name);
+      CREATE TABLE embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        start_line INTEGER NOT NULL,
+        end_line INTEGER NOT NULL,
+        text_hash TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        vector BLOB NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX embeddings_path ON embeddings (project_id, path);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

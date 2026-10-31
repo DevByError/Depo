@@ -1,6 +1,7 @@
 import type { EventType } from "@depo/shared";
 import {
   AlertTriangle,
+  BookMarked,
   Brain,
   Camera,
   CheckCircle2,
@@ -11,11 +12,14 @@ import {
   FileEdit,
   FilePen,
   FileText,
+  FolderKanban,
   Gauge,
   GitCommit,
   HeartPulse,
+  Hourglass,
   Info,
   Link2,
+  ListTree,
   type LucideIcon,
   Package,
   PlugZap,
@@ -67,6 +71,10 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   hardware_profiled: { icon: Cpu, tone: "info", label: "Hardware" },
   model_download: { icon: Download, tone: "info", label: "Download" },
   model_benchmark: { icon: Gauge, tone: "info", label: "Benchmark" },
+  queued: { icon: Hourglass, tone: "neutral", label: "Queued" },
+  memory_updated: { icon: BookMarked, tone: "accent", label: "Memory" },
+  indexing: { icon: ListTree, tone: "neutral", label: "Index" },
+  project_changed: { icon: FolderKanban, tone: "info", label: "Project" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {

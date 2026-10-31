@@ -39,7 +39,8 @@ export default defineConfig({
     {
       command: "bun ../../scripts/fake-ollama.ts",
       url: `http://127.0.0.1:${FAKE_OLLAMA_PORT}/`,
-      env: { FAKE_OLLAMA_PORT: String(FAKE_OLLAMA_PORT) },
+      // A short pause per agent step, so tasks in two projects visibly overlap.
+      env: { FAKE_OLLAMA_PORT: String(FAKE_OLLAMA_PORT), FAKE_OLLAMA_STEP_MS: "400" },
       reuseExistingServer: false,
     },
     {

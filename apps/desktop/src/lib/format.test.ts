@@ -1,6 +1,6 @@
-import { expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { filterEvents } from "@/components/panels/ActivityFeed";
-import { formatAgo, formatBytes, formatDuration } from "./format";
+import { formatAgo, formatBytes, formatDuration, formatRelative } from "./format";
 
 test("formatBytes", () => {
   expect(formatBytes(512)).toBe("512 B");
@@ -41,4 +41,14 @@ test("filterEvents matches text, agent and type", () => {
   expect(filterEvents([...events], "BACKEND")).toHaveLength(1);
   expect(filterEvents([...events], "reading")).toHaveLength(1);
   expect(filterEvents([...events], "")).toHaveLength(2);
+});
+
+describe("formatRelative", () => {
+  const now = Date.parse("2026-10-31T12:00:00Z");
+  it("reads like a person would say it", () => {
+    expect(formatRelative("2026-10-31T11:59:30Z", now)).toBe("just now");
+    expect(formatRelative("2026-10-31T11:55:00Z", now)).toBe("5m ago");
+    expect(formatRelative("2026-10-31T09:00:00Z", now)).toBe("3h ago");
+    expect(formatRelative("not a date", now)).toBe("");
+  });
 });

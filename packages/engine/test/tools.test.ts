@@ -7,7 +7,13 @@ import { openDatabase } from "../src/db";
 import { EventBus } from "../src/events/bus";
 import { createLogger } from "../src/logger";
 import { editFileTool, readFileTool, writeFileTool } from "../src/tools/fs-tools";
-import { executeTool, summarizeTests, type ToolContext, toolDefinitions } from "../src/tools/index";
+import {
+  executeTool,
+  matchesRule,
+  summarizeTests,
+  type ToolContext,
+  toolDefinitions,
+} from "../src/tools/index";
 import { resolveInside } from "../src/tools/paths";
 import { globToRegExp, searchTool } from "../src/tools/search";
 import { classifyCommand, splitCommand } from "../src/tools/shell/policy";
@@ -282,6 +288,70 @@ describe("agent tools", () => {
     const declined = await pending;
     expect(declined.content).toContain("declined");
   });
+
+  test("run_command: project rules deny commands and allow ones that would ask", async () => {
+    ctx.commandRules = { allow: ['python -c "print(1)"'], deny: ["echo"] };
+    const denied = await executeTool("run_command", { command: "echo   hello" }, ctx);
+    expect(denied.content).toContain("this project's command rules");
+    const allowed = await executeTool("run_command", { command: 'python -c "print(1)"' }, ctx);
+    expect(ctx.approvals.list()).toHaveLength(0);
+    expect(allowed.content).not.toContain("declined");
+    // An allow rule never overrides the built-in deny list.
+    ctx.commandRules = { allow: ["rm -rf /"], deny: [] };
+    expect((await executeTool("run_command", { command: "rm -rf /" }, ctx)).content).toContain("not allowed");
+  });
+
+  test("matchesRule matches whole command prefixes", () => {
+    expect(matchesRule("npm run lint", "npm run lint")).toBe(true);
+    expect(matchesRule("npm  run lint --fix", "npm run lint")).toBe(true);
+    expect(matchesRule("npm run linter", "npm run lint")).toBe(false);
+    expect(matchesRule("anything", "  ")).toBe(false);
+  });
+
+  test("index and memory tools use the project knowledge", async () => {
+    const saved: string[] = [];
+    const hit = {
+      path: "app/main.py",
+      startLine: 7,
+      endLine: 8,
+      score: 0.9,
+      kind: "symbol" as const,
+      title: "function index",
+      preview: "def index():",
+    };
+    expect((await executeTool("repo_map", {}, ctx)).content).toContain("not available");
+    ctx.knowledge = {
+      repoMap: (prefix) => `map of [${prefix}]`,
+      findSymbols: (name) => (name === "index" ? [hit] : []),
+      search: async () => [hit],
+      remember: (kind, text) => {
+        saved.push(`${kind}:${text}`);
+      },
+    };
+    expect((await executeTool("repo_map", { folder: "./app" }, ctx)).content).toBe("map of [app/]");
+    expect((await executeTool("find_symbol", { name: "index" }, ctx)).content).toContain("app/main.py:7-8");
+    expect((await executeTool("find_symbol", { name: "nope" }, ctx)).content).toContain("No declaration");
+    expect((await executeTool("semantic_search", { query: "root route" }, ctx)).content).toContain(
+      "(symbol, 0.90)",
+    );
+    await executeTool("remember", { kind: "decision", text: "Routes live in app/main.py" }, ctx);
+    expect(saved).toEqual(["decision:Routes live in app/main.py"]);
+  });
+
+  test("test runs report to onTestResult, which can add lessons for the model", async () => {
+    const seen: boolean[] = [];
+    ctx.onTestResult = (r) => {
+      seen.push(r.passed);
+      return r.passed ? undefined : "Lessons from earlier fixes: install httpx";
+    };
+    const r = await executeTool(
+      "run_command",
+      { command: 'python -m pytest -q -k "nothing_matches_this"' },
+      ctx,
+    );
+    expect(seen).toHaveLength(1);
+    if (seen[0] === false) expect(r.content).toContain("Lessons from earlier fixes");
+  }, 30_000);
 
   test("test commands produce a test_result event with counts", async () => {
     fs.mkdirSync(path.join(root, "tests"));

@@ -2,9 +2,11 @@ import { create } from "zustand";
 
 export type Theme = "dark" | "light";
 export type CenterTab =
+  | "overview"
   | "chat"
   | "files"
   | "diff"
+  | "memory"
   | "diagrams"
   | "slides"
   | "agent-lab"
@@ -23,6 +25,14 @@ interface Layout {
   bottomOpen: boolean;
 }
 
+export type ProjectDialog =
+  | { kind: "new" }
+  | { kind: "import" }
+  | { kind: "rename"; projectId: string }
+  | { kind: "remove"; projectId: string };
+
+export type FeedScope = "project" | "all";
+
 interface UiState extends Layout {
   theme: Theme;
   centerTab: CenterTab;
@@ -31,13 +41,18 @@ interface UiState extends Layout {
   settingsOpen: boolean;
   feedQuery: string;
   showHeartbeats: boolean;
-  /** The open project (one at a time in Phase 1). */
+  /** The project shown in the center tabs. Tasks of other projects keep running. */
   projectId: string | null;
+  projectDialog: ProjectDialog | null;
+  /** Activity feed: the open project only, or every project. */
+  feedScope: FeedScope;
   /** Change set shown in Diff Review. */
   changeSetId: string | null;
   /** Task shown in Chat; null starts a new task. */
   taskId: string | null;
   setProjectId(id: string | null): void;
+  setProjectDialog(d: ProjectDialog | null): void;
+  setFeedScope(s: FeedScope): void;
   setTaskId(id: string | null): void;
   setChangeSetId(id: string | null): void;
   setTheme(t: Theme): void;
@@ -108,9 +123,13 @@ export const useUi = create<UiState>((set, get) => ({
   feedQuery: "",
   showHeartbeats: false,
   projectId: null,
+  projectDialog: null,
+  feedScope: "project",
   changeSetId: null,
   taskId: null,
   setProjectId: (projectId) => set({ projectId, changeSetId: null, taskId: null }),
+  setProjectDialog: (projectDialog) => set({ projectDialog }),
+  setFeedScope: (feedScope) => set({ feedScope }),
   setTaskId: (taskId) => set({ taskId }),
   setChangeSetId: (changeSetId) => set({ changeSetId }),
   setTheme: (theme) => {

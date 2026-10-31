@@ -1,8 +1,45 @@
 # Progress
 
-**Current phase:** Phase 1 (single agent core) is complete and accepted: on the owner's Windows PC (GTX 1650 4 GB, 25 GB RAM) the agent with `qwen3-coder:30b` on Ollama added the /health endpoint and its test, ran pytest (2 passed) and handed over a diff for review. Phase 2 has not started.
+**Current phase:** Phase 2 (projects, memory, code index, multi-project scheduler) is built and passes its acceptance test in the container. It needs a run on Windows. Phase 1 was accepted on the owner's Windows PC.
 
 _Last updated: 2026-10-31_
+
+## Phase 2 acceptance criterion
+
+| Criterion | Status |
+|---|---|
+| Two projects run tasks at the same time with correct, separate feeds and no cross-contamination | **Passes in the app** (Playwright `e2e/projects.spec.ts`: two imported projects, `/health` in one and `/version` in the other, both running at once, each feed and diff holds only its own work) and in the engine (`test/concurrency.test.ts`: overlapping runs, queued model calls, per-project feeds, change sets and task lists). **Not yet run on Windows.** |
+
+## Completed in Phase 2
+
+- **Projects:** New project wizard (name, folder, description, stack, git init), Import a folder or clone a git repository, Edit details, Duplicate (without installed packages), Export as .zip, Archive and restore, Remove from Depo (the folder is kept). Per-project settings: code index on/off, tasks at once, pause, commands to allow or block, most steps per task (ADR-0025).
+- **Project dashboard** (Project tab): task counts, last test run, code index status with Rebuild, memory counts, recent changes, settings.
+- **Memory** (Memory tab): project notes (Markdown) and global preferences, facts, decisions and preferences (agents add them with `remember`), and lessons learned from fixed test failures, shown to the agent the next time the same error appears (ADR-0023).
+- **Code index:** tree-sitter symbols for 13 languages, repo map in the agent's prompt, `repo_map`, `find_symbol` and `semantic_search` tools, embeddings when an embedding model is installed, file watcher with incremental updates (ADR-0021, ADR-0022).
+- **Scheduler:** one model queue for all projects with priorities, loaded-model preference, fairness between projects, max parallel (Settings → Model requests at once), Pause all and per-project pause (ADR-0024).
+- **Running view** for every project with project names and the model queue; **Activity feed** filter "This project / All projects".
+- Safety fix: removing a task copy unlinks the linked `node_modules`/`.venv` first, so the real folders can never be deleted through the link.
+
+## Verification (development container, Linux x64)
+
+| Check | Result |
+|---|---|
+| `bun run lint` (Biome) and `bun run typecheck` (4 packages, strict) | clean |
+| Model gateway tests | 35 passed |
+| Shared tests | 7 passed |
+| Engine tests (adds projects, memory, code index, scheduler, two projects at once, lessons) | 142 passed |
+| UI unit tests (Vitest) | 22 passed |
+| End-to-end (Playwright, Chromium): app shell, Models, Chat (Phase 1 acceptance), Projects (Phase 2 acceptance, project lifecycle), axe WCAG 2.2 AA | 13 passed |
+
+## Next steps
+
+1. On Windows: `bun install` (new packages), then `bun run tauri:dev`; import two projects and run a task in each.
+2. Download an embedding model (Models → Embedding) to turn on search by meaning.
+3. Phase 3: the Manager and multiple agents per task.
+
+---
+
+# Phase 1 (accepted)
 
 ## Phase 1 acceptance criterion
 
@@ -36,7 +73,7 @@ _Last updated: 2026-10-31_
 
 ## Known issues
 
-- **Nothing in Phase 1 has run on Windows yet.** Windows-only code is unit-tested where possible but needs a real run: Job Objects through FFI, `cmd.exe` quoting, registry GPU query, CPU-flag FFI, junctions for `node_modules`/`.venv`.
+- Phase 2 Windows-specific parts still to confirm on a real PC: the recursive file watcher, git clone through Git for Windows, export to the Downloads folder.
 - **Speed on modest PCs.** On a GTX 1650 + 25 GB RAM, `qwen3-coder:30b` reads prompts at ~10 tokens/s and writes at ~2 tokens/s, about 5× slower than Auto-Fit's estimate before a benchmark. Timeouts now allow 20 min for the first byte. Auto-Fit should model prompt-reading speed and recommend smaller coders on such PCs (Phase 2).
 - Qwen3-Coder sometimes writes a malformed tool call that Ollama rejects ("XML syntax error"); the agent retries and then asks the model to try again.
 - **Model catalog tags are unverified** because the container cannot reach ollama.com. Run `bun scripts/verify-catalog.ts` on a PC with internet.
@@ -44,8 +81,7 @@ _Last updated: 2026-10-31_
 - Installers are unsigned, so SmartScreen warns on first run.
 - The engine executable is large (~115 MB, embedded Bun runtime). Revisit in Phase 9.
 
-## Next steps
+## Next steps (Phase 1, done)
 
-1. On Windows: `bun install`, `bun run check`, then try the acceptance task with Ollama and a real coder model on a copy of `scripts/fixtures/fastapi-demo`.
+1. ~~On Windows: try the acceptance task with Ollama and a real coder model.~~ Passed.
 2. Run `bun scripts/verify-catalog.ts` and fix any tags it reports.
-3. Phase 2: multiple projects, import, code index, project memory, multi-project scheduler.
