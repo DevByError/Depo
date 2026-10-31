@@ -73,3 +73,12 @@ test("download progress replaces itself and clears when the job ends", () => {
   s.receive(ev({ type: "model_download", status: "succeeded", text: "done", details: job }));
   expect(useEngine.getState().events.map((e) => e.text)).toEqual(["start", "other", "done"]);
 });
+
+test("a clear progress event removes that job's line from the feed", () => {
+  const s = useEngine.getState();
+  s.receive(ev({ type: "planning", text: "Waiting (step 1)", ephemeral: true, details: { jobId: "w" } }));
+  s.receive(ev({ type: "planning", text: "Waiting (step 2)", ephemeral: true, details: { jobId: "w" } }));
+  expect(useEngine.getState().events.map((e) => e.text)).toEqual(["Waiting (step 2)"]);
+  s.receive(ev({ type: "planning", text: "done", ephemeral: true, details: { jobId: "w", clear: true } }));
+  expect(useEngine.getState().events).toEqual([]);
+});

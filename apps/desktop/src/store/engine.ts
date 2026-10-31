@@ -50,6 +50,8 @@ export function mergeProgress(events: DepoEvent[], event: DepoEvent): DepoEvent[
   const jobId = event.details?.jobId;
   if (typeof jobId !== "string") return [...events, event];
   const sameJob = (e: DepoEvent) => e.ephemeral && e.type === event.type && e.details?.jobId === jobId;
+  // A "clear" progress event removes the job's line (for example "Waiting for the model").
+  if (event.ephemeral && event.details?.clear === true) return events.filter((e) => !sameJob(e));
   if (event.ephemeral) {
     for (let i = events.length - 1; i >= Math.max(0, events.length - 200); i--) {
       const e = events[i];

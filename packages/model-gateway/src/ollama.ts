@@ -13,6 +13,8 @@ import type {
 // Slow PCs: a tool call can be generated silently at ~2 tokens/s, and prompt reading can take
 // many minutes. The user can always stop a task, so these limits only catch a hung runtime.
 const DEFAULT_IDLE_MS = 600_000;
+export const PARSE_ERROR =
+  /syntax error|unexpected EOF|unexpected end|failed to parse|invalid character|unmarshal/i;
 const DEFAULT_FIRST_BYTE_MS = 1_200_000;
 
 /**
@@ -143,7 +145,16 @@ export class OllamaProvider implements ModelProvider {
         } catch {
           continue;
         }
-        if (j.error) throw new ModelGatewayError("http", `Ollama: ${j.error}`);
+        if (j.error) {
+          // Ollama parses some models' tool calls itself (e.g. Qwen3-Coder's XML); a malformed one
+          // ends the stream with a parse error. That is a model mistake, not a runtime failure.
+          if (PARSE_ERROR.test(j.error))
+            throw new ModelGatewayError(
+              "invalid_output",
+              `The model wrote a tool call Ollama could not read (${j.error}).`,
+            );
+          throw new ModelGatewayError("http", `Ollama: ${j.error}`);
+        }
         const content = j.message?.content;
         if (typeof content === "string" && content.length > 0) yield { type: "text", delta: content };
         for (const tc of j.message?.tool_calls ?? []) {

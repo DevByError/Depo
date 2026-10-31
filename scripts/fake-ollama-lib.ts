@@ -76,6 +76,21 @@ function scriptedChat(messages: WireMessage[]): Response {
             eval_duration: 5e8,
           }),
         );
+      if (/broken tool call/.test(firstUser)) {
+        // Like Qwen3-Coder on Ollama: a malformed tool call ends the stream with a parse error,
+        // until the agent tells the model its reply could not be read.
+        const nudged = messages.some((m) => m.role === "user" && m.content.includes("could not be read"));
+        if (!nudged) {
+          ctl.enqueue(line({ error: "XML syntax error on line 43: unexpected EOF" }));
+        } else {
+          ctl.enqueue(
+            line({ message: { role: "assistant", content: "Recovered after a broken tool call." } }),
+          );
+          finish(6);
+        }
+        ctl.close();
+        return;
+      }
       if (!/\/health/.test(firstUser)) {
         for (const w of words("I can only run the scripted /health demo in this test model.")) {
           ctl.enqueue(line({ message: { role: "assistant", content: w } }));

@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   type ChatMessage,
+  type ChatResult,
   collectChat,
   ModelGatewayError,
   type ModelProvider,
+  PARSE_ERROR,
   type ToolCall,
 } from "@depo/model-gateway";
 import { type ChatItem, newId, type Task, TaskSchema, type TaskStatus } from "@depo/shared";
@@ -90,7 +92,7 @@ export class TaskManager {
             role: "assistant",
             text: c.content,
             toolName: null,
-            isError: false,
+            isError: c.isError === true,
             createdAt: m.createdAt,
           });
       } else {
@@ -230,6 +232,7 @@ export class TaskManager {
     const failures = new Map<string, number>();
     let finalText = "";
     let steps = 0;
+    let badOutputs = 0;
 
     while (steps < maxSteps) {
       if (signal.aborted) break;
@@ -265,7 +268,32 @@ export class TaskManager {
         },
         emit,
       );
+      emit({
+        type: "planning",
+        text: "Model answered",
+        details: { jobId: `wait-${taskId}`, clear: true },
+        ephemeral: true,
+        status: "succeeded",
+      });
       if (res === null) break; // cancelled
+      if ("badOutput" in res) {
+        // The runtime could not read the model's reply (usually a broken tool call). Tell the model
+        // and let it try again, unless it keeps happening.
+        badOutputs++;
+        if (badOutputs >= 3) throw new Error(`${res.badOutput} This happened 3 times in a row.`);
+        emit({
+          type: "retrying",
+          text: `${res.badOutput} Asking the model to try again.`,
+          status: "running",
+        });
+        history.push({
+          role: "user",
+          content:
+            "Your last reply could not be read: the tool call was malformed or cut off. Reply again and make exactly one complete, valid tool call.",
+        });
+        continue;
+      }
+      badOutputs = 0;
       let calls: ToolCall[] = res.toolCalls;
       if (calls.length === 0) calls = parseTextToolCalls(res.text, toolNames);
       const assistant: ChatMessage = {
@@ -357,12 +385,17 @@ export class TaskManager {
     req: Parameters<ModelProvider["chat"]>[0],
     onText: (d: string) => void,
     emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown,
-  ) {
+  ): Promise<ChatResult | { badOutput: string } | null> {
     for (let attempt = 0; ; attempt++) {
       try {
         return await collectChat(provider.chat(req), onText);
       } catch (err) {
         if (err instanceof ModelGatewayError && err.kind === "cancelled") return null;
+        if (isBadModelOutput(err)) {
+          // Sampling is random, so a plain retry often succeeds; after that, the loop nudges the model.
+          if (attempt < 1) continue;
+          return { badOutput: (err as Error).message };
+        }
         const transient =
           err instanceof ModelGatewayError &&
           (err.kind === "timeout" ||
@@ -425,7 +458,7 @@ export class TaskManager {
       .set({ status: "failed", error: message, updatedAt: new Date().toISOString() })
       .where(eq(tasks.id, taskId))
       .run();
-    this.addMessage(taskId, { role: "assistant", content: message });
+    this.addMessage(taskId, { role: "assistant", content: message, isError: true } as ChatMessage);
     this.o.bus.emit({
       agent: CODER_AGENT,
       projectId,
@@ -491,4 +524,11 @@ export function compressHistory(history: ChatMessage[], contextLength: number): 
     while (end < history.length && history[end]?.role === "tool") end++;
     history.splice(idx, end - idx);
   }
+}
+
+/** The runtime rejected the model's own output (e.g. a malformed tool call), as opposed to failing. */
+export function isBadModelOutput(err: unknown): boolean {
+  if (!(err instanceof ModelGatewayError)) return false;
+  if (err.kind === "invalid_output") return true;
+  return err.kind === "http" && PARSE_ERROR.test(`${err.message} ${err.detail ?? ""}`);
 }

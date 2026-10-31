@@ -58,9 +58,12 @@ test('Phase 1 acceptance: "add a /health endpoint to this FastAPI project"', asy
   // The agent works in the copy, runs the tests, and hands over a diff.
   await expect(page.getByTestId("task-status")).toContainText("Ready for review", { timeout: 60_000 });
   const convo = page.getByRole("list", { name: "Conversation" });
+  // The answer is shown; the work behind it folds into one dropdown, each step into its own.
+  await expect(convo).toContainText("2 passed");
+  const work = convo.getByRole("button", { name: /the work \(\d+ steps\)/ });
+  if ((await work.getAttribute("aria-expanded")) !== "true") await work.click();
   await expect(convo).toContainText("edit_file");
   await expect(convo).toContainText("run_command");
-  await expect(convo).toContainText("2 passed");
   const feed = page.getByRole("log", { name: "Activity feed" });
   await expect(feed).toContainText("Changes ready for review");
   // Nothing has touched the real project yet.

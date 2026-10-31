@@ -1,6 +1,7 @@
 import type { ChatItem, DepoEvent, PendingApprovalDto, Task, TaskStatus } from "@depo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowUp,
   Check,
   ChevronRight,
@@ -208,6 +209,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
     enabled,
   });
   const mine = (approvals.data?.approvals ?? []).filter((a) => a.taskId === task.id);
+  const turns = useMemo(() => groupTurns(items), [items]);
   const endRef = useRef<HTMLDivElement>(null);
   // Keep the newest content in view while the agent works.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new content
@@ -227,9 +229,9 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
         </span>
       </header>
       <ol className="flex flex-col gap-3" aria-label="Conversation">
-        {items.map((m) => (
-          <li key={m.id}>
-            <Message item={m} />
+        {turns.map((t, i) => (
+          <li key={t.user?.id ?? `turn-${i}`}>
+            <TurnView turn={t} latest={i === turns.length - 1} working={active && i === turns.length - 1} />
           </li>
         ))}
       </ol>
@@ -243,17 +245,126 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
   );
 }
 
-function Message({ item }: { item: ChatItem }) {
-  if (item.role === "user") {
+/** One prompt from the user, everything the agent did for it, and its answer. */
+export interface Turn {
+  user: ChatItem | null;
+  steps: ChatItem[];
+  answer: ChatItem | null;
+}
+
+export function groupTurns(items: ChatItem[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const item of items) {
+    if (item.role === "user") turns.push({ user: item, steps: [], answer: null });
+    else {
+      if (turns.length === 0) turns.push({ user: null, steps: [], answer: null });
+      turns[turns.length - 1]?.steps.push(item);
+    }
+  }
+  for (const t of turns) {
+    const last = t.steps.at(-1);
+    if (last?.role === "assistant") t.answer = t.steps.pop() ?? null;
+  }
+  return turns;
+}
+
+function TurnView({ turn, latest, working }: { turn: Turn; latest: boolean; working: boolean }) {
+  const [open, setOpen] = useState(latest);
+  // Older turns fold away when a new prompt is sent; the newest one opens.
+  useEffect(() => setOpen(latest), [latest]);
+  const tools = turn.steps.filter((s) => s.role === "tool");
+  const failedTools = tools.filter((s) => s.isError).length;
+  const failed = turn.answer?.isError === true;
+  return (
+    <section
+      aria-label={`Prompt: ${turn.user?.text.slice(0, 80) ?? "task"}`}
+      className={cn("rounded-lg border bg-panel/40", failed ? "border-danger/40" : "border-border")}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-hover/50"
+      >
+        <ChevronRight
+          className={cn("mt-0.5 size-4 shrink-0 text-muted transition-transform", open && "rotate-90")}
+          aria-hidden
+        />
+        <span className={cn("min-w-0 flex-1 text-[13px] text-fg", !open && "truncate")}>
+          {turn.user?.text ?? "Task"}
+        </span>
+        <span className="shrink-0 text-[11px] whitespace-nowrap text-subtle">
+          {tools.length} step{tools.length === 1 ? "" : "s"}
+          {failedTools > 0 && <span className="text-danger"> · {failedTools} failed</span>}
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-3 border-t border-border px-3 py-3">
+          {turn.steps.length > 0 && <Process steps={turn.steps} defaultOpen={working} />}
+          {turn.answer && <Answer item={turn.answer} />}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Process({ steps, defaultOpen }: { steps: ChatItem[]; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
+  const n = steps.filter((s) => s.role === "tool").length;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex items-center gap-1.5 text-xs text-muted hover:text-fg"
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} aria-hidden />
+        {open ? "Hide" : "Show"} the work ({n} step{n === 1 ? "" : "s"})
+      </button>
+      {open && (
+        <ol className="mt-2 flex flex-col gap-1.5 border-l border-border pl-3">
+          {steps.map((m) => (
+            <li key={m.id}>
+              {m.role === "tool" ? (
+                <ToolRow item={m} />
+              ) : (
+                <p
+                  className={cn(
+                    "text-xs leading-relaxed whitespace-pre-wrap",
+                    m.isError ? "text-danger" : "text-muted",
+                  )}
+                >
+                  {m.text}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function Answer({ item }: { item: ChatItem }) {
+  if (item.isError) {
     return (
-      <div className="ml-auto max-w-[85%] rounded-xl bg-accent/15 px-3.5 py-2 text-[13px] whitespace-pre-wrap text-fg">
-        {item.text}
+      <div
+        role="alert"
+        className="flex gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[13px] text-fg"
+      >
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden />
+        <span className="whitespace-pre-wrap">{item.text}</span>
       </div>
     );
   }
-  if (item.role === "assistant") {
-    return <div className="text-[13px] leading-relaxed whitespace-pre-wrap text-fg">{item.text}</div>;
-  }
+  return <div className="text-[13px] leading-relaxed whitespace-pre-wrap text-fg">{item.text}</div>;
+}
+
+function ToolRow({ item }: { item: ChatItem }) {
   const firstLine = item.text.split("\n")[0] ?? "";
   return (
     <details className="group rounded-md border border-border bg-panel text-xs">
@@ -401,7 +512,7 @@ function Composer({ task }: { task: Task | undefined }) {
         </label>
         <div
           className={cn(
-            "flex items-end gap-2 rounded-xl border border-border bg-bg p-2 focus-within:border-accent",
+            "flex items-end gap-2 rounded-xl border border-border bg-bg p-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent",
             !projectId && "opacity-70",
           )}
         >
@@ -414,7 +525,7 @@ function Composer({ task }: { task: Task | undefined }) {
             onKeyDown={onKey}
             aria-describedby="composer-note"
             placeholder={task ? "Ask for a follow-up change…" : "e.g. Add a /health endpoint to this API"}
-            className="min-h-10 flex-1 resize-none bg-transparent px-2 py-1 text-[13px] text-fg outline-none placeholder:text-subtle"
+            className="min-h-10 flex-1 resize-none bg-transparent px-2 py-1 text-[13px] text-fg outline-none placeholder:text-subtle field-in-frame"
           />
           {running ? (
             <button

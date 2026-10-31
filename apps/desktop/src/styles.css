@@ -89,6 +89,11 @@ body {
   outline-offset: 1px;
 }
 
+/* Fields inside a framed box (the chat composer) show focus on the frame instead. */
+.field-in-frame:focus-visible {
+  outline: none;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

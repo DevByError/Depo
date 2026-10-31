@@ -117,6 +117,18 @@ describe("coding agent", () => {
     expect(e.tasks.get(task.id).task.error).toContain("not running");
   });
 
+  test("a malformed tool call is retried, then the model is asked to try again", async () => {
+    const { e, project, events } = await setup();
+    const task = e.tasks.send(project.id, "simulate a broken tool call");
+    await e.tasks.settled(task.id);
+    const got = e.tasks.get(task.id);
+    expect(got.task.error).toBeNull();
+    expect(got.task.status).toBe("done");
+    expect(got.messages.at(-1)?.text).toBe("Recovered after a broken tool call.");
+    const retry = events.find((ev) => ev.type === "retrying");
+    expect(retry?.text).toContain("could not read");
+  });
+
   test("a follow-up message continues the same task and workspace", async () => {
     const { e, project } = await setup();
     const t1 = e.tasks.send(project.id, "say hello");
