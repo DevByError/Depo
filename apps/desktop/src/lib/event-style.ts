@@ -5,10 +5,13 @@ import {
   Camera,
   CheckCircle2,
   ClipboardList,
+  Cpu,
+  Download,
   Eye,
   FileEdit,
   FilePen,
   FileText,
+  Gauge,
   GitCommit,
   HeartPulse,
   Info,
@@ -61,6 +64,9 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   settings_changed: { icon: Settings2, tone: "neutral", label: "Settings" },
   info: { icon: Info, tone: "info", label: "Info" },
   warning: { icon: AlertTriangle, tone: "warning", label: "Warning" },
+  hardware_profiled: { icon: Cpu, tone: "info", label: "Hardware" },
+  model_download: { icon: Download, tone: "info", label: "Download" },
+  model_benchmark: { icon: Gauge, tone: "info", label: "Benchmark" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {

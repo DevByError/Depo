@@ -67,3 +67,14 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Decision:** The Depo mark is the letter D drawn as a crate (two plank lines) between code brackets, `<D>`, on a graphite tile (#1b1f27, brackets #8a93a6, D white). Source: `apps/desktop/src-tauri/installer/depo-mark.svg`; app icons are generated from `app-icon.png` with `tauri icon`.
 - **Reason:** Chosen by the owner from two rounds of concepts. It keeps the name visible, links "depot" (crate) with code (brackets), and stays readable at 16 px.
 - **Installer branding:** NSIS uses the icon plus a header (150×57) and sidebar (164×314) image; MSI uses a banner (493×58) and dialog image (493×312). All are 24-bit BMPs in `src-tauri/installer/`. The standard NSIS folder page stays for now; removing it needs a custom installer template (Phase 9).
+
+## ADR-0015: Ollama through its native API; llama.cpp and LM Studio through the OpenAI-compatible API
+- **Decision:** `@depo/model-gateway` has two adapters behind one `ModelProvider` interface. Ollama uses `/api/chat`, `/api/tags`, `/api/pull`, `/api/delete`, `/api/embed`. llama.cpp server and LM Studio use `/v1/chat/completions` (SSE), `/v1/models`, `/v1/embeddings`.
+- **Reason:** The spec says "through their OpenAI-compatible endpoints", but Ollama's compatible endpoint cannot set the context window (`num_ctx`), download or delete models, or report generation time. Those are needed for Auto-Fit, the model manager and benchmarks. The neutral interface keeps the rest of Depo unaware of the difference.
+- **Safety:** providers may only point at loopback or private-network addresses (`isLocalUrl`). There is no cloud adapter.
+
+## ADR-0016: Auto-Fit planner is a bandwidth model, calibrated by a real benchmark
+- **Decision:** Memory need = weights (params × bits per weight, or exact size) + KV cache (bytes per token × context) + vision projector + 0.6 GB. Speed ≈ 0.6 × 1 / (active bytes on GPU ÷ GPU bandwidth + active bytes in RAM ÷ RAM bandwidth). GPU bandwidth is guessed from VRAM size until the user runs a benchmark, which then scales every estimate (clamped 0.25×–4×).
+- **Choice rule:** strongest model first; full GPU at the best precision, else GPU + RAM split or CPU at the best precision that is comfortably fast (else the fastest usable one); a minimum speed per role and mode rejects unusable plans. A model within 2 score points that is 3× faster wins the tie.
+- **Reason:** Simple, explainable, and testable against the spec's reference profiles (tests in `model-gateway/test/autofit.test.ts`).
+- **Catalog caveat:** the build container cannot reach ollama.com, so the shipped catalog (`packages/model-gateway/catalog/models-catalog.json`) was written from knowledge of the Ollama library. `bun scripts/verify-catalog.ts` checks every tag against the Ollama registry and must be run on a machine with internet before a release.

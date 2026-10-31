@@ -7,6 +7,7 @@ import { defineConfig, devices } from "@playwright/test";
 // which is the same engine family as WebView2 on Windows.
 export const E2E_TOKEN = "e2e".repeat(16);
 export const E2E_ENGINE_PORT = 47201;
+export const FAKE_OLLAMA_PORT = 47211;
 const dataDir = mkdtempSync(path.join(tmpdir(), "depo e2e "));
 
 export default defineConfig({
@@ -33,6 +34,12 @@ export default defineConfig({
     },
   ],
   webServer: [
+    {
+      command: "bun ../../scripts/fake-ollama.ts",
+      url: `http://127.0.0.1:${FAKE_OLLAMA_PORT}/`,
+      env: { FAKE_OLLAMA_PORT: String(FAKE_OLLAMA_PORT) },
+      reuseExistingServer: false,
+    },
     {
       command: "bun ../../packages/engine/src/main.ts",
       port: E2E_ENGINE_PORT,

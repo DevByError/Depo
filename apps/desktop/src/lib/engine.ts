@@ -3,12 +3,17 @@ import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 import { isTauri, resolveEngineUrl } from "./connection";
 import { EngineClient } from "./engine-client";
+import { queryClient } from "./query";
 
 /** The single engine connection for this window. */
 export const engine = new EngineClient({ resolveUrl: resolveEngineUrl });
 
-export function call<M extends ApiMethod>(method: M, params: ApiParams<M>): Promise<ApiResult<M>> {
-  return engine.call(method, params);
+export function call<M extends ApiMethod>(
+  method: M,
+  params: ApiParams<M>,
+  opts?: { timeoutMs?: number },
+): Promise<ApiResult<M>> {
+  return engine.call(method, params, opts);
 }
 
 let wired = false;
@@ -29,7 +34,10 @@ export function startEngineConnection(): void {
   if (wired) return;
   wired = true;
   const store = useEngine.getState();
-  engine.onEvent((e) => store.receive(e));
+  engine.onEvent((e) => {
+    store.receive(e);
+    invalidateFor(e.type, e.status);
+  });
   engine.onStatus((status, error) => {
     useEngine.getState().setStatus(status, error);
     if (status === "open") {
@@ -42,7 +50,23 @@ export function startEngineConnection(): void {
   engine.start();
 }
 
+/** Keep cached queries fresh when the engine reports a change. */
+function invalidateFor(type: string, status: string): void {
+  if (
+    type === "model_download" &&
+    (status === "succeeded" || status === "failed" || status === "cancelled")
+  ) {
+    void queryClient.invalidateQueries({ queryKey: ["models"] });
+  } else if (type === "hardware_profiled" || type === "model_benchmark") {
+    void queryClient.invalidateQueries({ queryKey: ["hardware"] });
+    void queryClient.invalidateQueries({ queryKey: ["models", "plan"] });
+  } else if (type === "settings_changed") {
+    void queryClient.invalidateQueries({ queryKey: ["models"] });
+  }
+}
+
 async function onConnected() {
+  void queryClient.invalidateQueries();
   const [info, recent, settings] = await Promise.all([
     call("system.info", {}),
     call("events.recent", { limit: 500 }),

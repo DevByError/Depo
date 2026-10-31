@@ -1,10 +1,12 @@
 import { type ApiMethod, type ApiParsedParams, type ApiResult, DEPO_VERSION } from "@depo/shared";
 import type { EventBus } from "../events/bus";
+import type { ModelManager } from "../models/manager";
 import type { SettingsRepo } from "../settings";
 
 export interface HandlerContext {
   bus: EventBus;
   settings: SettingsRepo;
+  models: ModelManager;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -59,4 +61,23 @@ export const handlers: Handlers = {
   },
 
   "settings.all": (_params, ctx) => ({ settings: ctx.settings.all() }),
+
+  "hardware.get": (_p, ctx) => ({ profile: ctx.models.hardware() }),
+  "hardware.profile": async (_p, ctx) => ({ profile: await ctx.models.profileHardware(ctx.info.dataDir) }),
+  "models.providers": async (_p, ctx) => ({ providers: await ctx.models.providerStatus() }),
+  "models.providers.set": (p, ctx) => ({ providers: ctx.models.setProviders(p.providers) }),
+  "models.installed": async (_p, ctx) => ({ models: await ctx.models.installed() }),
+  "models.catalog": (_p, ctx) => ctx.models.catalog(),
+  "models.catalog.import": (p, ctx) => ctx.models.importCatalog(p.json),
+  "models.plan": (p, ctx) => ({ plan: ctx.models.plan(p.mode) }),
+  "models.assignments": (_p, ctx) => ctx.models.assignments(),
+  "models.assign": (p, ctx) => ctx.models.assign(p.role, p.ref),
+  "models.pull": (p, ctx) => ctx.models.startPull(p, ctx.info.dataDir),
+  "models.pull.cancel": (p, ctx) => ({ cancelled: ctx.models.cancelPull(p.jobId) }),
+  "models.pulls": (_p, ctx) => ({ jobs: ctx.models.pulls() }),
+  "models.delete": async (p, ctx) => {
+    await ctx.models.remove(p);
+    return { deleted: true as const };
+  },
+  "models.benchmark": async (p, ctx) => ({ benchmark: await ctx.models.benchmark(p) }),
 };

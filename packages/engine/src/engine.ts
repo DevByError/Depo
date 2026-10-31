@@ -5,6 +5,7 @@ import { type ApiServer, startApiServer } from "./api/server";
 import { type OpenedDatabase, openDatabase } from "./db";
 import { EventBus } from "./events/bus";
 import { createLogger, type Logger, type LogLevel } from "./logger";
+import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { SettingsRepo } from "./settings";
 
@@ -16,6 +17,8 @@ export interface EngineOptions {
   logToStderr?: boolean;
   /** Overrides the `engine.heartbeat_ms` setting (tests). */
   heartbeatMs?: number;
+  /** Test hooks for the model manager (fake hardware, fake providers). */
+  models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
 }
 
 export interface Engine {
@@ -23,6 +26,7 @@ export interface Engine {
   readonly logger: Logger;
   readonly bus: EventBus;
   readonly settings: SettingsRepo;
+  readonly models: ModelManager;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -45,6 +49,7 @@ export function createEngine(opts: EngineOptions): Engine {
   const database = openDatabase({ file: path.join(dirs.db, "depo.db"), backupsDir: dirs.backups, logger });
   const bus = new EventBus(database.db, logger);
   const settings = new SettingsRepo(database.db);
+  const models = new ModelManager({ settings, bus, logger, ...opts.models });
   const startedAt = new Date();
 
   let server: ApiServer | null = null;
@@ -74,6 +79,7 @@ export function createEngine(opts: EngineOptions): Engine {
     logger,
     bus,
     settings,
+    models,
     database,
     async start() {
       server = startApiServer({
@@ -85,6 +91,7 @@ export function createEngine(opts: EngineOptions): Engine {
         context: {
           bus,
           settings,
+          models,
           info: {
             startedAt,
             dataDir: dirs.root,

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { ChatPanel } from "@/components/panels/ChatPanel";
+import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
@@ -72,9 +73,6 @@ export const CENTER_TABS: TabDef[] = [
     id: "models",
     label: "Models",
     icon: Boxes,
-    phase: "Phase 1",
-    blurb:
-      "Hardware profile, Auto-Fit plan, and the local models installed in Ollama, llama.cpp or LM Studio.",
   },
   {
     id: "knowledge",
@@ -143,6 +141,8 @@ export function CenterTabs() {
         >
           {current.id === "chat" ? (
             <ChatPanel />
+          ) : current.id === "models" ? (
+            <ModelsPanel />
           ) : (
             <PhaseNotice icon={current.icon} title={current.label} phase={current.phase ?? "a later phase"}>
               {current.blurb}

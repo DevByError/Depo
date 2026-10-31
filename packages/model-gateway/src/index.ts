@@ -1,0 +1,10 @@
+export * from "./autofit";
+export * from "./catalog";
+export { collectChat } from "./collect";
+export { type GatewayErrorKind, ModelGatewayError, providerLabel } from "./errors";
+export * from "./hardware";
+export { OllamaProvider } from "./ollama";
+export { OpenAICompatibleProvider } from "./openai-compatible";
+export { createProvider, DEFAULT_PROVIDERS, isLocalUrl, type ProviderConfig } from "./registry";
+export { extractJson, generateObject, type StructuredOptions, type StructuredResult } from "./structured";
+export * from "./types";

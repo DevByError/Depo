@@ -105,7 +105,11 @@ export class EngineClient {
     this.rejectAll("Client stopped");
   }
 
-  call<M extends ApiMethod>(method: M, params: ApiParams<M>): Promise<ApiResult<M>> {
+  call<M extends ApiMethod>(
+    method: M,
+    params: ApiParams<M>,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<ApiResult<M>> {
     const socket = this.socket;
     if (!socket || socket.readyState !== OPEN) {
       return Promise.reject(new EngineCallError("Not connected to the Depo engine", -1));
@@ -115,7 +119,7 @@ export class EngineClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new EngineCallError(`${method} timed out`, -2));
-      }, this.opts.callTimeoutMs);
+      }, opts.timeoutMs ?? this.opts.callTimeoutMs);
       this.pending.set(id, { method, resolve: resolve as (v: unknown) => void, reject, timer });
       socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
     });

@@ -37,6 +37,9 @@ export const SYSTEM_EVENT_TYPES = [
   "settings_changed",
   "info",
   "warning",
+  "hardware_profiled",
+  "model_download",
+  "model_benchmark",
 ] as const;
 
 export const EventTypeSchema = z.enum([...AGENT_EVENT_TYPES, ...SYSTEM_EVENT_TYPES]);

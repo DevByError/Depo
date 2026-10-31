@@ -1,3 +1,11 @@
+import {
+  AutoFitPlanSchema,
+  BenchmarkSchema,
+  HardwareProfileSchema,
+  ModelCatalogSchema,
+  QualityModeSchema,
+  RoleSchema,
+} from "@depo/model-gateway";
 import { z } from "zod";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
 
@@ -46,6 +54,117 @@ export const SettingKeySchema = z
   .string()
   .regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/)
   .max(128);
+
+/** A local model runtime Depo talks to (Ollama, llama.cpp server, LM Studio). */
+export const ProviderConfigSchema = z.object({
+  id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
+  kind: z.enum(["ollama", "llamacpp", "lmstudio"]),
+  baseUrl: z.string().url().max(200),
+  enabled: z.boolean(),
+});
+export type ProviderConfigDto = z.infer<typeof ProviderConfigSchema>;
+
+export const ProviderStatusSchema = ProviderConfigSchema.extend({
+  ok: z.boolean(),
+  version: z.string().nullable(),
+  message: z.string().nullable(),
+});
+export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
+
+export const InstalledModelSchema = z.object({
+  providerId: z.string(),
+  name: z.string(),
+  sizeBytes: z.number().nullable(),
+  family: z.string().nullable(),
+  parameterSize: z.string().nullable(),
+  quantization: z.string().nullable(),
+  modifiedAt: z.string().nullable(),
+  /** Matching catalog entry, when the tag is one the catalog knows. */
+  catalogId: z.string().nullable(),
+});
+export type InstalledModel = z.infer<typeof InstalledModelSchema>;
+
+export const ModelRefSchema = z.object({ providerId: z.string(), model: z.string().min(1).max(200) });
+export type ModelRef = z.infer<typeof ModelRefSchema>;
+
+export const AssignmentsSchema = z.partialRecord(RoleSchema, ModelRefSchema);
+export type Assignments = z.infer<typeof AssignmentsSchema>;
+
+export const PullJobSchema = z.object({
+  jobId: z.string(),
+  providerId: z.string(),
+  model: z.string(),
+  status: z.string(),
+  completedBytes: z.number().nullable(),
+  totalBytes: z.number().nullable(),
+  state: z.enum(["running", "succeeded", "failed", "cancelled"]),
+  error: z.string().nullable(),
+});
+export type PullJob = z.infer<typeof PullJobSchema>;
+
+const ModelMethods = {
+  "hardware.get": {
+    params: z.object({}).strict(),
+    result: z.object({ profile: HardwareProfileSchema.nullable() }),
+  },
+  "hardware.profile": {
+    params: z.object({}).strict(),
+    result: z.object({ profile: HardwareProfileSchema }),
+  },
+  "models.providers": {
+    params: z.object({}).strict(),
+    result: z.object({ providers: z.array(ProviderStatusSchema) }),
+  },
+  "models.providers.set": {
+    params: z.object({ providers: z.array(ProviderConfigSchema).min(1).max(16) }).strict(),
+    result: z.object({ providers: z.array(ProviderConfigSchema) }),
+  },
+  "models.installed": {
+    params: z.object({}).strict(),
+    result: z.object({ models: z.array(InstalledModelSchema) }),
+  },
+  "models.catalog": {
+    params: z.object({}).strict(),
+    result: z.object({ catalog: ModelCatalogSchema, custom: z.boolean() }),
+  },
+  "models.catalog.import": {
+    // A replacement catalog, as JSON text (from a file the user picked) or `null` to restore the default.
+    params: z.object({ json: z.string().max(2_000_000).nullable() }).strict(),
+    result: z.object({ catalog: ModelCatalogSchema, custom: z.boolean() }),
+  },
+  "models.plan": {
+    params: z.object({ mode: QualityModeSchema.optional() }).strict(),
+    result: z.object({ plan: AutoFitPlanSchema.nullable() }),
+  },
+  "models.assignments": {
+    params: z.object({}).strict(),
+    result: z.object({ assignments: AssignmentsSchema, effective: AssignmentsSchema }),
+  },
+  "models.assign": {
+    params: z.object({ role: RoleSchema, ref: ModelRefSchema.nullable() }).strict(),
+    result: z.object({ assignments: AssignmentsSchema, effective: AssignmentsSchema }),
+  },
+  "models.pull": {
+    params: ModelRefSchema.strict(),
+    result: PullJobSchema,
+  },
+  "models.pull.cancel": {
+    params: z.object({ jobId: z.string() }).strict(),
+    result: z.object({ cancelled: z.boolean() }),
+  },
+  "models.pulls": {
+    params: z.object({}).strict(),
+    result: z.object({ jobs: z.array(PullJobSchema) }),
+  },
+  "models.delete": {
+    params: ModelRefSchema.strict(),
+    result: z.object({ deleted: z.literal(true) }),
+  },
+  "models.benchmark": {
+    params: ModelRefSchema.strict(),
+    result: z.object({ benchmark: BenchmarkSchema }),
+  },
+} as const;
 
 /**
  * The engine's public API. Every method has a Zod schema for params and result.
@@ -104,6 +223,7 @@ export const ApiSchema = {
     params: z.object({}).strict(),
     result: z.object({ settings: z.record(z.string(), JsonValueSchema) }),
   },
+  ...ModelMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

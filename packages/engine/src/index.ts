@@ -4,6 +4,7 @@ export { openDatabase } from "./db";
 export { createEngine, type Engine, type EngineOptions } from "./engine";
 export { EventBus } from "./events/bus";
 export { createLogger } from "./logger";
+export { ModelManager } from "./models/manager";
 export { dataDirs, displayPath, resolveDataRoot, toLongPath } from "./paths";
 export { redact, redactString } from "./redact";
 export { SettingsRepo } from "./settings";

@@ -42,6 +42,28 @@ export function capEvents(events: DepoEvent[], max = MAX_EVENTS): DepoEvent[] {
   return events.length > max ? events.slice(events.length - max) : events;
 }
 
+/**
+ * Progress events (ephemeral, with a `jobId`) replace the previous progress line of the same job
+ * instead of piling up, and are dropped once the job's final event arrives.
+ */
+export function mergeProgress(events: DepoEvent[], event: DepoEvent): DepoEvent[] {
+  const jobId = event.details?.jobId;
+  if (typeof jobId !== "string") return [...events, event];
+  const sameJob = (e: DepoEvent) => e.ephemeral && e.type === event.type && e.details?.jobId === jobId;
+  if (event.ephemeral) {
+    for (let i = events.length - 1; i >= Math.max(0, events.length - 200); i--) {
+      const e = events[i];
+      if (e && sameJob(e)) {
+        const next = events.slice();
+        next[i] = event;
+        return next;
+      }
+    }
+    return [...events, event];
+  }
+  return [...events.filter((e) => !sameJob(e)), event];
+}
+
 export const useEngine = create<EngineState>((set) => ({
   status: "idle",
   statusError: null,
@@ -65,6 +87,6 @@ export const useEngine = create<EngineState>((set) => ({
         const hb: Heartbeat = { receivedAt: Date.now(), details: parsed.data, event };
         return { heartbeats: [...s.heartbeats, hb].slice(-MAX_HEARTBEATS) };
       }
-      return { events: capEvents([...s.events, event]) };
+      return { events: capEvents(mergeProgress(s.events, event)) };
     }),
 }));

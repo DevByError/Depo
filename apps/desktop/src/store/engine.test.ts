@@ -50,3 +50,26 @@ test("capEvents keeps the newest", () => {
   const list = Array.from({ length: 10 }, (_, i) => ev({ text: String(i) }));
   expect(capEvents(list, 3).map((e) => e.text)).toEqual(["7", "8", "9"]);
 });
+
+test("download progress replaces itself and clears when the job ends", () => {
+  const s = useEngine.getState();
+  const job = { jobId: "job_1" };
+  s.receive(ev({ type: "model_download", status: "started", text: "start", details: job }));
+  for (let i = 0; i < 5; i++) {
+    s.receive(
+      ev({ type: "model_download", status: "running", text: `p${i}`, details: job, ephemeral: true }),
+    );
+  }
+  s.receive(
+    ev({
+      type: "model_download",
+      status: "running",
+      text: "other",
+      details: { jobId: "job_2" },
+      ephemeral: true,
+    }),
+  );
+  expect(useEngine.getState().events.map((e) => e.text)).toEqual(["start", "p4", "other"]);
+  s.receive(ev({ type: "model_download", status: "succeeded", text: "done", details: job }));
+  expect(useEngine.getState().events.map((e) => e.text)).toEqual(["start", "other", "done"]);
+});
