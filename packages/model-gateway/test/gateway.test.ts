@@ -480,3 +480,30 @@ describe("registry", () => {
     ).toBeInstanceOf(OpenAICompatibleProvider);
   });
 });
+
+describe("node:http fallback", () => {
+  test("nodeRequest streams a response like fetch", async () => {
+    const { nodeRequest } = await import("../src/http");
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const body = (await req.json()) as { n: number };
+        return new Response(`{"n":${body.n + 1}}\n{"done":true}\n`, {
+          headers: { "content-type": "application/x-ndjson" },
+        });
+      },
+    });
+    try {
+      const res = await nodeRequest(`http://127.0.0.1:${s.port}/api/chat`, {
+        kind: "ollama",
+        body: { n: 1 },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("application/x-ndjson");
+      expect(await res.text()).toBe('{"n":2}\n{"done":true}\n');
+    } finally {
+      s.stop(true);
+    }
+  });
+});

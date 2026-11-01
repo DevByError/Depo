@@ -1,3 +1,5 @@
+import http from "node:http";
+import { Readable } from "node:stream";
 import { ModelGatewayError, providerLabel } from "./errors";
 
 export interface FetchOptions {
@@ -30,7 +32,28 @@ export async function request(url: string, opts: FetchOptions): Promise<Response
       keepalive: false,
     });
   } catch (err) {
-    throw toGatewayError(err, opts.kind, opts.signal);
+    clearTimeout(timer);
+    const first = toGatewayError(err, opts.kind, opts.signal);
+    if (!isConnectFailure(first)) throw first;
+    // fetch could not open a connection. Some Windows PCs (security software, loopback filters)
+    // block one HTTP stack but not another, so try once more over node:http before giving up.
+    try {
+      res = await nodeRequest(url, opts);
+    } catch (err2) {
+      const second = toGatewayError(err2, opts.kind, opts.signal);
+      if (second.kind === "cancelled") throw second;
+      const alive = await probe(url);
+      throw new ModelGatewayError(
+        first.kind,
+        `${first.message} ${
+          alive
+            ? `${providerLabel(opts.kind)} did answer a quick check just now, so the connection from Depo is being blocked or dropped; check firewall or antivirus rules for depo-engine.exe.`
+            : `${providerLabel(opts.kind)} did not answer a quick check either.`
+        }`,
+        first.status,
+        first.detail,
+      );
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -44,6 +67,66 @@ export async function request(url: string, opts: FetchOptions): Promise<Response
     );
   }
   return res;
+}
+
+function isConnectFailure(e: ModelGatewayError): boolean {
+  const d = e.detail ?? "";
+  return (
+    e.kind === "unreachable" &&
+    !/ECONNREFUSED|ConnectionRefused|refused/i.test(d) &&
+    /Unable to connect|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ECONNRESET/i.test(d)
+  );
+}
+
+/** The same request over node:http, returned as a fetch Response (body streamed). */
+export function nodeRequest(url: string, opts: FetchOptions): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const body = opts.body === undefined ? undefined : JSON.stringify(opts.body);
+    const req = http.request(
+      url,
+      {
+        method: opts.method ?? (body === undefined ? "GET" : "POST"),
+        headers:
+          body === undefined
+            ? {}
+            : { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+        agent: false,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      },
+      (msg) => {
+        clearTimeout(timer);
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(msg.headers)) if (typeof v === "string") headers.set(k, v);
+        resolve(
+          new Response(Readable.toWeb(msg) as unknown as ReadableStream<Uint8Array>, {
+            status: msg.statusCode ?? 500,
+            headers,
+          }),
+        );
+      },
+    );
+    const timer = setTimeout(
+      () => req.destroy(new DOMException("timed out", "TimeoutError")),
+      opts.timeoutMs ?? 30_000,
+    );
+    req.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+}
+
+/** Does anything answer at this URL's origin within 3 seconds? */
+async function probe(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(new URL("/", url), { signal: AbortSignal.timeout(3000), keepalive: false });
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function toGatewayError(err: unknown, kind: string, userSignal?: AbortSignal): ModelGatewayError {
