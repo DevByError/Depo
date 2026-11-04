@@ -235,6 +235,11 @@ function bestOption(
   const options: Candidate[] = [];
   let tooSlow = false;
   for (const qi of quantOrder(model)) {
+    // Per precision: the largest context that fits at all, and the largest that fits fully on the
+    // GPU. A smaller context that keeps the model on the GPU beats a larger one that spills into
+    // system memory, which is several times slower.
+    let any: Candidate | null = null;
+    let gpu: Candidate | null = null;
     for (const ctx of CONTEXTS[role].filter((c) => c <= model.contextMax)) {
       const fit = fitOn(model, qi, ctx, limit, calibration);
       if (!fit) continue;
@@ -242,9 +247,14 @@ function bestOption(
         tooSlow = true;
         continue;
       }
-      options.push({ model, qi, ctx, fit });
-      break; // largest context that fits for this precision
+      any ??= { model, qi, ctx, fit };
+      if (fit.placement === "gpu") {
+        gpu = { model, qi, ctx, fit };
+        break;
+      }
     }
+    if (gpu) options.push(gpu);
+    else if (any) options.push(any);
   }
   const onGpu = options.find((o) => o.fit.placement === "gpu");
   if (onGpu) return { pick: onGpu, tooSlow };

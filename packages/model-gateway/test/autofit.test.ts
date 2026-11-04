@@ -114,6 +114,20 @@ describe("Auto-Fit planner", () => {
     expect(p.headline.length).toBeGreaterThan(10);
   });
 
+  test("balanced on a 4 GB GPU keeps the coder fully on the GPU, with a smaller context if needed", () => {
+    // A real GTX 1650 laptop: the 7B coder, half on the CPU, measured 5.5 tokens/s.
+    const bench = {
+      catalogId: "qwen2.5-coder-7b",
+      model: "qwen2.5-coder:7b",
+      tokensPerSec: 5.5,
+      promptTokensPerSec: null,
+      at: "x",
+    };
+    const p = autoFit(hw(4, 25, { benchmark: bench }), { mode: "balanced" });
+    expect(p.roles.coder?.placement).toBe("gpu");
+    expect(p.roles.coder?.memoryGB ?? 99).toBeLessThan(3.3);
+  });
+
   test("balanced mode demands more speed than max quality", () => {
     const max = autoFit(hw(4, 16), { mode: "max_quality" });
     const bal = autoFit(hw(4, 16), { mode: "balanced" });
