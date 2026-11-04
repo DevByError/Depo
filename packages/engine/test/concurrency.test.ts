@@ -201,5 +201,9 @@ describe("restart", () => {
     expect(got.task.status).toBe("cancelled");
     expect(got.messages.at(-1)?.text).toContain("Depo was closed");
     expect(second.tasks.active()).toHaveLength(0);
+    // Stop also works on such a task if it is still marked as working.
+    second.database.db.update(tasks).set({ status: "running" }).run();
+    expect(second.tasks.cancel("tsk_orphan")).toBe(true);
+    expect(second.tasks.get("tsk_orphan").task.status).toBe("cancelled");
   });
 });

@@ -211,8 +211,22 @@ export class TaskManager {
 
   cancel(id: string): boolean {
     const ctl = this.running.get(id);
-    if (!ctl) return false;
-    ctl.abort();
+    if (ctl) {
+      ctl.abort();
+      return true;
+    }
+    // Not running in this engine but still marked as working (left over from a stopped engine).
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (!row || !["queued", "running", "waiting"].includes(row.status)) return false;
+    this.setStatus(id, "cancelled");
+    this.o.bus.emit({
+      agent: CODER_AGENT,
+      projectId: row.projectId,
+      taskId: id,
+      type: "info",
+      text: "Stopped by the user",
+      status: "cancelled",
+    });
     return true;
   }
 
