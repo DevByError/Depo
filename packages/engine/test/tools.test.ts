@@ -309,7 +309,8 @@ describe("agent tools", () => {
       ctx,
     );
     expect(edit.isError).toBe(true);
-    expect(edit.content).toContain("Read app/main.py with read_file before editing it");
+    expect(edit.content).toContain("you had not read app/main.py before editing it");
+    expect(edit.content).toContain("def index():");
     const write = await executeTool("write_file", { path: "README.md", content: "x" }, ctx);
     expect(write.content).toContain("before replacing it");
     // New files need no reading; read files can be edited.

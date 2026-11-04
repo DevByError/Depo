@@ -487,8 +487,18 @@ function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {
   const norm = rel.replace(/\\/g, "/").replace(/^\.\//, "");
   if (ctx.readPaths.has(norm)) return;
   if (!fs.existsSync(path.join(ctx.root, norm))) return; // a new file needs no reading
+  // Small models often ignore "read it first". Show the file right here, so the next try can
+  // copy the exact text, and count it as read.
+  let shown = "";
+  try {
+    const r = readFileTool(ctx.root, norm);
+    ctx.readPaths.add(r.path);
+    shown = `\nHere is the current ${r.path} (${r.totalLines} lines). Copy the exact text you want to change into \`search\`, without the line numbers:\n${r.text}${r.endLine < r.totalLines ? `\n[showing lines 1-${r.endLine}; read_file for the rest]` : ""}`;
+  } catch {
+    // fall back to the plain refusal
+  }
   throw new ToolError(
-    `Read ${norm} with read_file before ${what} it, so your change matches the current text. Nothing was changed.`,
+    `Nothing was changed: you had not read ${norm} before ${what} it in this task.${shown}`,
   );
 }
 
