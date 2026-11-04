@@ -30,7 +30,7 @@ import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, TOOLS, type ToolContext, toolDefinitions } from "../tools/index";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { codingSystemPrompt, venvEnv } from "./prompt";
-import { parseTextToolCalls, stripToolMarkup } from "./textcalls";
+import { extractTextToolCalls, stripToolMarkup } from "./textcalls";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
@@ -309,6 +309,7 @@ export class TaskManager {
       ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
       ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
       onTestResult: (r) => lessons.onTest(r),
+      readPaths: new Set<string>(),
     };
     const lessons = this.lessonTracker(project.id);
     const tools = toolDefinitions();
@@ -381,7 +382,11 @@ export class TaskManager {
       }
       badOutputs = 0;
       let calls: ToolCall[] = res.toolCalls;
-      if (calls.length === 0) calls = parseTextToolCalls(res.text, toolNames);
+      if (calls.length === 0) {
+        const parsed = extractTextToolCalls(res.text, toolNames);
+        calls = parsed.calls;
+        if (calls.length) res.text = parsed.rest;
+      }
       if (calls.length === 0) res.text = stripToolMarkup(res.text);
       const assistant: ChatMessage = {
         role: "assistant",

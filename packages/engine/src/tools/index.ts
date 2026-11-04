@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ToolDefinition } from "@depo/model-gateway";
 import { type JsonValue, newId, type SearchHit } from "@depo/shared";
 import { z } from "zod";
@@ -30,6 +32,11 @@ export interface ToolContext {
   commandRules?: { allow: string[]; deny: string[] };
   /** Code index and memory of the project, when available. */
   knowledge?: ProjectKnowledge;
+  /**
+   * Files read (or written) in this task. When set, editing or overwriting an existing file that
+   * was not read first is refused: small models otherwise guess the contents and break the file.
+   */
+  readPaths?: Set<string>;
   /** Called after each test run; may return text to add to what the model sees (lessons learned). */
   onTestResult?: (r: { command: string; passed: boolean; output: string }) => string | undefined;
 }
@@ -105,6 +112,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     }),
     async run(a, ctx) {
       const r = readFileTool(ctx.root, a.path, a.start_line, a.end_line);
+      ctx.readPaths?.add(r.path);
       emit(ctx, {
         type: "reading_file",
         text: `Reading ${r.path}${r.startLine > 1 || r.endLine < r.totalLines ? ` (lines ${r.startLine}–${r.endLine})` : ""}`,
@@ -189,7 +197,9 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       "Create a file or replace its whole content. Prefer edit_file for changes to existing files.",
     schema: z.object({ path: z.string().min(1), content: z.string() }),
     async run(a, ctx) {
+      mustHaveRead(ctx, a.path, "replacing");
       const r = writeFileTool(ctx.root, a.path, a.content);
+      ctx.readPaths?.add(r.path);
       ctx.onFileChanged?.(r.path);
       emit(ctx, {
         type: "writing_file",
@@ -214,6 +224,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         .max(20),
     }),
     async run(a, ctx) {
+      mustHaveRead(ctx, a.path, "editing");
       const r = editFileTool(
         ctx.root,
         a.path,
@@ -230,6 +241,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         details: { path: r.path, edits: r.applied },
         status: "succeeded",
       });
+      ctx.readPaths?.add(r.path);
       return `Applied ${r.applied} edit(s) to ${r.path}.`;
     },
   }),
@@ -469,6 +481,16 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     },
   }),
 ];
+
+function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {
+  if (!ctx.readPaths) return;
+  const norm = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (ctx.readPaths.has(norm)) return;
+  if (!fs.existsSync(path.join(ctx.root, norm))) return; // a new file needs no reading
+  throw new ToolError(
+    `Read ${norm} with read_file before ${what} it, so your change matches the current text. Nothing was changed.`,
+  );
+}
 
 function needKnowledge(ctx: ToolContext): ProjectKnowledge {
   if (!ctx.knowledge)

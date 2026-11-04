@@ -6,40 +6,103 @@ import type { ToolCall } from "@depo/model-gateway";
  * loop still works; only names of real tools are accepted.
  */
 export function parseTextToolCalls(text: string, toolNames: string[]): ToolCall[] {
+  return extractTextToolCalls(text, toolNames).calls;
+}
+
+/** Tool calls written as text, plus the reply with those calls taken out (for display). */
+export function extractTextToolCalls(text: string, toolNames: string[]): { calls: ToolCall[]; rest: string } {
   const known = new Set(toolNames);
-  const candidates: string[] = [];
-  for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)) if (m[1]) candidates.push(m[1]);
+  const candidates: { raw: string; json: string }[] = [];
+  for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g))
+    if (m[1]) candidates.push({ raw: m[0], json: m[1] });
   if (candidates.length === 0) {
     for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?\})\s*```/g))
-      if (m[1]) candidates.push(m[1]);
+      if (m[1]) candidates.push({ raw: m[0], json: m[1] });
   }
   if (candidates.length === 0) {
-    const trimmed = text.trim();
-    if (trimmed.startsWith("{") && trimmed.endsWith("}")) candidates.push(trimmed);
+    // Bare JSON objects, possibly with prose around them: {"name": ..., "arguments": ...}
+    for (const obj of jsonObjects(text))
+      if (/"(name|tool)"\s*:/.test(obj)) candidates.push({ raw: obj, json: obj });
   }
   const calls: ToolCall[] = [];
+  let rest = text;
   for (const c of candidates) {
-    let j: unknown;
-    try {
-      j = JSON.parse(c);
-    } catch {
-      continue;
-    }
+    const j = parseLoose(c.json);
     if (!j || typeof j !== "object") continue;
     const o = j as Record<string, unknown>;
     const name = typeof o.name === "string" ? o.name : typeof o.tool === "string" ? o.tool : null;
     if (!name || !known.has(name)) continue;
     let args = o.arguments ?? o.args ?? o.parameters ?? o.input ?? {};
-    if (typeof args === "string") {
-      try {
-        args = JSON.parse(args);
-      } catch {
-        // keep as string; validation will report it
-      }
-    }
+    if (typeof args === "string") args = parseLoose(args) ?? args;
     calls.push({ id: `text_${calls.length + 1}`, name, arguments: args, rawArguments: JSON.stringify(args) });
+    rest = rest.replace(c.raw, "");
   }
-  return calls;
+  return { calls, rest: calls.length ? rest.trim() : text };
+}
+
+/** JSON.parse, then again after escaping raw newlines and tabs inside strings (a common slip). */
+function parseLoose(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    try {
+      return JSON.parse(escapeControlCharsInStrings(s));
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+export function escapeControlCharsInStrings(s: string): string {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  for (const ch of s) {
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      else if (ch === "\n") {
+        out += "\\n";
+        continue;
+      } else if (ch === "\r") {
+        out += "\\r";
+        continue;
+      } else if (ch === "\t") {
+        out += "\\t";
+        continue;
+      }
+    } else if (ch === '"') inStr = true;
+    out += ch;
+  }
+  return out;
+}
+
+/** Top-level balanced {...} spans in text, string-aware. */
+function jsonObjects(text: string): string[] {
+  const found: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"' && depth > 0) inStr = true;
+    else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) found.push(text.slice(start, i + 1));
+    }
+  }
+  return found;
 }
 
 /**

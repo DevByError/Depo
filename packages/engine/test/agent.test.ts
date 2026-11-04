@@ -201,3 +201,16 @@ test("stray tool-call tags are removed from a final answer", () => {
   expect(stripToolMarkup("Done.</tool_call>")).toBe("Done.");
   expect(stripToolMarkup("Use <tool_call> tags like this.")).toBe("Use <tool_call> tags like this.");
 });
+
+describe("text tool calls from small models", () => {
+  test("bare JSON with raw newlines in strings and prose around it", async () => {
+    const { extractTextToolCalls } = await import("../src/agent/textcalls");
+    const text =
+      'I will write the test now.\n{"name": "write_file", "arguments": {"path": "tests/t.py", "content": "def test_a():\n    assert 1\n"}}';
+    const { calls, rest } = extractTextToolCalls(text, ["write_file"]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.arguments).toEqual({ path: "tests/t.py", content: "def test_a():\n    assert 1\n" });
+    expect(rest).toBe("I will write the test now.");
+    expect(extractTextToolCalls('{"name": "nope", "arguments": {}}', ["write_file"]).calls).toHaveLength(0);
+  });
+});

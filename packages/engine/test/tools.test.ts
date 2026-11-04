@@ -301,6 +301,30 @@ describe("agent tools", () => {
     expect((await executeTool("run_command", { command: "rm -rf /" }, ctx)).content).toContain("not allowed");
   });
 
+  test("with read tracking, editing or replacing an unread file is refused", async () => {
+    ctx.readPaths = new Set();
+    const edit = await executeTool(
+      "edit_file",
+      { path: "app/main.py", edits: [{ search: "def index():", replace: "def home():" }] },
+      ctx,
+    );
+    expect(edit.isError).toBe(true);
+    expect(edit.content).toContain("Read app/main.py with read_file before editing it");
+    const write = await executeTool("write_file", { path: "README.md", content: "x" }, ctx);
+    expect(write.content).toContain("before replacing it");
+    // New files need no reading; read files can be edited.
+    expect((await executeTool("write_file", { path: "app/new.py", content: "x = 1\n" }, ctx)).isError).toBe(
+      false,
+    );
+    await executeTool("read_file", { path: "app/main.py" }, ctx);
+    const ok = await executeTool(
+      "edit_file",
+      { path: "./app/main.py", edits: [{ search: "def index():", replace: "def home():" }] },
+      ctx,
+    );
+    expect(ok.isError).toBe(false);
+  });
+
   test("matchesRule matches whole command prefixes", () => {
     expect(matchesRule("npm run lint", "npm run lint")).toBe(true);
     expect(matchesRule("npm  run lint --fix", "npm run lint")).toBe(true);
