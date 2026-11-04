@@ -229,8 +229,8 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         ctx.root,
         a.path,
         a.edits.map((e) => ({
-          search: e.search,
-          replace: e.replace,
+          search: stripLineNumbers(e.search),
+          replace: stripLineNumbers(e.replace, e.search),
           ...(e.replace_all ? { replaceAll: true } : {}),
         })),
       );
@@ -481,6 +481,21 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     },
   }),
 ];
+
+const LINE_NO = /^\s*\d+\s*[│|:]\s?/;
+
+/**
+ * Models sometimes copy read_file's line numbers ("  7│ ", "12: ") into search text. When every
+ * line of `of` carries one, remove them (from `s`, which is `of` itself or its replacement).
+ */
+export function stripLineNumbers(s: string, of = s): string {
+  const lines = of.split("\n").filter((l) => l.trim());
+  if (lines.length === 0 || !lines.every((l) => LINE_NO.test(l))) return s;
+  return s
+    .split("\n")
+    .map((l) => l.replace(LINE_NO, ""))
+    .join("\n");
+}
 
 function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {
   if (!ctx.readPaths) return;

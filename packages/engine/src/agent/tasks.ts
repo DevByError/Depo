@@ -30,7 +30,7 @@ import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, TOOLS, type ToolContext, toolDefinitions } from "../tools/index";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { codingSystemPrompt, venvEnv } from "./prompt";
-import { extractTextToolCalls, stripToolMarkup } from "./textcalls";
+import { extractTextToolCalls, looksLikeToolCall, stripToolMarkup } from "./textcalls";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
@@ -386,6 +386,24 @@ export class TaskManager {
         const parsed = extractTextToolCalls(res.text, toolNames);
         calls = parsed.calls;
         if (calls.length) res.text = parsed.rest;
+        else if (looksLikeToolCall(res.text, toolNames)) {
+          // A tool call written as text that could not be read: not a final answer.
+          badOutputs++;
+          if (badOutputs >= 3)
+            throw new Error("The model kept writing tool calls that could not be read. Try a larger model.");
+          emit({
+            type: "retrying",
+            text: "The model's tool call could not be read. Asking it to try again.",
+            status: "running",
+          });
+          history.push({ role: "assistant", content: res.text });
+          history.push({
+            role: "user",
+            content:
+              "That tool call could not be read: it is not complete, valid JSON. Make exactly one tool call, using the tool-calling format, with every bracket closed.",
+          });
+          continue;
+        }
       }
       if (calls.length === 0) res.text = stripToolMarkup(res.text);
       const assistant: ChatMessage = {

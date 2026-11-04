@@ -214,3 +214,25 @@ describe("text tool calls from small models", () => {
     expect(extractTextToolCalls('{"name": "nope", "arguments": {}}', ["write_file"]).calls).toHaveLength(0);
   });
 });
+
+describe("more small-model slips", () => {
+  test("a fenced call missing its last brace is still read", async () => {
+    const { extractTextToolCalls, looksLikeToolCall } = await import("../src/agent/textcalls");
+    const text =
+      '```json\n{"name": "edit_file", "arguments": {"path": "app/main.py", "edits": [{"search": "a", "replace": "b"}]}\n```';
+    const { calls } = extractTextToolCalls(text, ["edit_file"]);
+    expect(calls[0]?.arguments).toEqual({ path: "app/main.py", edits: [{ search: "a", replace: "b" }] });
+    expect(looksLikeToolCall('{"name": "edit_file", "arguments": {"path": ', ["edit_file"])).toBe(true);
+    expect(looksLikeToolCall("Added the endpoint.", ["edit_file"])).toBe(false);
+  });
+
+  test("line numbers copied into search text are removed", async () => {
+    const { stripLineNumbers } = await import("../src/tools/index");
+    expect(stripLineNumbers("  7: def read_root():")).toBe("def read_root():");
+    expect(stripLineNumbers("7│ def a():\n8│     return 1")).toBe("def a():\n    return 1");
+    expect(stripLineNumbers("  7: def read_root() -> str:", "  7: def read_root():")).toBe(
+      "def read_root() -> str:",
+    );
+    expect(stripLineNumbers("x = 1\n2: y")).toBe("x = 1\n2: y");
+  });
+});

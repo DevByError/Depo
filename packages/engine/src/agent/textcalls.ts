@@ -16,7 +16,7 @@ export function extractTextToolCalls(text: string, toolNames: string[]): { calls
   for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g))
     if (m[1]) candidates.push({ raw: m[0], json: m[1] });
   if (candidates.length === 0) {
-    for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?\})\s*```/g))
+    for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?)\s*```/g))
       if (m[1]) candidates.push({ raw: m[0], json: m[1] });
   }
   if (candidates.length === 0) {
@@ -42,15 +42,40 @@ export function extractTextToolCalls(text: string, toolNames: string[]): { calls
 
 /** JSON.parse, then again after escaping raw newlines and tabs inside strings (a common slip). */
 function parseLoose(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
+  const fixed = escapeControlCharsInStrings(s);
+  for (const attempt of [s, fixed, closeBrackets(fixed)]) {
     try {
-      return JSON.parse(escapeControlCharsInStrings(s));
+      return JSON.parse(attempt);
     } catch {
-      return undefined;
+      // try the next repair
     }
   }
+  return undefined;
+}
+
+/** Append the closing brackets a model forgot at the end (a common slip with long calls). */
+export function closeBrackets(s: string): string {
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (const ch of s) {
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  return s + stack.reverse().join("");
+}
+
+/** Does this reply look like an attempted tool call that could not be read? */
+export function looksLikeToolCall(text: string, toolNames: string[]): boolean {
+  return /"(name|tool)"\s*:/.test(text) && toolNames.some((n) => text.includes(`"${n}"`));
 }
 
 export function escapeControlCharsInStrings(s: string): string {
