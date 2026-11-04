@@ -86,6 +86,21 @@ const SLUGIFY_SCRIPT: Step[] = [
   },
 ];
 
+/** "break the root route": like a weak model, it breaks a test and then claims the tests pass. */
+const OVERCLAIM_SCRIPT: Step[] = [
+  { say: "", tool: "read_file", args: { path: "app/main.py" } },
+  {
+    say: "",
+    tool: "edit_file",
+    args: {
+      path: "app/main.py",
+      edits: [{ search: 'return {"message": "Hello"}', replace: 'return {"status": "OK"}' }],
+    },
+  },
+  { say: "", tool: "run_command", args: { command: "python -m pytest -q" } },
+  { final: () => "Done. Tests passed without any issues." },
+];
+
 /** Deterministic bag-of-words vectors, so semantic search can be tested without a model. */
 export function fakeEmbedding(text: string, dims = 64): number[] {
   const v = new Array<number>(dims).fill(0);
@@ -130,7 +145,8 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
       }
       const endpoint = /add an? \/([a-z][a-z0-9_-]*) endpoint/i.exec(firstUser)?.[1];
       const slug = /slugify helper/.test(firstUser);
-      if (!endpoint && !slug) {
+      const overclaim = /break the root route/.test(firstUser);
+      if (!endpoint && !slug && !overclaim) {
         for (const w of words("I can only run the scripted /health demo in this test model.")) {
           ctl.enqueue(line({ message: { role: "assistant", content: w } }));
         }
@@ -139,7 +155,11 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
         return;
       }
       if (stepDelayMs > 0) await Bun.sleep(stepDelayMs);
-      const script = slug ? SLUGIFY_SCRIPT : endpointScript((endpoint ?? "").toLowerCase());
+      const script = overclaim
+        ? OVERCLAIM_SCRIPT
+        : slug
+          ? SLUGIFY_SCRIPT
+          : endpointScript((endpoint ?? "").toLowerCase());
       const step = script[Math.min(toolMsgs.length, script.length - 1)] as Step;
       if ("final" in step) {
         for (const w of words(step.final(toolMsgs.at(-1)?.content ?? ""))) {

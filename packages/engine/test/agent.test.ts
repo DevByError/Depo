@@ -129,6 +129,23 @@ describe("coding agent", () => {
     expect(retry?.text).toContain("could not read");
   });
 
+  test.if(hasPytest)(
+    "a model that claims tests passed after a failed run is sent back, then flagged",
+    async () => {
+      const { e, project, events } = await setup();
+      const task = e.tasks.send(project.id, "break the root route");
+      await e.tasks.settled(task.id);
+      const got = e.tasks.get(task.id);
+      expect(got.task.status).toBe("review");
+      expect(got.messages.at(-2)?.text).toContain("Tests passed without any issues.");
+      expect(got.messages.at(-1)?.text).toContain(
+        "Note from Depo: the last test run (python -m pytest -q) failed.",
+      );
+      expect(events.filter((ev) => ev.text === "Checking the tests before finishing.")).toHaveLength(2);
+    },
+    30_000,
+  );
+
   test("a follow-up message continues the same task and workspace", async () => {
     const { e, project } = await setup();
     const t1 = e.tasks.send(project.id, "say hello");

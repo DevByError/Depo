@@ -308,7 +308,11 @@ export class TaskManager {
       env: venvEnv(ws.root),
       ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
       ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
-      onTestResult: (r) => lessons.onTest(r),
+      onTestResult: (r) => {
+        lastTest = { command: r.command, passed: r.passed };
+        editedSinceTest = false;
+        return lessons.onTest(r);
+      },
       readPaths: new Set<string>(),
     };
     const lessons = this.lessonTracker(project.id);
@@ -319,6 +323,10 @@ export class TaskManager {
     let finalText = "";
     let steps = 0;
     let badOutputs = 0;
+    // Small models often say "tests passed" when they did not, so check before accepting the end.
+    let lastTest = null as { command: string; passed: boolean } | null;
+    let editedSinceTest = false;
+    let finishNudges = 0;
 
     while (steps < maxSteps) {
       if (signal.aborted) break;
@@ -422,12 +430,32 @@ export class TaskManager {
         });
       }
       if (calls.length === 0) {
+        const nudge =
+          finishNudges >= 2
+            ? null
+            : lastTest && !lastTest.passed
+              ? `The last test run (${lastTest.command}) failed, so the task is not done. Read the failure, fix the code, and run the tests again before you finish.`
+              : editedSinceTest && lastTest
+                ? "You changed files after the last test run. Run the tests again before you finish."
+                : null;
+        if (nudge) {
+          finishNudges++;
+          emit({ type: "retrying", text: "Checking the tests before finishing.", status: "running" });
+          history.push({ role: "user", content: nudge });
+          continue;
+        }
         finalText = res.text.trim();
+        if (lastTest && !lastTest.passed) {
+          const note = `Note from Depo: the last test run (${lastTest.command}) failed. Check the changes before you approve them.`;
+          finalText += `\n\n${note}`;
+          this.addMessage(taskId, { role: "assistant", content: note });
+        }
         break;
       }
       for (const call of calls) {
         if (signal.aborted) break;
         lessons.onCall(call.name, (call.arguments ?? {}) as Record<string, unknown>);
+        if (call.name === "edit_file" || call.name === "write_file") editedSinceTest = true;
         const result = await executeTool(call.name, call.arguments, ctx);
         let content = result.content;
         if (result.isError) {
