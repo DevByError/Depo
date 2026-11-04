@@ -169,3 +169,37 @@ describe("multiple projects", () => {
     expect(prompt).toContain("Repo map");
   });
 });
+
+describe("restart", () => {
+  test("tasks left working by a stopped engine are marked stopped on the next start", async () => {
+    const t = tempDir("depo restart");
+    const dataRoot = path.join(t.dir, "data");
+    const first = createEngine({ dataRoot, token: TEST_TOKEN, heartbeatMs: 60_000 });
+    const dir = path.join(t.dir, "proj");
+    fs.cpSync(FIXTURE, dir, { recursive: true });
+    const project = await first.projects.open(dir);
+    const { tasks } = await import("../src/db/schema");
+    const now = new Date().toISOString();
+    first.database.db
+      .insert(tasks)
+      .values({
+        id: "tsk_orphan",
+        projectId: project.id,
+        title: "old",
+        prompt: "old",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    first.database.close();
+    const second = createEngine({ dataRoot, token: TEST_TOKEN, heartbeatMs: 60_000 });
+    engine = second;
+    cleanup = t.cleanup;
+    await second.start();
+    const got = second.tasks.get("tsk_orphan");
+    expect(got.task.status).toBe("cancelled");
+    expect(got.messages.at(-1)?.text).toContain("Depo was closed");
+    expect(second.tasks.active()).toHaveLength(0);
+  });
+});

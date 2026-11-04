@@ -83,6 +83,37 @@ export class TaskManager {
       .map((r) => toTask(r));
   }
 
+  /**
+   * Tasks left "working" by an engine that stopped (crash, closed window, taskkill) can never
+   * finish: mark them stopped so they leave the Running list. A follow-up message resumes them.
+   */
+  recoverInterrupted(): number {
+    const stale = this.o.db
+      .select()
+      .from(tasks)
+      .where(inArray(tasks.status, ["queued", "running", "waiting"]))
+      .all()
+      .filter((t) => !this.running.has(t.id));
+    for (const t of stale) {
+      this.setStatus(t.id, "cancelled");
+      this.addMessage(t.id, {
+        role: "assistant",
+        content:
+          "Depo was closed while this task was working, so it stopped here. Send a follow-up message to continue.",
+        isError: true,
+      } as ChatMessage);
+      this.o.bus.emit({
+        agent: CODER_AGENT,
+        projectId: t.projectId,
+        taskId: t.id,
+        type: "info",
+        text: "Stopped: Depo was closed while this task was working",
+        status: "cancelled",
+      });
+    }
+    return stale.length;
+  }
+
   /** Tasks that are queued, running or waiting for approval, across every project. */
   active(): Task[] {
     return this.o.db

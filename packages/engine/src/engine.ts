@@ -174,6 +174,8 @@ export function createEngine(opts: EngineOptions): Engine {
           },
         },
       });
+      const recovered = tasks.recoverInterrupted();
+      if (recovered) logger.info("stopped tasks left over from the last run", { recovered });
       const configured = settings.get("engine.heartbeat_ms");
       const interval = Math.max(
         250,
