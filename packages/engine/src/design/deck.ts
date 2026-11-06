@@ -38,7 +38,13 @@ export const DeckSpecSchema = z.object({
         .string()
         .regex(/^#[0-9a-fA-F]{6}$/)
         .default("#38bdf8"),
-      font: z.string().max(60).default("Inter"),
+      font: z
+        .string()
+        .regex(
+          /^[A-Za-z0-9 ._-]{1,60}$/,
+          "Font names may only use letters, digits, spaces, dots, dashes and underscores",
+        )
+        .default("Inter"),
     })
     .default({ background: "#0f172a", text: "#f8fafc", accent: "#38bdf8", font: "Inter" }),
   slides: z.array(SlideSchema).min(1).max(30),
@@ -84,6 +90,7 @@ export function deckHtml(spec: DeckSpec, root: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${esc(spec.title)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
 :root{--bg:${t.background};--fg:${t.text};--ac:${t.accent};--font:"${t.font}",system-ui,sans-serif}
 *{box-sizing:border-box}body{margin:0;background:#000;color:var(--fg);font-family:var(--font)}

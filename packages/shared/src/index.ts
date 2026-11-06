@@ -1,5 +1,6 @@
 export * from "./agents";
 export * from "./events";
+export * from "./extensions";
 export * from "./ids";
 export * from "./rpc";
 

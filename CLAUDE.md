@@ -1,58 +1,59 @@
 # Depo: project memory for Claude
 
-Read this first every session. Update the "Status log" and "Next" sections at the end of every work session (what was done, what is next, open problems).
+Read this first every session. Update "Status log", "Next" and "Known issues" at the end of every work session.
 
 ## What Depo is
-A fully local, multi-agent AI coding studio for Windows (Tauri 2 + React UI, Bun engine sidecar, SQLite, local models via Ollama / llama.cpp / LM Studio). The user describes software; 15 specialist agents plan, design, build, test, secure and document it in a private copy of the project; the user reviews a diff and approves before anything touches real files. No cloud models, no accounts, no cost per token.
+A fully local, multi-agent AI coding studio for Windows (Tauri 2 + React UI, Bun engine sidecar, SQLite, local models via Ollama / llama.cpp / LM Studio). The user describes software; 15 specialist agents plan, design, build, test, secure and document it in a private copy of the project; the user reviews a diff and approves before anything touches real files. No cloud models, no accounts, no cost per token. **Depo itself has no login.** It builds systems that can have one.
 
-**The full design is in `Depo-System-Description.docx` (v1.0, 4 Nov 2026) at the repo root. It is the source of truth for scope and behaviour.** Other docs: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADRs), `docs/PROGRESS.md`, `docs/PHASE-0.md`.
+**The full design is `Depo-System-Description.docx` (v1.0, 4 Nov 2026) at the repo root. It is the source of truth for scope and behaviour.** Other docs: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADR-0001 to 0033), `docs/PROGRESS.md`, `docs/PHASE-0.md`.
 
-## Principles to keep (from the system description)
+## Principles to keep
 - Local and free; proposed, never imposed (shadow workspace + Diff Review + checkpoint + undo); visible work (activity feed + audit log); tools decide correctness (tests/lint/types, not model claims); Windows first; best model that fits, step down by adding smaller steps and more checking.
-- Agents exchange typed JSON messages through the Manager and share a per-project blackboard (brief.md, options.md, plan.json, design-system.json, schema/, openapi.yaml, diagrams/, reviews/, decisions.md). Two-key rule: a different agent reviews every output. Fix loops capped (default 5).
-- Small-model reliability matters: read-before-edit, exact search/replace edits, text tool-call recovery, tests as ground truth.
-
-## Agents (15)
-Leadership: Manager, Thinking, Reasoning, Project Management. Design: UI/UX Design, Diagram. Builders: Backend, Frontend, Database, Integration, AI Integration. Quality: Testing, Security, Enhancement. Delivery: DevOps and Documentation.
+- Agents talk through the Manager and a project blackboard with typed messages. Two-key rule: a different agent reviews each output (a setting: `team.reviews` all/key/off). Fix loops capped (default 5).
+- Small-model reliability matters: read-before-edit, exact search/replace edits, text tool-call recovery, tests as ground truth, planning JSON validated with a standard-pipeline fallback.
+- Skills, MCP servers and downloaded packs are untrusted until scanned; the user enables them.
 
 ## Repo layout
-- `apps/desktop`: Tauri shell (src-tauri) + React UI (src) + Playwright e2e
-- `packages/engine`: Bun sidecar (API, event bus, SQLite, tools, agent, workspace, memory, code index, scheduler)
-- `packages/model-gateway`: model runtimes, catalog (32 models), Auto-Fit planner, hardware profiler
-- `packages/shared`: Zod contracts shared by engine and UI
-- `scripts/`: dev, build-engine, setup/build ps1, fake-ollama (scripted model for tests), fixtures (fastapi-demo), verify-catalog
-- Commands: `bun run check` (lint+typecheck+tests), `bun run dev`, `bun run tauri:dev`, `bun run test:e2e` (in apps/desktop)
+- `apps/desktop`: Tauri shell (src-tauri) + React UI (src/components/panels = one file per screen) + Playwright e2e
+- `packages/engine/src`: `agent/` (loop.ts shared tool loop, tasks.ts), `agents/` (manifests, team runner, blackboard), `design/`, `skills/`, `mcp/`, `knowledge/` (packs + OSV), `tools/` (index.ts registry, design-tools.ts), `util/` (zip, github), plus db, api, projects, workspace, memory, codeindex, scheduler, models
+- `packages/model-gateway`: runtimes, catalog, Auto-Fit, hardware. `packages/shared`: Zod contracts (rpc.ts, agents.ts, extensions.ts)
+- `scripts/`: dev, build-engine, setup/build ps1, fake-ollama (scripted model for e2e), fixtures
+- Commands: `bun run check` (lint + typecheck + tests), `bun run dev`, `bun run tauri:dev`, e2e in apps/desktop: `bun run test:e2e`
 
-## Phase plan (10 phases; each must pass its acceptance test before the next starts)
+## Phase plan (each phase must pass its acceptance test before the next starts)
 | # | Scope | Status |
 |---|---|---|
-| 0 | Foundations (shell, engine, API, SQLite, events, installers) | Done |
-| 1 | Single agent core (gateway, Auto-Fit, tools, workspace, Diff Review, undo) | Done, accepted on Windows with qwen3-coder:30b |
-| 2 | Projects, memory, code index, scheduler, concurrent projects | Done, concurrency confirmed on Windows |
-| 3 | Agent team: manifests, 15 agents, Manager + task graph, blackboard, message protocol, two-key reviews, loop limits, Plan Board, Agent Board | Done (engine test runs the full 17-node todo-app pipeline with a scripted model) |
-| 4 | Design systems, fonts, diagrams (Mermaid check + UI editor), screenshots + vision review, UX audit, decks (HTML/PPTX/PDF) | Done |
-| 5 | Skills installer/vetting, MCP client, knowledge packs (+ offline OSV) | Planned |
-| 6 | Security + testing depth (Semgrep, gitleaks, OSV, Trivy, Bandit, ZAP, k6, Lighthouse) | Planned |
-| 7 | Agent Lab (versions, evals, A/B, promote/rollback) | Planned |
-| 8 | Building blocks library + all work modes | Planned |
+| 0 | Foundations | Done |
+| 1 | Single agent core | Done, accepted on Windows (qwen3-coder:30b) |
+| 2 | Projects, memory, code index, scheduler | Done |
+| 3 | Agent team: 15 manifests, Manager plan, blackboard, typed messages, reviews, loop limits, Plan/Agent Boards | Done (engine acceptance test with a scripted model) |
+| 4 | Design systems, fonts, Mermaid diagrams + editor, screenshots + vision review, UX audit, decks (HTML/PPTX/PDF) | Done |
+| 5 | Skills (GitHub/zip/folder, scan, assign, update/rollback), MCP client, knowledge packs (FTS5), offline OSV | Done |
+| 6 | Security + testing depth (Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse, local DB runtimes) | **NEXT** |
+| 7 | Agent Lab (versions, evals, A/B, promote/rollback, playground, sharing) | Planned |
+| 8 | Building blocks library (roles/permissions, auth, ...) + all work modes refined | Planned |
 | 9 | Polish and release (onboarding, palette, notifications, auto-update, signed installers) | Planned |
 
-## Status log (newest first; add an entry every session)
-- 2026-11-06 (autonomous run, user asked: finish phases 3-5 without stopping, build/test loop, clean up test environments): chat redesigned like Claude (user bubble, flowing reply, markdown); Phase 3 and Phase 4 built and tested. Key code: `packages/engine/src/agent/loop.ts` (shared tool loop), `agents/` (manifests, blackboard, team runner), `design/` (mermaid check, fonts, browser screenshots/PDF, deck, UX audit, service), `tools/design-tools.ts`. Browser e2e (Playwright) could NOT be run in this sandbox (Edge cannot reach localhost here); run `bun run test:e2e` on the PC (set PW_CHROMIUM_PATH to msedge.exe if Chromium is not installed).
-- 2026-11-06: Read `Depo-System-Description.docx` fully; created this CLAUDE.md. No code changes. Repo state: branch `main`; `bun.lock` modified; untracked `scripts/fixtures/fastapi-demo/fastapi-demo2/` (probably a leftover from a test run; check before committing) and the .docx.
-- Before that (from git log): small-model hardening (read-before-edit, tolerant text tool calls, unclosed-call repair, stripping copied line numbers, retry unreadable calls); tests checked before accepting a finished task; Stop works on tasks left "working" by an old engine.
+## Status log (newest first)
+- 2026-11-06 (autonomous run; user asked: do phases 3-5 without stopping, build/test loop, delete big test environments, they will review after): chat redesigned like Claude (user bubble, flowing reply, Markdown, streaming cursor, work folded). Phases 3, 4, 5 built and tested (engine 190 tests, UI 22, gateway 37, shared 7; lint and typecheck clean; compiled sidecar builds and serves the new API; build output and temp test folders deleted). A security review of the deck HTML found an injectable font name: fixed (strict font regex + CSP) and tested.
+- Before that (git log): small-model hardening (read-before-edit, tolerant text tool calls, unclosed-call repair, copied line numbers, retry unreadable calls); tests checked before accepting "done"; Stop works on tasks left "working" by an old engine.
 
 ## Next
-1. Decide how to slice Phase 3 (suggested: engine-side agent manifest format + typed message protocol + blackboard first; then Manager + plan.json with 2-3 agents; then add agents and the Plan/Agent Boards; full todo-app pipeline last).
-2. Fix doc drift: README still says "Phase 0 of 10"; PROGRESS.md says Phase 2 Windows checks pending while the system description says confirmed.
-3. Run `bun scripts/verify-catalog.ts` on a PC with internet (catalog tags unverified).
+1. The user reviews Phases 3-5 on their PC: `bun install`, `bun run tauri:dev`; try Backend only, then Full system, with a real model. Expect to tune prompts; check `team.reviews = key` on the 4 GB GPU.
+2. Run the browser e2e (`apps/desktop`, `bun run test:e2e`; set `PW_CHROMIUM_PATH` to msedge.exe if Chromium is not installed). New spec `e2e/phase345.spec.ts` and the changed chat layout were NOT run (Edge cannot reach localhost inside the build sandbox).
+3. Phase 6: wrap Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse as agent tools (detect if installed, explain how to install, never auto-download without asking); a seeded vulnerable project must be detected, fixed and re-verified automatically; security score in the dashboard (UX score already shows in the Design tab via `scores.get`).
+4. Fix doc drift when touching docs: `docs/PROGRESS.md` older sections describe earlier phases.
 
 ## Known issues
-- Slow on modest hardware (GTX 1650 4 GB: ~2 tok/s writing with qwen3-coder:30b); Auto-Fit should model prompt-reading speed and prefer smaller models.
-- Qwen3-Coder sometimes emits malformed tool calls Ollama rejects; the agent retries.
-- Catalog tags unverified; installers unsigned; engine exe ~115 MB; DB file may stay locked briefly after close on Windows (EBUSY in tests).
+- Slow on modest hardware (GTX 1650 4 GB: ~2 tok/s writing with qwen3-coder:30b); Auto-Fit should model prompt-reading speed and prefer smaller models. A full-system run on such a PC will take hours; use Backend only, `team.reviews = key`, and a small coder.
+- Qwen3-Coder sometimes emits malformed tool calls Ollama rejects; the loop retries and nudges.
+- Catalog tags (models) and knowledge-pack GitHub paths are unverified. MCP was tested with a test server only.
+- Installers unsigned; engine exe ~138 MB; DB file may stay locked briefly after close on Windows (EBUSY in tests, harmless).
+- Windows quirk: a Python/JS edit script that writes files with default newlines produces CRLF; the repo is LF (`.gitattributes`). Biome does not fix line endings; use `newline='\n'`.
 
 ## Working rules for Claude on this repo
-- Check against the system description before designing anything new; do not invent agent roles or flows that contradict it.
-- Run `bun run check` before saying something is done; report failures honestly.
-- Commit only when the user asks. Keep this file current.
+- Check the system description before designing anything new; do not invent agent roles or flows that contradict it.
+- Run `bun run check` before saying something is done; report failures honestly. Tests must pass with scripted models; never claim a real-model result you did not see.
+- Commit only when the user asks (during the autonomous run the user asked for work to be committed per phase). Keep this file current.
+- Delete temp test environments you create (`%TEMP%\depo *`, build outputs in `src-tauri/binaries`).
+- In this sandbox, shell heredocs mangle backslash escapes (`\n`); write scripts with the Write tool, then run them.

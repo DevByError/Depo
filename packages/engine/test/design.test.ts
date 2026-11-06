@@ -150,6 +150,18 @@ describe("decks", () => {
     expect(html).not.toContain("http://");
   });
 
+  test("a deck cannot inject markup through the font name, and the page carries a strict policy", () => {
+    const bad = {
+      title: "T",
+      slides: [{ title: "A" }],
+      theme: { font: 'x"}</style><script>alert(1)</script>' },
+    };
+    expect(() => DeckSpecSchema.parse(bad)).toThrow();
+    const html = deckHtml(DeckSpecSchema.parse({ title: "T", slides: [{ title: "A" }] }), ".");
+    expect(html).toContain("Content-Security-Policy");
+    expect(html).toContain("default-src 'none'");
+  });
+
   test("buildDeck writes json, html and a real pptx (a zip), and skips the PDF without a browser", async () => {
     const t = tempDir("depo deck");
     cleanup.push(t.cleanup);

@@ -12,11 +12,15 @@ import type { CodeIndexer } from "../codeindex/indexer";
 import { FONT_LIBRARY } from "../design/fonts";
 import type { DesignService } from "../design/service";
 import type { EventBus } from "../events/bus";
+import type { OsvService } from "../knowledge/osv";
+import type { KnowledgeService } from "../knowledge/service";
+import type { McpManager } from "../mcp/manager";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
+import type { SkillService } from "../skills/service";
 import type { ProjectService } from "../workspace/service";
 
 export interface HandlerContext {
@@ -31,6 +35,10 @@ export interface HandlerContext {
   scheduler: ModelScheduler;
   indexer: CodeIndexer;
   design: DesignService;
+  skills: SkillService;
+  mcp: McpManager;
+  knowledge: KnowledgeService;
+  osv: OsvService;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -222,6 +230,72 @@ export const handlers: Handlers = {
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
   "agents.list": () => ({ agents: MANIFESTS }),
   "team.get": (p, ctx) => ctx.tasks.teamState(p.taskId),
+  "skills.list": (_p, ctx) => ({ skills: ctx.skills.list() }),
+  "skills.get": (p, ctx) => {
+    const i = ctx.skills.instructions(p.id);
+    return { skill: i.skill, body: i.body };
+  },
+  "skills.preview": (p, ctx) => ctx.skills.preview({ source: p.source, ...(p.ref ? { ref: p.ref } : {}) }),
+  "skills.install": (p, ctx) => ({
+    skills: ctx.skills.install({ stagingId: p.stagingId, ...(p.select ? { select: p.select } : {}) }),
+  }),
+  "skills.discard": (p, ctx) => {
+    ctx.skills.discard(p.stagingId);
+    return { ok: true as const };
+  },
+  "skills.setEnabled": (p, ctx) => ctx.skills.setEnabled(p.id, p.enabled, p.force === true),
+  "skills.assign": (p, ctx) =>
+    ctx.skills.assign(p.id, {
+      scope: p.scope,
+      ...(p.projectId ? { projectId: p.projectId } : {}),
+      agents: p.agents,
+    }),
+  "skills.remove": (p, ctx) => ctx.skills.remove(p.id),
+  "skills.checkUpdates": async (_p, ctx) => ({ updates: await ctx.skills.checkUpdates() }),
+  "skills.update": (p, ctx) => ctx.skills.update(p.id),
+  "skills.rollback": (p, ctx) => ctx.skills.rollback(p.id),
+  "skills.draft": (p, ctx) => ctx.skills.draft(p.workflow),
+  "skills.create": (p, ctx) => ctx.skills.create(p),
+  "mcp.list": (_p, ctx) => ({ servers: ctx.mcp.list() }),
+  "mcp.add": (p, ctx) =>
+    ctx.mcp.add({
+      name: p.name,
+      transport: p.transport,
+      ...(p.command ? { command: p.command } : {}),
+      ...(p.args ? { args: p.args } : {}),
+      ...(p.env ? { env: p.env } : {}),
+      ...(p.url ? { url: p.url } : {}),
+    }),
+  "mcp.test": (p, ctx) => ctx.mcp.test(p.id),
+  "mcp.setEnabled": (p, ctx) => ctx.mcp.setEnabled(p.id, p.enabled, p.force === true),
+  "mcp.setAutoApprove": (p, ctx) => ctx.mcp.setAutoApprove(p.id, p.autoApprove),
+  "mcp.remove": (p, ctx) => ctx.mcp.remove(p.id),
+  "knowledge.list": (_p, ctx) => ({ packs: ctx.knowledge.list() }),
+  "knowledge.catalog": (_p, ctx) => ({ entries: ctx.knowledge.catalog() }),
+  "knowledge.import": (p, ctx) =>
+    ctx.knowledge.importPath({
+      name: p.name,
+      path: p.path,
+      ...(p.version ? { version: p.version } : {}),
+      ...(p.description ? { description: p.description } : {}),
+      ...(p.kind ? { kind: p.kind } : {}),
+    }),
+  "knowledge.install": (p, ctx) => ctx.knowledge.installFromCatalog(p.id),
+  "knowledge.setEnabled": (p, ctx) => ctx.knowledge.setEnabled(p.id, p.enabled),
+  "knowledge.remove": (p, ctx) => ctx.knowledge.remove(p.id),
+  "knowledge.search": (p, ctx) => ({
+    hits: ctx.knowledge.search(p.query, {
+      ...(p.limit ? { limit: p.limit } : {}),
+      ...(p.pack ? { pack: p.pack } : {}),
+    }),
+  }),
+  "osv.status": (_p, ctx) => ({ status: ctx.osv.status() }),
+  "osv.import": (p, ctx) =>
+    ctx.osv.import({
+      ecosystem: p.ecosystem,
+      ...(p.zipPath ? { zipPath: p.zipPath } : {}),
+      ...(p.packages ? { packages: p.packages } : {}),
+    }),
   "blackboard.list": (p, ctx) => ({ entries: ctx.tasks.blackboard.list(p.projectId) }),
   "diagrams.list": async (p, ctx) => ({ diagrams: await ctx.design.listDiagrams(p.projectId, p.taskId) }),
   "diagrams.save": (p, ctx) => ctx.design.saveDiagram(p.projectId, p.path, p.content),

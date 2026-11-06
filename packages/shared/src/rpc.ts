@@ -16,6 +16,15 @@ import {
   WorkModeSchema,
 } from "./agents";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
+import {
+  KnowledgeCatalogEntrySchema,
+  KnowledgeHitSchema,
+  KnowledgePackSchema,
+  McpServerSchema,
+  OsvStatusSchema,
+  SkillCandidateSchema,
+  SkillSchema,
+} from "./extensions";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
 export const RpcIdSchema = z.union([z.string(), z.number().int()]);
@@ -406,6 +415,175 @@ const TaskMethods = {
         .object({ overall: z.number(), grade: z.string(), blocksRelease: z.boolean(), at: z.string() })
         .nullable(),
     }),
+  },
+  "skills.list": {
+    params: z.object({}).strict(),
+    result: z.object({ skills: z.array(SkillSchema) }),
+  },
+  "skills.get": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ skill: SkillSchema, body: z.string() }),
+  },
+  "skills.preview": {
+    params: z.object({ source: z.string().min(1).max(1000), ref: z.string().max(200).optional() }).strict(),
+    result: z.object({
+      stagingId: z.string(),
+      kind: z.string(),
+      commit: z.string().nullable(),
+      candidates: z.array(SkillCandidateSchema),
+    }),
+  },
+  "skills.install": {
+    params: z.object({ stagingId: z.string(), select: z.array(z.string()).max(100).optional() }).strict(),
+    result: z.object({ skills: z.array(SkillSchema) }),
+  },
+  "skills.discard": {
+    params: z.object({ stagingId: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "skills.setEnabled": {
+    params: z.object({ id: z.string(), enabled: z.boolean(), force: z.boolean().optional() }).strict(),
+    result: SkillSchema,
+  },
+  "skills.assign": {
+    params: z
+      .object({
+        id: z.string(),
+        scope: z.enum(["global", "project"]),
+        projectId: z.string().optional(),
+        agents: z.array(z.string().max(60)).max(30),
+      })
+      .strict(),
+    result: SkillSchema,
+  },
+  "skills.remove": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "skills.checkUpdates": {
+    params: z.object({}).strict(),
+    result: z.object({
+      updates: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          current: z.string().nullable(),
+          latest: z.string().nullable(),
+          available: z.boolean(),
+        }),
+      ),
+    }),
+  },
+  "skills.update": {
+    params: z.object({ id: z.string() }).strict(),
+    result: SkillSchema,
+  },
+  "skills.rollback": {
+    params: z.object({ id: z.string() }).strict(),
+    result: SkillSchema,
+  },
+  "skills.draft": {
+    params: z.object({ workflow: z.string().min(3).max(4000) }).strict(),
+    result: z.object({ name: z.string(), description: z.string(), instructions: z.string() }),
+  },
+  "skills.create": {
+    params: z
+      .object({
+        name: z.string().max(64),
+        description: z.string().min(1).max(1024),
+        instructions: z.string().min(1).max(60_000),
+      })
+      .strict(),
+    result: SkillSchema,
+  },
+  "mcp.list": {
+    params: z.object({}).strict(),
+    result: z.object({ servers: z.array(McpServerSchema) }),
+  },
+  "mcp.add": {
+    params: z
+      .object({
+        name: z.string().max(40),
+        transport: z.enum(["stdio", "http"]),
+        command: z.string().max(500).optional(),
+        args: z.array(z.string().max(500)).max(40).optional(),
+        env: z.record(z.string().max(100), z.string().max(2000)).optional(),
+        url: z.string().max(500).optional(),
+      })
+      .strict(),
+    result: McpServerSchema,
+  },
+  "mcp.test": {
+    params: z.object({ id: z.string() }).strict(),
+    result: McpServerSchema,
+  },
+  "mcp.setEnabled": {
+    params: z.object({ id: z.string(), enabled: z.boolean(), force: z.boolean().optional() }).strict(),
+    result: McpServerSchema,
+  },
+  "mcp.setAutoApprove": {
+    params: z.object({ id: z.string(), autoApprove: z.boolean() }).strict(),
+    result: McpServerSchema,
+  },
+  "mcp.remove": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "knowledge.list": {
+    params: z.object({}).strict(),
+    result: z.object({ packs: z.array(KnowledgePackSchema) }),
+  },
+  "knowledge.catalog": {
+    params: z.object({}).strict(),
+    result: z.object({ entries: z.array(KnowledgeCatalogEntrySchema) }),
+  },
+  "knowledge.import": {
+    params: z
+      .object({
+        name: z.string().min(1).max(80),
+        path: z.string().min(1).max(1000),
+        version: z.string().max(40).optional(),
+        description: z.string().max(500).optional(),
+        kind: z.enum(["docs", "security", "ux", "custom"]).optional(),
+      })
+      .strict(),
+    result: KnowledgePackSchema,
+  },
+  "knowledge.install": {
+    params: z.object({ id: z.string() }).strict(),
+    result: KnowledgePackSchema,
+  },
+  "knowledge.setEnabled": {
+    params: z.object({ id: z.string(), enabled: z.boolean() }).strict(),
+    result: KnowledgePackSchema,
+  },
+  "knowledge.remove": {
+    params: z.object({ id: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "knowledge.search": {
+    params: z
+      .object({
+        query: z.string().min(2).max(300),
+        pack: z.string().max(80).optional(),
+        limit: z.number().int().min(1).max(20).optional(),
+      })
+      .strict(),
+    result: z.object({ hits: z.array(KnowledgeHitSchema) }),
+  },
+  "osv.status": {
+    params: z.object({}).strict(),
+    result: z.object({ status: z.array(OsvStatusSchema) }),
+  },
+  "osv.import": {
+    params: z
+      .object({
+        ecosystem: z.string().max(30),
+        zipPath: z.string().max(1000).optional(),
+        packages: z.array(z.string().max(200)).max(5000).optional(),
+      })
+      .strict(),
+    result: OsvStatusSchema,
   },
   "blackboard.list": {
     params: z.object({ projectId: z.string() }).strict(),

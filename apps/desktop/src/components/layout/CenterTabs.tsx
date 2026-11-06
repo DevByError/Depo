@@ -20,11 +20,13 @@ import { DesignPanel } from "@/components/panels/DesignPanel";
 import { DiagramsPanel } from "@/components/panels/DiagramsPanel";
 import { DiffReviewPanel } from "@/components/panels/DiffReviewPanel";
 import { FilesPanel } from "@/components/panels/FilesPanel";
+import { KnowledgePanel } from "@/components/panels/KnowledgePanel";
 import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { OverviewPanel } from "@/components/panels/OverviewPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { PlanBoard } from "@/components/panels/PlanBoard";
+import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { SlidesPanel } from "@/components/panels/SlidesPanel";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
@@ -54,25 +56,13 @@ export const CENTER_TABS: TabDef[] = [
     phase: "Phase 7",
     blurb: "Edit, evaluate, compare, promote and roll back each agent version.",
   },
-  {
-    id: "skills",
-    label: "Skills",
-    icon: Puzzle,
-    phase: "Phase 5",
-    blurb: "Install SKILL.md skills from GitHub, vet them, and assign them to agents.",
-  },
+  { id: "skills", label: "Skills", icon: Puzzle },
   {
     id: "models",
     label: "Models",
     icon: Boxes,
   },
-  {
-    id: "knowledge",
-    label: "Knowledge",
-    icon: BookOpen,
-    phase: "Phase 5",
-    blurb: "Offline docs and security packs that agents search and cite.",
-  },
+  { id: "knowledge", label: "Knowledge", icon: BookOpen },
 ];
 
 export function CenterTabs() {
@@ -149,6 +139,10 @@ export function CenterTabs() {
             <FilesPanel />
           ) : current.id === "diff" ? (
             <DiffReviewPanel />
+          ) : current.id === "skills" ? (
+            <SkillsPanel />
+          ) : current.id === "knowledge" ? (
+            <KnowledgePanel />
           ) : current.id === "models" ? (
             <ModelsPanel />
           ) : (

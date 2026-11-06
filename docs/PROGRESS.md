@@ -1,8 +1,62 @@
 # Progress
 
-**Current phase:** Phase 2 (projects, memory, code index, multi-project scheduler) is built and passes its acceptance test in the container. It needs a run on Windows. Phase 1 was accepted on the owner's Windows PC.
+**Current phase:** Phases 3, 4 and 5 are built and pass their acceptance tests in the development container and on the build PC (engine tests with a scripted model). They still need a run with a real model on the owner's PC and the browser end-to-end suite (see "Not verified yet").
 
-_Last updated: 2026-10-31_
+_Last updated: 2026-11-06_
+
+## Phase 3 (agent team)
+
+| Criterion | Status |
+|---|---|
+| A todo app (Next.js + FastAPI + PostgreSQL + login) goes through the full pipeline: brief, options, critique, design, diagrams, database, backend, integration, frontend, tests, security, performance, UX audit, deck, final review, docs | **Passes in the engine** (`test/team.test.ts`, scripted model plays all 15 agents; 17 plan nodes; dependencies respected; a different agent reviews each step; login work is reviewed by Security). |
+
+Built: shared tool loop (`agent/loop.ts`), 15 agent manifests, Manager planning (structured output, validated, falls back to the standard pipeline), task graph executor with parallel branches, two-key reviews with a loop limit (5 by default), typed agent messages, project blackboard with ownership and history, plan approval, work modes (full, backend, frontend, ai, import, fix, refactor, ask, business), Plan Board and Agent Board, a work-mode picker in Chat, and the Claude-style chat (user bubble, flowing reply with the work folded, Markdown, streaming cursor).
+Settings: `team.approve_plan`, `team.reviews` (all, key, off), `team.fix_loops`, `team.parallel`, `team.export_docs`.
+
+## Phase 4 (design, diagrams, presentations)
+
+| Criterion | Status |
+|---|---|
+| The todo project gets an ERD, an architecture diagram, a scored UX audit and an exportable deck | **Passes in the engine** (same acceptance test: `docs/diagrams/erd.mmd` and `architecture.mmd` checked by `render_diagram`, `scores/ux.json` from `record_ux_audit`, `docs/deck/deck.pptx` and `deck.html` in the change set). |
+
+Built: Mermaid checker (syntax, balance, entities against the schema), font library (21 open-licence fonts, Arabic included, self-hosted through Fontsource) and type scale, screenshots and PDF through the PC's own Edge or Chrome in headless mode (verified here: PNG and PDF), vision review tool (uses the `vision` role), UX audit (Nielsen's ten heuristics, score out of 100, blocks the release below 60 or on any 1/5), decks as JSON, HTML (keyboard navigation, print CSS, strict CSP), PPTX (pptxgenjs) and PDF, and the Design, Diagrams (live Mermaid preview, editor, SVG and PNG export) and Slides panels.
+
+## Phase 5 (skills, MCP, knowledge)
+
+| Criterion | Status |
+|---|---|
+| A skill installed from GitHub measurably changes an agent's behaviour | **Passes in the engine** (`test/extensions.test.ts`: a fake GitHub serves a repository; the skill is previewed, installed, scanned, enabled; the same task then produces `handle_health()` instead of `health()`, and turning the skill off restores the old result). |
+
+Built: skills (GitHub URL, folder or .zip; several skills per repository; pinned to the commit; update check; update; roll back to the previous version; per-agent and per-project assignment; Skill Creator with a local-model draft), a vetting scanner (dangerous commands, hidden or encoded commands, credential access, prompt-injection phrases, invisible characters, binaries, symlinks), progressive loading (only name and description in the prompt, `use_skill` and `read_skill_file` on demand); an MCP client (stdio and streamable HTTP on local addresses, tools scanned for hidden instructions, approval per tool unless read-only or trusted); knowledge packs (full-text search with SQLite FTS5, Markdown, text, HTML and PDF import, a catalog of 13 public packs installed by the user, results name pack and version); an offline OSV database (import from osv.dev or a local all.zip, version-range matching, `check_dependencies` tool); the Skills and Knowledge panels.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `bun run lint` and `bun run typecheck` (4 packages, strict) | clean |
+| Model gateway tests | 37 passed |
+| Shared tests | 7 passed |
+| Engine tests | 190 passed |
+| UI unit tests | 22 passed |
+| Compiled sidecar (`bun scripts/build-engine.ts`) | builds; starts; serves the new API; FTS5 and migrations work in the compiled executable |
+
+## Not verified yet
+
+- **Browser end-to-end suite** (`bun run test:e2e`). It could not run in the build container: Edge could not reach localhost there. On the PC: `cd apps\desktop; bunx playwright install chromium; bun run test:e2e` (or set `PW_CHROMIUM_PATH` to msedge.exe). The chat layout changed, so a failure in `e2e/chat.spec.ts` is possible.
+- **Real models.** Everything above used a scripted model. Run a Backend only task and a Full system task on the PC and see how `qwen3-coder` handles planning JSON and reviews; the plan falls back to the standard pipeline when the model cannot produce valid JSON, and `team.reviews = key` or `off` reduces the number of model calls on slow PCs.
+- **Catalog addresses** (knowledge packs, models) were not checked against the internet from the build machine.
+- **MCP servers** were tested with a test server over stdio and HTTP, not with real published servers.
+- Phase 6 onwards is not started.
+
+## Next steps
+
+1. On Windows: `bun install`, `bun run tauri:dev`, try Backend only on a small project, then Full system.
+2. Phase 6: Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse, local database runtimes.
+3. Phase 7: Agent Lab. Phase 8: building blocks and the remaining modes. Phase 9: polish and release.
+
+---
+
+# Earlier phases
 
 ## Phase 2 acceptance criterion
 

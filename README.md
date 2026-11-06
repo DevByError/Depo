@@ -2,9 +2,9 @@
 
 A fully local, multi-agent AI coding studio for Windows. Describe the software you want; a team of local AI agents plans, designs, builds, tests, secures and documents it, and you approve every change before it touches your files. No cloud models, no accounts, no cost per token.
 
-**Status:** Phase 0 (foundations) of 10. The desktop shell, engine, live activity feed and data layer work; agents and models arrive in Phase 1 and later. See [docs/PROGRESS.md](docs/PROGRESS.md).
+**Status:** Phase 5 of 10 is built (agent team, design and presentations, skills, MCP, knowledge packs). Phases 6 to 9 are next. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
-![Depo, Phase 0](docs/screenshots/phase0-dark.png)
+![Depo, early build](docs/screenshots/phase0-dark.png)
 
 ## Build on Windows
 
@@ -61,7 +61,7 @@ The installers are not code-signed yet, so Windows SmartScreen shows "Windows pr
 apps/desktop        Tauri 2 shell (src-tauri) + React UI (src) + e2e tests
 packages/shared     Zod contracts shared by engine and UI
 packages/engine     Bun sidecar: API server, event bus, SQLite, logging
-docs/               PHASE-0, PROGRESS, ARCHITECTURE, DECISIONS
+docs/               PHASE-0, PROGRESS, ARCHITECTURE, DECISIONS (CLAUDE.md in the root is the working memory)
 scripts/            dev, sidecar build, Windows setup and build
 ```
 

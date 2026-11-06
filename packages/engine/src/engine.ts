@@ -8,13 +8,18 @@ import { CodeIndexer } from "./codeindex/indexer";
 import { type OpenedDatabase, openDatabase } from "./db";
 import { DesignService } from "./design/service";
 import { EventBus } from "./events/bus";
+import { OsvService } from "./knowledge/osv";
+import { KnowledgeService } from "./knowledge/service";
 import { createLogger, type Logger, type LogLevel } from "./logger";
+import { McpManager } from "./mcp/manager";
 import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { ProjectRegistry } from "./projects/registry";
 import { ModelScheduler } from "./scheduler/scheduler";
 import { SettingsRepo } from "./settings";
+import { SkillService } from "./skills/service";
+import type { GithubEndpoints } from "./util/github";
 import { ProjectService } from "./workspace/service";
 
 export interface EngineOptions {
@@ -29,6 +34,8 @@ export interface EngineOptions {
   models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
   /** Test hooks for the agent loop. */
   tasks?: { maxSteps?: number; retryDelayMs?: number };
+  /** Test hooks for downloads (GitHub archives, OSV dumps). */
+  downloads?: { github?: GithubEndpoints; osvBase?: string };
   /** Test hook: replaces the git runner used for clones. */
   git?: ConstructorParameters<typeof ProjectRegistry>[0]["git"];
 }
@@ -47,6 +54,10 @@ export interface Engine {
   readonly scheduler: ModelScheduler;
   readonly indexer: CodeIndexer;
   readonly design: DesignService;
+  readonly skills: SkillService;
+  readonly mcp: McpManager;
+  readonly knowledge: KnowledgeService;
+  readonly osv: OsvService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -99,7 +110,45 @@ export function createEngine(opts: EngineOptions): Engine {
     embeddings,
     enabled: (id) => safeSettings(registry, id)?.indexEnabled ?? true,
   });
+  const skills = new SkillService({
+    db: database.db,
+    bus,
+    dir: dirs.skills,
+    ...(opts.downloads?.github ? { github: opts.downloads.github } : {}),
+    draft: (workflow) => draftSkill(models, workflow),
+  });
+  const mcp = new McpManager({ db: database.db, bus, approvals });
+  const knowledge = new KnowledgeService({
+    db: database.db,
+    bus,
+    dir: dirs.knowledge,
+    ...(opts.downloads?.github ? { github: opts.downloads.github } : {}),
+  });
+  const osv = new OsvService({
+    db: database.db,
+    bus,
+    dir: dirs.knowledge,
+    ...(opts.downloads?.osvBase ? { base: opts.downloads.osvBase } : {}),
+  });
+  /** Skills, MCP tools, knowledge packs and the OSV check, merged for one agent run. */
+  const extras = (agentId: string, projectId: string, run: { taskId: string }) => {
+    const parts = [
+      skills.extrasFor(agentId, projectId),
+      mcp.extrasFor(agentId, projectId, run),
+      knowledge.extrasFor(),
+      osv.extrasFor(),
+    ];
+    return {
+      prompt: parts
+        .map((p) => p.prompt)
+        .filter(Boolean)
+        .join("\n\n"),
+      tools: parts.flatMap((p) => p.tools),
+      allow: parts.flatMap((p) => p.allow),
+    };
+  };
   const tasks = new TaskManager({
+    extras,
     db: database.db,
     bus,
     logger,
@@ -152,6 +201,10 @@ export function createEngine(opts: EngineOptions): Engine {
     scheduler,
     indexer,
     design,
+    skills,
+    mcp,
+    knowledge,
+    osv,
     database,
     async start() {
       server = startApiServer({
@@ -172,6 +225,10 @@ export function createEngine(opts: EngineOptions): Engine {
           scheduler,
           indexer,
           design,
+          skills,
+          mcp,
+          knowledge,
+          osv,
           info: {
             startedAt,
             dataDir: dirs.root,
@@ -215,6 +272,7 @@ export function createEngine(opts: EngineOptions): Engine {
       });
       indexer.stopAll();
       await tasks.cancelAll();
+      await mcp.stopAll();
       await server?.stop();
       database.close();
       logger.info("engine stopped", { reason });
@@ -252,4 +310,29 @@ function embeddingSource(models: ModelManager) {
       return { provider: resolved.provider, model: resolved.model };
     },
   };
+}
+
+/** The Skill Creator: ask the local model to draft a SKILL.md from a described workflow. */
+async function draftSkill(models: ModelManager, workflow: string) {
+  const r = models.resolve("reasoning") ?? models.resolve("coder");
+  if (!r) throw new Error("No model is set up.");
+  const { generateObject } = await import("@depo/model-gateway");
+  const { z } = await import("zod");
+  const out = await generateObject(r.provider, {
+    model: r.model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write agent skills. A skill is a SKILL.md with a short kebab-case name, a one-sentence description that says WHEN to use it, and Markdown instructions: when to use it, numbered steps, rules, and an example. Keep it under 60 lines. Reply with JSON only.",
+      },
+      { role: "user", content: `Write a skill for this workflow:\n${workflow}` },
+    ],
+    schema: z.object({
+      name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+      description: z.string().min(5).max(1000),
+      instructions: z.string().min(20).max(20_000),
+    }),
+  });
+  return out.value;
 }

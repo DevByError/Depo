@@ -204,3 +204,64 @@ export const checkpoints = sqliteTable("checkpoints", {
   files: text("files").notNull(),
   ...timestamps,
 });
+
+export const skills = sqliteTable("skills", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  /** github | zip | folder | created */
+  sourceKind: text("source_kind").notNull(),
+  source: text("source").notNull(),
+  ref: text("ref"),
+  commitSha: text("commit_sha"),
+  versionId: text("version_id").notNull(),
+  /** JSON-encoded SkillVersion[] */
+  versions: text("versions").notNull(),
+  enabled: integer("enabled").notNull().default(0),
+  /** JSON-encoded VetReport */
+  vetting: text("vetting").notNull(),
+  ...timestamps,
+});
+
+export const skillAssignments = sqliteTable(
+  "skill_assignments",
+  {
+    skillId: text("skill_id").notNull(),
+    /** global | project */
+    scope: text("scope").notNull(),
+    projectId: text("project_id").notNull().default(""),
+    /** an agent id, `coder`, or `*` for all */
+    agent: text("agent").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.skillId, t.scope, t.projectId, t.agent] })],
+);
+
+export const mcpServers = sqliteTable("mcp_servers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  /** stdio | http */
+  transport: text("transport").notNull(),
+  command: text("command"),
+  args: text("args").notNull(),
+  env: text("env").notNull(),
+  url: text("url"),
+  enabled: integer("enabled").notNull().default(0),
+  autoApprove: integer("auto_approve").notNull().default(0),
+  vetting: text("vetting"),
+  tools: text("tools").notNull().default("[]"),
+  ...timestamps,
+});
+
+export const knowledgePacks = sqliteTable("knowledge_packs", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  version: text("version").notNull(),
+  /** docs | security | ux | custom */
+  kind: text("kind").notNull(),
+  source: text("source").notNull(),
+  description: text("description").notNull(),
+  docCount: integer("doc_count").notNull(),
+  chunkCount: integer("chunk_count").notNull(),
+  enabled: integer("enabled").notNull().default(1),
+  ...timestamps,
+});

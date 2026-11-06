@@ -211,6 +211,86 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX agent_messages_task ON agent_messages (task_id, created_at);
     `,
   },
+  {
+    version: 5,
+    name: "skills_mcp_knowledge",
+    sql: `
+      CREATE TABLE skills (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        ref TEXT,
+        commit_sha TEXT,
+        version_id TEXT NOT NULL,
+        versions TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        vetting TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE skill_assignments (
+        skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+        scope TEXT NOT NULL,
+        project_id TEXT NOT NULL DEFAULT '',
+        agent TEXT NOT NULL,
+        PRIMARY KEY (skill_id, scope, project_id, agent)
+      );
+      CREATE TABLE mcp_servers (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        transport TEXT NOT NULL,
+        command TEXT,
+        args TEXT NOT NULL,
+        env TEXT NOT NULL,
+        url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        auto_approve INTEGER NOT NULL DEFAULT 0,
+        vetting TEXT,
+        tools TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE knowledge_packs (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        version TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        description TEXT NOT NULL,
+        doc_count INTEGER NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+        text, title, path UNINDEXED, pack_id UNINDEXED, tokenize = 'porter unicode61'
+      );
+      CREATE TABLE osv_vulns (
+        id TEXT NOT NULL,
+        ecosystem TEXT NOT NULL,
+        package TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details TEXT NOT NULL,
+        severity TEXT,
+        ranges TEXT NOT NULL,
+        versions TEXT NOT NULL,
+        fixed TEXT,
+        aliases TEXT NOT NULL DEFAULT '[]',
+        modified TEXT,
+        PRIMARY KEY (id, ecosystem, package)
+      );
+      CREATE INDEX osv_vulns_pkg ON osv_vulns (ecosystem, package);
+      CREATE TABLE osv_meta (
+        ecosystem TEXT PRIMARY KEY NOT NULL,
+        imported_at TEXT NOT NULL,
+        count INTEGER NOT NULL,
+        source TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

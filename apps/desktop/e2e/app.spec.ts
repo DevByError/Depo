@@ -46,6 +46,8 @@ test("keyboard shortcuts toggle panels and tabs are keyboard reachable", async (
 
   await page.getByRole("tab", { name: "Chat" }).focus();
   await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Plan" })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tabpanel", { name: "Files" })).toBeVisible();
 

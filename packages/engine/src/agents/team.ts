@@ -65,11 +65,15 @@ export interface TeamHost {
   lessons(projectId: string): NonNullable<Parameters<typeof runAgentLoop>[0]["lessons"]>;
   memoryContext(projectId: string): string;
   repoMap(projectId: string): string;
-  /** Extra prompt text and tools for an agent (skills, MCP servers: Phase 5). */
-  extras?(
-    agent: AgentManifest,
-    projectId: string,
-  ): { prompt: string; tools: ToolContext["extraTools"]; allow: string[] };
+  /** Extra prompt text and tools for an agent (skills, MCP servers, knowledge packs). */
+  extras?(agentId: string, projectId: string, run: { taskId: string; signal: AbortSignal }): AgentExtras;
+}
+
+export interface AgentExtras {
+  prompt: string;
+  tools: NonNullable<ToolContext["extraTools"]>;
+  /** Names of the tools above (and any others) the agent may call. */
+  allow: string[];
 }
 
 export interface TeamInput {
@@ -995,7 +999,7 @@ export class TeamRunner {
       },
     };
     const knowledge = this.h.knowledge(projectId);
-    const extras = this.h.extras?.(manifest, projectId);
+    const extras = this.h.extras?.(manifest.id, projectId, { taskId, signal });
     return {
       root: ws.root,
       bus: this.h.bus,
@@ -1084,7 +1088,10 @@ export class TeamRunner {
     const tag = agentTag(manifest.id);
     const files = new Set<string>();
     const ctx = this.toolContext(input, manifest, emit, files);
-    const extras = this.h.extras?.(manifest, input.projectId);
+    const extras = this.h.extras?.(manifest.id, input.projectId, {
+      taskId: input.taskId,
+      signal: input.signal,
+    });
     const toolNames = [...manifest.tools, ...(extras?.allow ?? [])];
     if (history.length === 0) {
       const deps = node.deps

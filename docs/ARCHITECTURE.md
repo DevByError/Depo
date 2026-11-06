@@ -1,6 +1,6 @@
 # Depo architecture
 
-Status: Phase 1 (single agent core). This document describes what exists now and the boundaries later phases build on. Planned parts are marked *(Phase N)*.
+Status: Phase 5 (agent team, design, skills, MCP, knowledge). This document describes what exists now and the boundaries later phases build on. Planned parts are marked *(Phase N)*.
 
 ## Processes
 
@@ -153,4 +153,28 @@ Tables added in migration 3: `project_settings`, `memory_facts`, `code_files`, `
 
 ## Coming next
 
-- *(Phase 3)* the Manager and multiple agents per task.
+- *(Phase 6)* security and testing depth (Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse).
+- *(Phase 7)* Agent Lab: versions, evaluations, A/B, promote and roll back.
+- *(Phase 8)* building blocks library and the remaining refinements of every work mode.
+- *(Phase 9)* onboarding, command palette, notifications, auto-update, signed installers.
+
+## Agent team (Phases 3 to 5)
+
+```
+packages/engine/src/
+  agent/loop.ts        the tool loop shared by every agent
+  agent/tasks.ts       task manager: single coder, or hands the task to the team
+  agents/manifests.ts  15 manifests (mission, tools, reviewers, blackboard sections)
+  agents/team.ts       Manager plan, task graph executor, reviews, loop limits, summary
+  agents/blackboard.ts versioned shared notes + typed messages
+  design/              mermaid check, fonts, browser (screenshot, PDF), deck, UX audit, service
+  skills/              SKILL.md parsing, scanner, install/update/rollback, assignment
+  mcp/                 MCP client (stdio, HTTP) and manager
+  knowledge/           packs (FTS5), catalog, OSV
+  tools/design-tools.ts render_diagram, list_fonts, render_screenshot, review_screenshot, make_deck, record_ux_audit
+  util/                zip reader, GitHub download
+```
+
+Flow of a team task: `tasks.send(mode)` creates the shadow workspace, then `TeamRunner.run` asks the Manager for a plan, optionally waits for the user's approval, runs ready nodes in parallel (limit `team.parallel`), reviews each node with a different agent, loops on blocking findings up to `team.fix_loops`, and finishes with the Manager's summary and one change set for Diff Review. Per-run extras (skills, MCP tools, knowledge search, dependency check) are merged by one provider in `engine.ts` and given to both the coder and the team agents.
+
+Tables added: migration 4 (`blackboard`, `blackboard_history`, `agent_messages`, `tasks.mode`, `tasks.plan`) and migration 5 (`skills`, `skill_assignments`, `mcp_servers`, `knowledge_packs`, `knowledge_fts`, `osv_vulns`, `osv_meta`).

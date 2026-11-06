@@ -51,7 +51,7 @@ export interface TaskManagerOptions {
   maxSteps?: number;
   retryDelayMs?: number;
   /** Skills and MCP tools for team agents (Phase 5). */
-  extras?: ConstructorParameters<typeof TeamRunner>[0]["extras"];
+  extras?: NonNullable<ConstructorParameters<typeof TeamRunner>[0]["extras"]>;
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -91,6 +91,11 @@ export class TaskManager {
       repoMap: (id) => o.indexer?.repoMap(id, REPO_MAP_BUDGET).trim() ?? "",
       ...(o.extras ? { extras: o.extras } : {}),
     });
+  }
+
+  /** Skills, MCP tools and knowledge for the single coding agent. */
+  private coderExtras(projectId: string, taskId: string, signal: AbortSignal) {
+    return this.o.extras?.("coder", projectId, { taskId, signal });
   }
 
   private teamOptions() {
@@ -380,6 +385,8 @@ export class TaskManager {
     }
 
     const lessons = this.lessonTracker(project.id);
+    const extras = this.coderExtras(project.id, taskId, signal);
+    if (extras?.prompt && history[0]?.role === "system") history[0].content += `\n\n${extras.prompt}`;
     const ctx: ToolContext = {
       root: ws.root,
       bus: this.o.bus,
@@ -392,6 +399,7 @@ export class TaskManager {
       ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
       ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
       readPaths: new Set<string>(),
+      ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const result = await runAgentLoop({
@@ -399,7 +407,7 @@ export class TaskManager {
       model,
       contextLength,
       history,
-      toolNames: TOOLS.map((t) => t.name),
+      toolNames: [...TOOLS.map((t) => t.name), ...(extras?.allow ?? [])],
       ctx,
       maxSteps,
       signal,

@@ -118,3 +118,40 @@ Short ADRs: decision, reason, alternatives. Newest last.
 
 ## ADR-0025: Project lifecycle never deletes the user's files
 - **Decision:** "Remove from Depo" deletes Depo's rows, task copies, checkpoints, memory and index for the project; the project folder is left alone. Create, clone and duplicate only write into a folder that did not exist (or is empty). Duplicate copies the folder without installed packages and caches, plus memory and settings. Export writes a .zip (project files without packages, plus `.depo-export/project.json` and `project-memory.md`) to Downloads. Removing task copies unlinks the dependency links first, so the real `node_modules` or `.venv` can never be deleted through them.
+
+## ADR-0026: One tool loop for every agent
+- **Decision:** The loop that asks the model, runs tools, repairs unreadable calls and checks the tests before accepting "done" lives in `agent/loop.ts`. The single coding agent and all 15 team agents run through it.
+- **Reason:** Every robustness fix for small models (text tool calls, copied line numbers, read-before-edit, failing-test nudges) now applies to every agent. The Phase 1 and 2 tests kept passing through the refactor.
+- **Alternatives:** A second loop for the team (duplicated fixes, drift).
+
+## ADR-0027: The Manager plans with structured output and a fallback
+- **Decision:** The Manager asks for a task graph as JSON validated against a schema. Unknown agents, missing dependencies and cycles are rejected; if the model cannot produce a valid plan, the standard pipeline of the work mode is used. Code-producing plans always get a Testing step.
+- **Reason:** Small local models fail at free-form planning. A valid default means the team still runs.
+- **Alternatives:** Letting the model free-run with tools (unpredictable on weak PCs).
+
+## ADR-0028: Agents talk through a typed blackboard, owned section by section
+- **Decision:** Shared state is a versioned blackboard in SQLite (project scope, history kept). An agent writes only the sections in its manifest (`decisions.md` is append-only for everyone). Messages between agents are typed (handoff, request, review, question, result, blocker) and stored per task. Notes worth keeping are exported to `docs/depo/` in the change set, so the user approves them like any other file.
+- **Reason:** Free conversation between small models drifts. Ownership makes mistakes visible and cheap to fix.
+- **Alternatives:** Passing whole transcripts between agents (context overflow).
+
+## ADR-0029: Review is a setting, not a constant
+- **Decision:** The two-key rule is on by default (`team.reviews = all`). `key` reviews only architecture and API work; `off` skips agent reviews. A reviewer that cannot produce readable JSON approves with confidence 0 and says so. Login and payment work goes to Security.
+- **Reason:** On a 4 GB GPU a review pass doubles the model calls. The user decides the trade-off. Tests, not reviews, remain the ground truth.
+
+## ADR-0030: Screenshots and PDFs use the PC's own browser
+- **Decision:** `render_screenshot` and deck PDFs call Edge or Chrome in headless mode (`DEPO_BROWSER` overrides, `DEPO_NO_BROWSER=1` disables). Pages must be project files or localhost.
+- **Reason:** No Playwright or Chromium download inside the engine, no extra gigabytes, no internet. Verified to produce PNG and PDF.
+- **Alternatives:** Bundling Playwright (large, network install).
+
+## ADR-0031: Skills are scanned before they can be enabled, and load on demand
+- **Decision:** A skill starts disabled with a stored security report. A report with serious findings (pipe-to-shell, destructive commands, credential access, prompt-injection phrases, binaries, symlinks) needs an explicit override. Updates that scan worse than the approved version are disabled again. Only name and description enter the prompt; `use_skill` loads the instructions.
+- **Reason:** Skills are text that steer an agent and sometimes scripts; they are untrusted input. Progressive loading saves context on local models.
+
+## ADR-0032: MCP servers are local, scanned, and asked about
+- **Decision:** stdio programs and local HTTP addresses only. "Test" connects, lists tools and scans names and descriptions for hidden instructions. Tools that are not read-only ask the user once per task unless the server is trusted. Server environment values never leave the engine.
+- **Reason:** MCP tool descriptions are a known prompt-injection route; running a server is running code.
+
+## ADR-0033: Knowledge packs use full-text search, not embeddings
+- **Decision:** SQLite FTS5 with BM25 and Porter stemming over heading-aware passages. Results always name the pack and version.
+- **Reason:** Works offline with no model installed and no GPU time; embeddings can be added later for the code index only.
+- **Note:** The pack catalog lists public GitHub folders; addresses are unverified until installed.

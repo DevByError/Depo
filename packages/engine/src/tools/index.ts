@@ -85,6 +85,8 @@ export interface AgentTool<S extends z.ZodType> {
   name: string;
   description: string;
   schema: S;
+  /** A ready-made JSON Schema for the model (MCP tools bring their own). */
+  jsonSchema?: Record<string, unknown>;
   run(args: z.infer<S>, ctx: ToolContext): Promise<string>;
 }
 
@@ -617,10 +619,8 @@ export function toolDefinitions(names?: string[], extra: AgentTool<z.ZodType>[] 
   return [...TOOLS, ...extra]
     .filter((t) => !names || names.includes(t.name))
     .map((t) => {
-      const { $schema: _s, ...parameters } = z.toJSONSchema(t.schema, { io: "input" }) as Record<
-        string,
-        unknown
-      >;
+      const { $schema: _s, ...parameters } =
+        t.jsonSchema ?? (z.toJSONSchema(t.schema, { io: "input" }) as Record<string, unknown>);
       return { name: t.name, description: t.description, parameters };
     });
 }
