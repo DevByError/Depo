@@ -587,8 +587,11 @@ export class SkillService {
         async run(a) {
           const s = find(a.name);
           const dir = path.join(root, s.name, s.versionId);
-          const abs = path.resolve(dir, a.path);
-          if (path.relative(dir, abs).startsWith("..") || !fs.existsSync(abs) || !fs.statSync(abs).isFile())
+          // Only files the skill itself lists (no symlinks, no absolute or drive paths, no "..").
+          const wanted = a.path.replaceAll("\\", "/").replace(/^\.\//, "");
+          if (!s.files.includes(wanted)) throw new ToolError(`No file ${a.path} in skill ${s.name}.`);
+          const abs = path.join(dir, wanted);
+          if (!fs.existsSync(abs) || !fs.lstatSync(abs).isFile())
             throw new ToolError(`No file ${a.path} in skill ${s.name}.`);
           if (fs.statSync(abs).size > 200_000) throw new ToolError("That file is too large to read.");
           return fs.readFileSync(abs, "utf8");

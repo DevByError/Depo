@@ -345,6 +345,13 @@ describe("skill service", () => {
     expect(
       (await executeTool("read_skill_file", { name: "api-style", path: "../../../etc/passwd" }, ctx)).isError,
     ).toBe(true);
+    for (const bad of ["C:\\Windows\\win.ini", "/etc/passwd", "\\\\host\\share\\x", "refs/../../x", "refs"])
+      expect((await executeTool("read_skill_file", { name: "api-style", path: bad }, ctx)).isError).toBe(
+        true,
+      );
+    expect(
+      (await executeTool("read_skill_file", { name: "api-style", path: "./refs/errors.md" }, ctx)).isError,
+    ).toBe(false);
     expect((await executeTool("use_skill", { name: "nope" }, ctx)).isError).toBe(true);
     expect(e.skills.extrasFor("testing", "prj").tools).toHaveLength(2); // global "*" assignment
     e.skills.setEnabled(s?.id ?? "", false);

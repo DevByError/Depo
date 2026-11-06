@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import PptxGenJS from "pptxgenjs";
 import { z } from "zod";
+import { resolveInside } from "../tools/paths";
 import { findBrowser, printPdf } from "./browser";
 
 export const SlideSchema = z.object({
@@ -57,8 +58,7 @@ const esc = (s: string) =>
 
 function imageData(root: string, rel: string): { b64: string; mime: string } | null {
   try {
-    const abs = path.resolve(root, rel);
-    if (path.relative(root, abs).startsWith("..")) return null;
+    const { abs } = resolveInside(root, rel);
     const ext = path.extname(abs).toLowerCase();
     const mime = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : null;
     if (!mime) return null;
@@ -222,9 +222,12 @@ export interface BuiltDeck {
 
 /** Write deck.json, deck.html, deck.pptx and (when a browser is available) deck.pdf under `dir`. */
 export async function buildDeck(root: string, dir: string, spec: DeckSpec): Promise<BuiltDeck> {
-  const abs = path.resolve(root, dir);
-  if (path.relative(root, abs).startsWith(".."))
+  let abs: string;
+  try {
+    abs = resolveInside(root, dir).abs;
+  } catch {
     throw new Error("The deck folder must be inside the project.");
+  }
   fs.mkdirSync(abs, { recursive: true });
   const files = ["deck.json", "deck.html", "deck.pptx"];
   fs.writeFileSync(path.join(abs, "deck.json"), `${JSON.stringify(spec, null, 2)}\n`);

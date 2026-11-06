@@ -173,6 +173,9 @@ describe("decks", () => {
     expect(pptx.subarray(0, 2).toString()).toBe("PK");
     expect(pptx.length).toBeGreaterThan(5000);
     await expect(buildDeck(t.dir, "../outside", spec)).rejects.toThrow("inside the project");
+    await expect(
+      buildDeck(t.dir, process.platform === "win32" ? "D:/elsewhere" : "/tmp/elsewhere", spec),
+    ).rejects.toThrow("inside the project");
   });
 });
 
