@@ -159,3 +159,94 @@ export const BlackboardEntrySchema = z.object({
   content: z.string(),
 });
 export type BlackboardEntry = z.infer<typeof BlackboardEntrySchema>;
+
+// ---- Agent Lab (Phase 7) ----------------------------------------------------------------
+
+/** The parts of a manifest a person may change in the lab. */
+export const ManifestPatchSchema = z
+  .object({
+    mission: z.string().min(1).max(600),
+    prompt: z.string().min(1).max(12_000),
+    tools: z.array(z.string().min(1).max(60)).max(60),
+    reviewers: z.array(AgentIdSchema).max(4),
+    maxSteps: z.number().int().min(1).max(200),
+    role: z.enum(["coder", "reasoning", "vision", "fast"]),
+  })
+  .partial()
+  .strict();
+export type ManifestPatch = z.infer<typeof ManifestPatchSchema>;
+
+export const LabVersionSchema = z.object({
+  /** null for the built-in version that ships with Depo. */
+  id: z.string().nullable(),
+  version: z.string(),
+  note: z.string(),
+  source: z.enum(["builtin", "user", "import"]),
+  createdAt: z.string(),
+  active: z.boolean(),
+  lastScore: z.number().nullable(),
+  manifest: AgentManifestSchema,
+});
+export type LabVersion = z.infer<typeof LabVersionSchema>;
+
+export const EvalCheckSchema = z.object({
+  type: z.enum(["contains", "not_contains", "regex", "json", "max_chars", "judge"]),
+  value: z.string().max(500).default(""),
+});
+export const EvalCaseSchema = z.object({
+  id: z.string().min(1).max(40),
+  prompt: z.string().min(1).max(4000),
+  checks: z.array(EvalCheckSchema).min(1).max(8),
+});
+export type EvalCase = z.infer<typeof EvalCaseSchema>;
+
+export const EvalSuiteSchema = z.object({
+  id: z.string(),
+  agentId: AgentIdSchema,
+  name: z.string(),
+  cases: z.array(EvalCaseSchema),
+  builtin: z.boolean(),
+});
+export type EvalSuite = z.infer<typeof EvalSuiteSchema>;
+
+export const EvalCaseResultSchema = z.object({
+  caseId: z.string(),
+  passed: z.boolean(),
+  checks: z.array(z.object({ type: z.string(), value: z.string(), passed: z.boolean(), detail: z.string() })),
+  reply: z.string(),
+});
+export const EvalRunSchema = z.object({
+  id: z.string(),
+  agentId: AgentIdSchema,
+  versionId: z.string().nullable(),
+  version: z.string(),
+  suiteId: z.string(),
+  score: z.number(),
+  model: z.string(),
+  createdAt: z.string(),
+  results: z.array(EvalCaseResultSchema),
+});
+export type EvalRun = z.infer<typeof EvalRunSchema>;
+
+export const AgentBundleSchema = z.object({
+  format: z.literal("depo-agent"),
+  formatVersion: z.literal(1),
+  agent: AgentIdSchema,
+  version: z.string(),
+  note: z.string().max(500).default(""),
+  manifest: ManifestPatchSchema,
+  suites: z
+    .array(z.object({ name: z.string().max(80), cases: z.array(EvalCaseSchema).max(50) }))
+    .max(10)
+    .default([]),
+});
+export type AgentBundle = z.infer<typeof AgentBundleSchema>;
+
+export const LabAgentSchema = z.object({
+  id: AgentIdSchema,
+  name: z.string(),
+  group: AgentGroupSchema,
+  activeVersion: z.string(),
+  versions: z.number().int(),
+  lastScore: z.number().nullable(),
+});

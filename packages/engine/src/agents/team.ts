@@ -35,7 +35,7 @@ import type { ProjectKnowledge, TeamHooks, ToolContext } from "../tools/index";
 import { ToolError } from "../tools/paths";
 import type { Workspace } from "../workspace/service";
 import { type Blackboard, cleanSection, mayWrite } from "./blackboard";
-import { agentTag, MANIFESTS, MODE_AGENTS, manifestOf, READ_ONLY_MODES } from "./manifests";
+import { MANIFESTS, MODE_AGENTS, manifestOf, READ_ONLY_MODES } from "./manifests";
 
 const DEFAULT_CONTEXT = 16_384;
 const DIGEST_BUDGET = 4500;
@@ -49,6 +49,8 @@ export interface TeamHost {
   approvals: ApprovalCenter;
   scheduler?: ModelScheduler | undefined;
   blackboard: Blackboard;
+  /** Resolves the active manifest of an agent (Agent Lab); the built-in manifests when absent. */
+  manifest?: ((id: AgentId) => AgentManifest) | undefined;
   retryDelayMs?: number | undefined;
   maxSteps?: number | undefined;
   /** Global team settings (read at run time). */
@@ -525,13 +527,23 @@ export function agentStatuses(plan: Plan | null, waitingAgents: Set<string> = ne
 export class TeamRunner {
   constructor(private readonly h: TeamHost) {}
 
+  /** The manifest an agent works from now: the promoted Agent Lab version, or the built-in one. */
+  private man(id: AgentId): AgentManifest {
+    return this.h.manifest?.(id) ?? manifestOf(id);
+  }
+
+  private tag(id: AgentId): string {
+    const m = this.man(id);
+    return `${m.id}@${m.version}`;
+  }
+
   async run(input: TeamInput): Promise<TeamResult> {
     const { taskId, projectId, signal } = input;
     const baseEmit =
       (agent: string): Emit =>
       (e) =>
         this.h.bus.emit({ ...e, agent, projectId, taskId });
-    const mgrTag = agentTag("manager");
+    const mgrTag = this.tag("manager");
     const mgrEmit = baseEmit(mgrTag);
     const opts = this.h.options();
 
@@ -540,7 +552,7 @@ export class TeamRunner {
     mgrEmit({
       type: "planning",
       text: `Plan ready: ${plan.nodes.length} task${plan.nodes.length === 1 ? "" : "s"} for ${plan.nodes
-        .map((n) => manifestOf(n.owner).name)
+        .map((n) => this.man(n.owner).name)
         .filter((v, i, a) => a.indexOf(v) === i)
         .join(", ")}`,
       details: { plan: true, nodes: plan.nodes.length },
@@ -559,7 +571,7 @@ export class TeamRunner {
           reason:
             [plan.summary, ...plan.questions.map((q) => `Question: ${q}`)].filter(Boolean).join("\n") ||
             "The Manager prepared a plan.",
-          details: { plan: plan.nodes.map((n) => `${manifestOf(n.owner).name}: ${n.title}`).join("\n") },
+          details: { plan: plan.nodes.map((n) => `${this.man(n.owner).name}: ${n.title}`).join("\n") },
         },
         signal,
       );
@@ -599,9 +611,9 @@ export class TeamRunner {
       const r = this.resolve("reasoning");
       if (r) {
         emit({ type: "planning", text: "Manager is planning the work", status: "started" });
-        const allowed = MODE_AGENTS[input.mode].map((id) => `- ${id}: ${manifestOf(id).mission}`).join("\n");
+        const allowed = MODE_AGENTS[input.mode].map((id) => `- ${id}: ${this.man(id).mission}`).join("\n");
         const sys = [
-          manifestOf("manager").prompt,
+          this.man("manager").prompt,
           "",
           'Plan the work as a task graph. Reply with JSON only: {"summary":"one or two sentences","nodes":[{"id":"kebab-id","title":"...","owner":"agent-id","deps":["ids that must finish first"],"criteria":["short, testable"]}],"questions":["only if you truly cannot proceed without an answer"]}.',
           `Owners must be one of:\n${allowed}`,
@@ -716,7 +728,7 @@ export class TeamRunner {
       projectId,
       "plan.json",
       JSON.stringify(plan, null, 2),
-      agentTag("manager"),
+      this.tag("manager"),
       taskId,
     );
   }
@@ -766,7 +778,7 @@ export class TeamRunner {
       .run();
     // Boards refresh on this event.
     this.h.bus.emit({
-      agent: agentTag("manager"),
+      agent: this.tag("manager"),
       taskId,
       projectId: null,
       type: "planning",
@@ -785,9 +797,9 @@ export class TeamRunner {
     save: () => void,
   ): Promise<void> {
     const { taskId, projectId, signal } = input;
-    const owner = manifestOf(node.owner);
-    const ownerTag = agentTag(owner.id);
-    const mgrTag = agentTag("manager");
+    const owner = this.man(node.owner);
+    const ownerTag = this.tag(owner.id);
+    const mgrTag = this.tag("manager");
     const emit = baseEmit(ownerTag);
     node.status = "doing";
     node.startedAt = new Date().toISOString();
@@ -844,7 +856,7 @@ export class TeamRunner {
           owner,
           reviewer,
           run,
-          baseEmit(agentTag(reviewer.id)),
+          baseEmit(this.tag(reviewer.id)),
         );
         if (signal.aborted) return;
         const blocking = review.findings.filter((f) => f.grade === "blocking");
@@ -909,7 +921,7 @@ export class TeamRunner {
       status: node.status === "done" ? "succeeded" : "failed",
     });
     if (node.status === "done") {
-      const dependents = plan.nodes.filter((n) => n.deps.includes(node.id)).map((n) => agentTag(n.owner));
+      const dependents = plan.nodes.filter((n) => n.deps.includes(node.id)).map((n) => this.tag(n.owner));
       for (const to of new Set(dependents)) {
         this.h.blackboard.addMessage({
           taskId,
@@ -936,7 +948,7 @@ export class TeamRunner {
     const order: AgentId[] =
       sensitive && owner.id !== "security" ? ["security", ...owner.reviewers] : owner.reviewers;
     const id = order.find((r) => r !== owner.id);
-    return id ? manifestOf(id) : null;
+    return id ? this.man(id) : null;
   }
 
   // ---- one agent working -------------------------------------------------------------------
@@ -948,7 +960,7 @@ export class TeamRunner {
     files: Set<string>,
   ): ToolContext {
     const { taskId, projectId, ws, signal } = input;
-    const tag = agentTag(manifest.id);
+    const tag = this.tag(manifest.id);
     const settings = this.h.projectSettings(projectId);
     const team: TeamHooks = {
       read: (s) => {
@@ -983,7 +995,7 @@ export class TeamRunner {
         this.h.blackboard.addMessage({
           taskId,
           from: tag,
-          to: agentTag(to as AgentId),
+          to: this.tag(to as AgentId),
           type: m.type,
           summary: m.summary,
           artifacts: m.artifacts ?? [],
@@ -992,7 +1004,7 @@ export class TeamRunner {
         });
         emit({
           type: "handoff",
-          text: `${manifest.name} → ${manifestOf(to as AgentId).name}: ${m.type}: ${m.summary.slice(0, 120)}`,
+          text: `${manifest.name} → ${this.man(to as AgentId).name}: ${m.type}: ${m.summary.slice(0, 120)}`,
           status: "info",
         });
         return "Message sent.";
@@ -1085,7 +1097,7 @@ export class TeamRunner {
         changed: [],
       };
     }
-    const tag = agentTag(manifest.id);
+    const tag = this.tag(manifest.id);
     const files = new Set<string>();
     const ctx = this.toolContext(input, manifest, emit, files);
     const extras = this.h.extras?.(manifest.id, input.projectId, {
@@ -1097,10 +1109,10 @@ export class TeamRunner {
       const deps = node.deps
         .map((d) => plan.nodes.find((n) => n.id === d))
         .filter((n): n is PlanNode => !!n)
-        .map((n) => `- ${manifestOf(n.owner).name} finished "${n.title}": ${(n.note ?? "").slice(0, 400)}`);
+        .map((n) => `- ${this.man(n.owner).name} finished "${n.title}": ${(n.note ?? "").slice(0, 400)}`);
       const inbox = this.h.blackboard
         .messages(input.taskId)
-        .filter((m) => m.to === tag && m.type !== "handoff" && m.from !== agentTag("manager"))
+        .filter((m) => m.to === tag && m.type !== "handoff" && m.from !== this.tag("manager"))
         .slice(-6)
         .map((m) => `- ${m.from} (${m.type}): ${m.summary.slice(0, 300)}`);
       const digest = this.h.blackboard.digest(input.projectId, DIGEST_BUDGET);
@@ -1168,7 +1180,7 @@ export class TeamRunner {
     run: { text: string; changed: string[] },
     emit: Emit,
   ): Promise<Review> {
-    const tag = agentTag(reviewer.id);
+    const tag = this.tag(reviewer.id);
     emit({
       type: "reviewing",
       text: `${reviewer.name} is reviewing ${owner.name}'s work: ${node.title}`,
@@ -1243,7 +1255,7 @@ export class TeamRunner {
     this.h.blackboard.addMessage({
       taskId: input.taskId,
       from: tag,
-      to: agentTag(owner.id),
+      to: this.tag(owner.id),
       type: "review",
       summary: `${review.verdict}: ${review.findings.length} finding(s), ${review.findings.filter((f) => f.grade === "blocking").length} blocking`,
       artifacts: [`reviews/${node.id}.md`],
@@ -1362,7 +1374,7 @@ export class TeamRunner {
       "",
       ...plan.nodes.map(
         (n) =>
-          `- ${statusMark(n.status)} **${manifestOf(n.owner).name}**: ${n.title}${n.status === "done" ? "" : ` — ${n.note ?? n.status}`}`,
+          `- ${statusMark(n.status)} **${this.man(n.owner).name}**: ${n.title}${n.status === "done" ? "" : ` — ${n.note ?? n.status}`}`,
       ),
     ];
     if (bad.length) {

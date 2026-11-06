@@ -8,10 +8,17 @@ import {
 } from "@depo/model-gateway";
 import { z } from "zod";
 import {
+  AgentIdSchema,
   AgentManifestSchema,
   AgentMessageSchema,
   AgentStatusSchema,
   BlackboardEntrySchema,
+  EvalCaseSchema,
+  EvalRunSchema,
+  EvalSuiteSchema,
+  LabAgentSchema,
+  LabVersionSchema,
+  ManifestPatchSchema,
   PlanSchema,
   WorkModeSchema,
 } from "./agents";
@@ -339,6 +346,102 @@ const TaskMethods = {
   "agents.list": {
     params: z.object({}).strict(),
     result: z.object({ agents: z.array(AgentManifestSchema) }),
+  },
+  "lab.agents": {
+    params: z.object({}).strict(),
+    result: z.object({ agents: z.array(LabAgentSchema) }),
+  },
+  "lab.versions": {
+    params: z.object({ agentId: AgentIdSchema }).strict(),
+    result: z.object({
+      versions: z.array(LabVersionSchema),
+      history: z.array(z.object({ at: z.string(), version: z.string(), reason: z.string() })),
+    }),
+  },
+  "lab.createVersion": {
+    params: z
+      .object({ agentId: AgentIdSchema, patch: ManifestPatchSchema, note: z.string().max(500) })
+      .strict(),
+    result: LabVersionSchema,
+  },
+  "lab.deleteVersion": {
+    params: z.object({ agentId: AgentIdSchema, versionId: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "lab.promote": {
+    params: z
+      .object({ agentId: AgentIdSchema, versionId: z.string().nullable(), force: z.boolean().optional() })
+      .strict(),
+    result: z.object({ versions: z.array(LabVersionSchema) }),
+  },
+  "lab.rollback": {
+    params: z.object({ agentId: AgentIdSchema }).strict(),
+    result: z.object({ versions: z.array(LabVersionSchema) }),
+  },
+  "lab.suites": {
+    params: z.object({ agentId: AgentIdSchema }).strict(),
+    result: z.object({ suites: z.array(EvalSuiteSchema) }),
+  },
+  "lab.saveSuite": {
+    params: z
+      .object({
+        agentId: AgentIdSchema,
+        name: z.string().min(1).max(80),
+        cases: z.array(EvalCaseSchema).min(1).max(50),
+      })
+      .strict(),
+    result: EvalSuiteSchema,
+  },
+  "lab.deleteSuite": {
+    params: z.object({ agentId: AgentIdSchema, suiteId: z.string() }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  "lab.runEval": {
+    params: z
+      .object({ agentId: AgentIdSchema, versionId: z.string().nullable(), suiteId: z.string() })
+      .strict(),
+    result: EvalRunSchema,
+  },
+  "lab.runs": {
+    params: z.object({ agentId: AgentIdSchema }).strict(),
+    result: z.object({ runs: z.array(EvalRunSchema) }),
+  },
+  "lab.compare": {
+    params: z
+      .object({
+        agentId: AgentIdSchema,
+        a: z.string().nullable(),
+        b: z.string().nullable(),
+        suiteId: z.string(),
+      })
+      .strict(),
+    result: z.object({
+      a: EvalRunSchema,
+      b: EvalRunSchema,
+      winner: z.enum(["a", "b", "tie"]),
+      cases: z.array(z.object({ caseId: z.string(), a: z.boolean(), b: z.boolean() })),
+    }),
+  },
+  "lab.playground": {
+    params: z
+      .object({
+        agentId: AgentIdSchema,
+        versionId: z.string().nullable(),
+        messages: z
+          .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) }))
+          .min(1)
+          .max(20),
+      })
+      .strict(),
+    result: z.object({ reply: z.string(), model: z.string() }),
+  },
+  "lab.export": {
+    params: z.object({ agentId: AgentIdSchema, versionId: z.string().nullable() }).strict(),
+    result: z.object({ json: z.string() }),
+  },
+  "lab.import": {
+    params: z.object({ json: z.string().min(2).max(300_000) }).strict(),
+    result: LabVersionSchema,
   },
   "team.get": {
     params: z.object({ taskId: z.string() }).strict(),

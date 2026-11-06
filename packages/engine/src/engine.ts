@@ -1,6 +1,7 @@
 import path from "node:path";
 import { DEPO_VERSION, type HeartbeatDetails } from "@depo/shared";
 import { TaskManager } from "./agent/tasks";
+import { AgentLab } from "./agents/lab";
 import { handlers } from "./api/handlers";
 import { type ApiServer, startApiServer } from "./api/server";
 import { ApprovalCenter } from "./approvals";
@@ -20,6 +21,7 @@ import { ModelScheduler } from "./scheduler/scheduler";
 import { SecurityService } from "./security/service";
 import { SettingsRepo } from "./settings";
 import { SkillService } from "./skills/service";
+import { TOOLS } from "./tools/index";
 import type { GithubEndpoints } from "./util/github";
 import { ProjectService } from "./workspace/service";
 
@@ -60,6 +62,7 @@ export interface Engine {
   readonly knowledge: KnowledgeService;
   readonly osv: OsvService;
   readonly security: SecurityService;
+  readonly lab: AgentLab;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -151,8 +154,23 @@ export function createEngine(opts: EngineOptions): Engine {
       allow: parts.flatMap((p) => p.allow),
     };
   };
+  const lab = new AgentLab({
+    db: database.sqlite,
+    bus,
+    models,
+    toolNames: () => [
+      ...TOOLS.map((t) => t.name),
+      "security_status",
+      "security_scan",
+      "performance_check",
+      "check_dependencies",
+    ],
+    schedule: (label, model, run, signal) =>
+      scheduler.run({ projectId: null, taskId: null, model, priority: "task", label }, run, signal),
+  });
   const tasks = new TaskManager({
     extras,
+    manifest: (id) => lab.active(id),
     db: database.db,
     bus,
     logger,
@@ -210,6 +228,7 @@ export function createEngine(opts: EngineOptions): Engine {
     knowledge,
     osv,
     security,
+    lab,
     database,
     async start() {
       server = startApiServer({
@@ -235,6 +254,7 @@ export function createEngine(opts: EngineOptions): Engine {
           knowledge,
           osv,
           security,
+          lab,
           info: {
             startedAt,
             dataDir: dirs.root,

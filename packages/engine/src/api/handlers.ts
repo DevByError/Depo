@@ -6,6 +6,7 @@ import {
   DEPO_VERSION,
 } from "@depo/shared";
 import type { TaskManager } from "../agent/tasks";
+import type { AgentLab } from "../agents/lab";
 import { MANIFESTS } from "../agents/manifests";
 import type { ApprovalCenter } from "../approvals";
 import type { CodeIndexer } from "../codeindex/indexer";
@@ -41,6 +42,7 @@ export interface HandlerContext {
   knowledge: KnowledgeService;
   osv: OsvService;
   security: SecurityService;
+  lab: AgentLab;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -231,6 +233,40 @@ export const handlers: Handlers = {
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
   "agents.list": () => ({ agents: MANIFESTS }),
+  "lab.agents": (_p, ctx) => ({ agents: ctx.lab.list() }),
+  "lab.versions": (p, ctx) => ({
+    versions: ctx.lab.versions(p.agentId),
+    history: ctx.lab.history(p.agentId),
+  }),
+  "lab.createVersion": (p, ctx) => ctx.lab.createVersion(p.agentId, p.patch, p.note),
+  "lab.deleteVersion": (p, ctx) => {
+    ctx.lab.deleteVersion(p.agentId, p.versionId);
+    return { ok: true as const };
+  },
+  "lab.promote": (p, ctx) => ({
+    versions: ctx.lab.promote(p.agentId, p.versionId, p.force ? { force: true } : {}),
+  }),
+  "lab.rollback": (p, ctx) => ({ versions: ctx.lab.rollback(p.agentId) }),
+  "lab.suites": (p, ctx) => ({ suites: ctx.lab.suites(p.agentId) }),
+  "lab.saveSuite": (p, ctx) => ctx.lab.saveSuite(p.agentId, p.name, p.cases),
+  "lab.deleteSuite": (p, ctx) => {
+    ctx.lab.deleteSuite(p.agentId, p.suiteId);
+    return { ok: true as const };
+  },
+  "lab.runEval": (p, ctx) => ctx.lab.runEval(p.agentId, p.versionId, p.suiteId),
+  "lab.runs": (p, ctx) => ({ runs: ctx.lab.runs(p.agentId) }),
+  "lab.compare": (p, ctx) => ctx.lab.compare(p.agentId, p.a, p.b, p.suiteId),
+  "lab.playground": (p, ctx) => ctx.lab.playground(p.agentId, p.versionId, p.messages),
+  "lab.export": (p, ctx) => ({ json: JSON.stringify(ctx.lab.exportBundle(p.agentId, p.versionId), null, 2) }),
+  "lab.import": (p, ctx) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(p.json);
+    } catch {
+      throw new Error("This is not valid JSON.");
+    }
+    return ctx.lab.importBundle(parsed);
+  },
   "team.get": (p, ctx) => ctx.tasks.teamState(p.taskId),
   "skills.list": (_p, ctx) => ({ skills: ctx.skills.list() }),
   "skills.get": (p, ctx) => {

@@ -52,6 +52,8 @@ export interface TaskManagerOptions {
   retryDelayMs?: number;
   /** Skills and MCP tools for team agents (Phase 5). */
   extras?: NonNullable<ConstructorParameters<typeof TeamRunner>[0]["extras"]>;
+  /** Active agent manifests from the Agent Lab (Phase 7). */
+  manifest?: ConstructorParameters<typeof TeamRunner>[0]["manifest"];
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -90,6 +92,7 @@ export class TaskManager {
       memoryContext: (id) => o.memory?.contextFor(id, MEMORY_BUDGET).trim() ?? "",
       repoMap: (id) => o.indexer?.repoMap(id, REPO_MAP_BUDGET).trim() ?? "",
       ...(o.extras ? { extras: o.extras } : {}),
+      manifest: o.manifest,
     });
   }
 

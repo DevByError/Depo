@@ -16,6 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
+import { AgentLabPanel } from "@/components/panels/AgentLabPanel";
 import { ChatPanel } from "@/components/panels/ChatPanel";
 import { DesignPanel } from "@/components/panels/DesignPanel";
 import { DiagramsPanel } from "@/components/panels/DiagramsPanel";
@@ -51,13 +52,7 @@ export const CENTER_TABS: TabDef[] = [
   { id: "design", label: "Design", icon: Palette },
   { id: "diagrams", label: "Diagrams", icon: Network },
   { id: "slides", label: "Slides", icon: Presentation },
-  {
-    id: "agent-lab",
-    label: "Agent Lab",
-    icon: FlaskConical,
-    phase: "Phase 7",
-    blurb: "Edit, evaluate, compare, promote and roll back each agent version.",
-  },
+  { id: "agent-lab", label: "Agent Lab", icon: FlaskConical },
   { id: "skills", label: "Skills", icon: Puzzle },
   {
     id: "models",
@@ -146,6 +141,8 @@ export function CenterTabs() {
             <SkillsPanel />
           ) : current.id === "knowledge" ? (
             <KnowledgePanel />
+          ) : current.id === "agent-lab" ? (
+            <AgentLabPanel />
           ) : current.id === "security" ? (
             <SecurityPanel />
           ) : current.id === "models" ? (

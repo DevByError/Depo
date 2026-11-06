@@ -291,6 +291,49 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 6,
+    name: "agent_lab",
+    sql: `
+      CREATE TABLE agent_versions (
+        id TEXT PRIMARY KEY NOT NULL,
+        agent_id TEXT NOT NULL,
+        version TEXT NOT NULL,
+        manifest TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (agent_id, version)
+      );
+      CREATE TABLE agent_promotions (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        version_id TEXT,
+        reason TEXT NOT NULL,
+        at TEXT NOT NULL
+      );
+      CREATE INDEX agent_promotions_agent ON agent_promotions (agent_id, seq);
+      CREATE TABLE agent_eval_suites (
+        id TEXT PRIMARY KEY NOT NULL,
+        agent_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        cases TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (agent_id, name)
+      );
+      CREATE TABLE agent_eval_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        agent_id TEXT NOT NULL,
+        version_id TEXT,
+        suite_id TEXT NOT NULL,
+        score REAL NOT NULL,
+        results TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX agent_eval_runs_agent ON agent_eval_runs (agent_id, suite_id, created_at);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
