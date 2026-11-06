@@ -1449,8 +1449,32 @@ export class TeamRunner {
         "What was tried is in the activity feed and in the blackboard (reviews/ and decisions.md). Options: send a follow-up message with more detail, change the request, or approve only the parts that look right.",
       );
     }
+    const scores = this.scoreLines(input.projectId);
+    if (scores.length) lines.push("", "Quality scores:", ...scores);
     if (open.length) lines.push("", "Open items:", ...open);
     return lines.join("\n");
+  }
+
+  /** The security and UX scores from the blackboard, with a clear line when one blocks the release. */
+  private scoreLines(projectId: string): string[] {
+    const out: string[] = [];
+    for (const [section, label] of [
+      ["scores/security.json", "Security"],
+      ["scores/ux.json", "UX"],
+    ] as const) {
+      const e = this.h.blackboard.read(projectId, section);
+      if (!e) continue;
+      try {
+        const j = JSON.parse(e.content) as { overall?: number; grade?: string; blocksRelease?: boolean };
+        if (typeof j.overall !== "number") continue;
+        out.push(
+          `- ${label}: ${j.overall}/100 (${j.grade ?? "?"})${j.blocksRelease ? " **blocks the release**: fix it before you ship" : ""}`,
+        );
+      } catch {
+        // A damaged score file is ignored; the blackboard note explains the audit.
+      }
+    }
+    return out;
   }
 }
 

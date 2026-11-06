@@ -2,7 +2,7 @@
 
 A fully local, multi-agent AI coding studio for Windows. Describe the software you want; a team of local AI agents plans, designs, builds, tests, secures and documents it, and you approve every change before it touches your files. No cloud models, no accounts, no cost per token.
 
-**Status:** Phase 5 of 10 is built (agent team, design and presentations, skills, MCP, knowledge packs). Phases 6 to 9 are next. See [docs/PROGRESS.md](docs/PROGRESS.md).
+**Status:** Phases 0 to 9 are built and tested with scripted models; the first real-model trial, the browser end-to-end run and a signed release are the open items. See [docs/PROGRESS.md](docs/PROGRESS.md) and [docs/RELEASE.md](docs/RELEASE.md).
 
 ![Depo, early build](docs/screenshots/phase0-dark.png)
 

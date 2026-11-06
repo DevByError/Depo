@@ -4,6 +4,16 @@
 
 _Last updated: 2026-11-06_
 
+## Phases 6 to 9 (security, Agent Lab, building blocks, polish and release)
+
+- **Phase 6:** `security/` (built-in rules, scanner wrappers, score, runtimes), tools `security_status`, `security_scan`, `performance_check`, Security panel, `scores.get` includes security.
+- **Phase 7:** `agents/lab.ts` (versions, checks, A/B, promote gate, rollback, playground, import/export), migration v6, Agent Lab panel; the team runner reads the promoted manifests.
+- **Phase 8:** `blocks/` (10 tested blocks), tools `list_blocks` and `use_block`, Blocks panel; fix, refactor, import and backend modes refined (reproduce first, baseline before and after, baseline scan, docs).
+- **Phase 9:** command palette (Ctrl+K), notification bell and system notifications, first-run tour, team/notification/update settings, user-initiated update check, `scripts/set-version.ts`, release workflow, `docs/RELEASE.md`.
+- **Also:** the final answer of a team run lists the security and UX scores and says when one blocks the release.
+- **Verified:** engine 233 tests, UI 38, gateway 37, shared 7; lint and types clean; a contract test calls every new RPC over a real WebSocket; an integration test runs a team where the Security agent scans through the agent loop; the compiled sidecar was built, queried (schema 6, 15 agents, 10 blocks, 8 scanners, a real scan) and deleted.
+- **Not verified here:** browser end-to-end tests (specs written, cannot run in the sandbox), real models, real scanners (parsers tested on sample output), the Windows installer build and signing, Rust code (unchanged).
+
 ## Phase 3 (agent team)
 
 | Criterion | Status |

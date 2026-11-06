@@ -19,10 +19,12 @@ import { TEST_TOKEN, tempDir } from "./helpers";
 void mcpHandle;
 
 let engine: Engine | null = null;
+/** Every engine a test started, so none keeps its database open when the folder is deleted. */
+const started: Engine[] = [];
 const cleanups: (() => void)[] = [];
 const servers: { stop: () => void }[] = [];
 afterEach(async () => {
-  await engine?.stop("test");
+  for (const e of started.splice(0)) await e.stop("test").catch(() => {});
   engine = null;
   for (const s of servers.splice(0)) s.stop();
   for (const c of cleanups.splice(0)) c();
@@ -97,6 +99,7 @@ async function startEngine(
     ...(models ? { models: { providerFactory: () => models } } : {}),
   });
   engine = e;
+  started.push(e);
   await e.start();
   return { e, dir };
 }

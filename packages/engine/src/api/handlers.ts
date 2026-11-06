@@ -236,7 +236,7 @@ export const handlers: Handlers = {
   "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
-  "agents.list": () => ({ agents: MANIFESTS }),
+  "agents.list": (_p, ctx) => ({ agents: MANIFESTS.map((m) => ctx.lab.active(m.id)) }),
   "app.checkUpdate": async (_p, ctx) => {
     const repo = ctx.settings.get("update.repo");
     return checkForUpdate({

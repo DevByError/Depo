@@ -29,25 +29,28 @@ A fully local, multi-agent AI coding studio for Windows (Tauri 2 + React UI, Bun
 | 3 | Agent team: 15 manifests, Manager plan, blackboard, typed messages, reviews, loop limits, Plan/Agent Boards | Done (engine acceptance test with a scripted model) |
 | 4 | Design systems, fonts, Mermaid diagrams + editor, screenshots + vision review, UX audit, decks (HTML/PPTX/PDF) | Done |
 | 5 | Skills (GitHub/zip/folder, scan, assign, update/rollback), MCP client, knowledge packs (FTS5), offline OSV | Done |
-| 6 | Security + testing depth (Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse, local DB runtimes) | **NEXT** |
-| 7 | Agent Lab (versions, evals, A/B, promote/rollback, playground, sharing) | Planned |
-| 8 | Building blocks library (roles/permissions, auth, ...) + all work modes refined | Planned |
-| 9 | Polish and release (onboarding, palette, notifications, auto-update, signed installers) | Planned |
+| 6 | Security + testing depth (Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse, local DB runtimes) | Done |
+| 7 | Agent Lab (versions, evals, A/B, promote/rollback, playground, sharing) | Done |
+| 8 | Building blocks library (roles/permissions, auth, ...) + all work modes refined | Done |
+| 9 | Polish and release (onboarding, palette, notifications, update check, release workflow) | Done (signing and in-app install untested) |
 
 ## Status log (newest first)
+- 2026-11-06 (autonomous run 2; user asked: finish the project phase by phase, check each, then re-test everything and enhance): Phases 6-9 built, each committed after `bun run check`. Then a full re-test: contract test over WebSocket, team integration test (Security agent scan through the loop), compiled sidecar smoke test (deleted after). Enhancements: final team answer lists security/UX scores and release blockers; `agents.list` returns promoted versions; leaked test temp folders fixed; release workflow hardened (pinned actions, publish job without secrets); `performance_check` URL allow-list after a security review. Engine 233 tests, UI 38, gateway 37, shared 7.
 - 2026-11-06 (autonomous run; user asked: do phases 3-5 without stopping, build/test loop, delete big test environments, they will review after): chat redesigned like Claude (user bubble, flowing reply, Markdown, streaming cursor, work folded). Phases 3, 4, 5 built and tested (engine 190 tests, UI 22, gateway 37, shared 7; lint and typecheck clean; compiled sidecar builds and serves the new API; build output and temp test folders deleted). A security review of the deck HTML found an injectable font name: fixed (strict font regex + CSP) and tested.
 - Before that (git log): small-model hardening (read-before-edit, tolerant text tool calls, unclosed-call repair, copied line numbers, retry unreadable calls); tests checked before accepting "done"; Stop works on tasks left "working" by an old engine.
 
 ## Next
-1. The user reviews Phases 3-5 on their PC: `bun install`, `bun run tauri:dev`; try Backend only, then Full system, with a real model. Expect to tune prompts; check `team.reviews = key` on the 4 GB GPU.
-2. Run the browser e2e (`apps/desktop`, `bun run test:e2e`; set `PW_CHROMIUM_PATH` to msedge.exe if Chromium is not installed). New spec `e2e/phase345.spec.ts` and the changed chat layout were NOT run (Edge cannot reach localhost inside the build sandbox).
-3. Phase 6: wrap Semgrep, gitleaks, OSV-Scanner, Trivy, Bandit, ZAP, k6, Lighthouse as agent tools (detect if installed, explain how to install, never auto-download without asking); a seeded vulnerable project must be detected, fixed and re-verified automatically; security score in the dashboard (UX score already shows in the Design tab via `scores.get`).
-4. Fix doc drift when touching docs: `docs/PROGRESS.md` older sections describe earlier phases.
+1. The user reviews on their PC: `bun install`, `bun run tauri:dev`; welcome tour, then try Backend only and Full system with a real model (expect prompt tuning; use `team.reviews = key` on the 4 GB GPU).
+2. Run the browser e2e (`apps/desktop`, `bun run test:e2e`; `PW_CHROMIUM_PATH` = msedge.exe if needed). Specs `phase345.spec.ts` and the new tabs (Security, Agent Lab, Blocks, palette, tour) were not run. The tour opens on first launch and may cover older specs: set `ui.onboarded` in them if so.
+3. Real scanners: install Semgrep/Gitleaks etc. and compare `security_scan` against their raw output; check the Agent Lab with a real model (judge checks need the reasoning model).
+4. First release rehearsal: follow `docs/RELEASE.md` with a pre-release tag; add signing secrets; consider the Tauri updater later.
+5. Ideas not built: embeddings for knowledge packs, Auto-Fit that models prompt-reading speed, Agent Lab checks that run the whole tool loop.
 
 ## Known issues
 - Slow on modest hardware (GTX 1650 4 GB: ~2 tok/s writing with qwen3-coder:30b); Auto-Fit should model prompt-reading speed and prefer smaller models. A full-system run on such a PC will take hours; use Backend only, `team.reviews = key`, and a small coder.
 - Qwen3-Coder sometimes emits malformed tool calls Ollama rejects; the loop retries and nudges.
-- Catalog tags (models) and knowledge-pack GitHub paths are unverified. MCP was tested with a test server only.
+- Catalog tags (models) and knowledge-pack GitHub paths are unverified. MCP was tested with a test server only. Scanner parsers were tested on sample JSON, not on real tool output.
+- Tests that connect to local fake servers can time out (ETIMEDOUT) when the PC is heavily loaded (for example a big disk scan); rerun.
 - Installers unsigned; engine exe ~138 MB; DB file may stay locked briefly after close on Windows (EBUSY in tests, harmless).
 - Windows quirk: a Python/JS edit script that writes files with default newlines produces CRLF; the repo is LF (`.gitattributes`). Biome does not fix line endings; use `newline='\n'`.
 
