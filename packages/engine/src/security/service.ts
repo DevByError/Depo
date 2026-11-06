@@ -303,7 +303,7 @@ export class SecurityService {
             if (a.tool === "lighthouse") {
               const out = path.join(tmp, "lh.json");
               await runShell({
-                command: `lighthouse "${a.url}" --output json --output-path "${out}" --quiet --chrome-flags="--headless --no-sandbox"`,
+                command: `lighthouse "${new URL(a.url).href}" --output json --output-path "${out}" --quiet --chrome-flags="--headless --no-sandbox"`,
                 cwd: ctx.root,
                 timeoutMs: 180_000,
                 ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -322,7 +322,7 @@ export class SecurityService {
             const out = path.join(tmp, "k6.json");
             fs.writeFileSync(
               script,
-              `import http from 'k6/http';\nexport const options = { vus: ${a.users}, duration: '${a.seconds}s' };\nexport default function () { http.get(${JSON.stringify(a.url)}); }\n`,
+              `import http from 'k6/http';\nexport const options = { vus: ${a.users}, duration: '${a.seconds}s' };\nexport default function () { http.get(${JSON.stringify(new URL(a.url).href)}); }\n`,
             );
             await runShell({
               command: `k6 run --quiet --summary-export "${out}" "${script}"`,

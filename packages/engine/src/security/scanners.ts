@@ -341,12 +341,19 @@ export function parseK6(json: unknown): K6Summary | null {
   };
 }
 
-/** Only local addresses may be attacked or load tested. */
+/**
+ * Only local addresses may be attacked or load tested. The URL also ends up inside a command line,
+ * so the whole text must stay inside a strict character set: no quotes, spaces, `%`, `&`, `$`,
+ * back-ticks, pipes or other shell characters.
+ */
+const SAFE_LOCAL_URL =
+  /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?(?:\/[A-Za-z0-9._~\-/?=#:@+,;]*)?$/;
+
 export function isLocalTarget(url: string): boolean {
+  if (url.length > 300 || !SAFE_LOCAL_URL.test(url)) return false;
   try {
-    const u = new URL(url);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(u.hostname);
+    new URL(url);
+    return true;
   } catch {
     return false;
   }

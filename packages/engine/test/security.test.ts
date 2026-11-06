@@ -260,6 +260,18 @@ describe("external scanners", () => {
     expect(isLocalTarget("https://example.com")).toBe(false);
     expect(isLocalTarget("http://localhost.evil.com")).toBe(false);
     expect(isLocalTarget("file:///etc/passwd")).toBe(false);
+    expect(isLocalTarget("http://localhost:3000/a/b?x=1#top")).toBe(true);
+    for (const bad of [
+      'http://localhost/x"&calc',
+      "http://localhost/x y",
+      "http://localhost/$(id)",
+      "http://localhost/`id`",
+      "http://localhost/%PATH%",
+      "http://localhost/a|b",
+      "http://localhost:3000@evil.com/",
+      "http://localhost:99999999",
+    ])
+      expect(isLocalTarget(bad)).toBe(false);
   });
 });
 
