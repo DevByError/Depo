@@ -24,7 +24,9 @@ tag that does not match `DEPO_VERSION`.
 1. installs everything, then runs `bun run check` (lint, types and all tests);
 2. builds the engine sidecar and the MSI and NSIS installers;
 3. signs them when a certificate is configured (below);
-4. writes `SHA256SUMS.txt` and publishes a **draft** GitHub release. Read the notes, then publish it yourself.
+4. writes `SHA256SUMS.txt`, then a second job (which never sees the signing secrets) publishes a **draft** GitHub release. Read the notes, then publish it yourself.
+
+Every third-party action is pinned to a commit, so a moved tag cannot change what runs. Update the pins on purpose (for example with Dependabot's github-actions updates).
 
 ## 3. Signing (recommended before sharing with anyone)
 
