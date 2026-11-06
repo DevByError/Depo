@@ -37,8 +37,26 @@ export interface ToolContext {
    * was not read first is refused: small models otherwise guess the contents and break the file.
    */
   readPaths?: Set<string>;
+  /** Tools added for this run only (MCP servers, skills). */
+  extraTools?: AgentTool<z.ZodType>[];
+  /** Team hooks: the blackboard and agent messages (set when an agent works in a team). */
+  team?: TeamHooks;
   /** Called after each test run; may return text to add to what the model sees (lessons learned). */
   onTestResult?: (r: { command: string; passed: boolean; output: string }) => string | undefined;
+}
+
+export interface TeamHooks {
+  read(section: string): { content: string; version: number; owner: string } | null;
+  list(): { section: string; owner: string; version: number; size: number }[];
+  write(section: string, content: string, mode: "replace" | "append"): string;
+  send(msg: {
+    to: string;
+    type: "handoff" | "request" | "review" | "question" | "result" | "blocker";
+    summary: string;
+    artifacts?: string[];
+    criteria?: string[];
+    confidence?: number;
+  }): string;
 }
 
 export interface ProjectKnowledge {
@@ -61,14 +79,14 @@ export interface ToolResult {
   isError: boolean;
 }
 
-interface AgentTool<S extends z.ZodType> {
+export interface AgentTool<S extends z.ZodType> {
   name: string;
   description: string;
   schema: S;
   run(args: z.infer<S>, ctx: ToolContext): Promise<string>;
 }
 
-function tool<S extends z.ZodType>(t: AgentTool<S>): AgentTool<z.ZodType> {
+export function tool<S extends z.ZodType>(t: AgentTool<S>): AgentTool<z.ZodType> {
   return t as unknown as AgentTool<z.ZodType>;
 }
 
@@ -480,7 +498,69 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       return "Saved to project memory.";
     },
   }),
+  tool({
+    name: "bb_read",
+    description:
+      "Read a section of the project blackboard (shared notes between agents), e.g. brief.md, options.md, design-system.json, openapi.yaml, decisions.md. Call with no section to list what exists.",
+    schema: z.object({ section: z.string().max(200).optional() }),
+    async run(a, ctx) {
+      const team = needTeam(ctx);
+      if (!a.section) {
+        const l = team.list();
+        return l.length
+          ? l.map((e) => `${e.section}  (v${e.version}, by ${e.owner}, ${e.size} chars)`).join("\n")
+          : "The blackboard is empty.";
+      }
+      const e = team.read(a.section);
+      if (!e) return `No section named ${a.section}. Call bb_read with no section to list what exists.`;
+      return `${a.section} (v${e.version}, by ${e.owner})
+${e.content.slice(0, 20_000)}`;
+    },
+  }),
+  tool({
+    name: "bb_write",
+    description:
+      "Write a section of the project blackboard that you own (your output files, e.g. brief.md). Use mode append for decisions.md, which every agent may add to.",
+    schema: z.object({
+      section: z.string().min(1).max(200),
+      content: z.string().min(1).max(60_000),
+      mode: z.enum(["replace", "append"]).default("replace"),
+    }),
+    async run(a, ctx) {
+      return needTeam(ctx).write(a.section, a.content, a.mode);
+    },
+  }),
+  tool({
+    name: "send_message",
+    description:
+      "Send a typed message to another agent through the Manager: a handoff (work ready for you), request, question, result, or blocker. Name the recipient by id (e.g. backend, testing) or 'manager'.",
+    schema: z.object({
+      to: z.string().min(1).max(60),
+      type: z.enum(["handoff", "request", "review", "question", "result", "blocker"]),
+      summary: z.string().min(1).max(2000),
+      artifacts: z.array(z.string().max(300)).max(30).default([]),
+      criteria: z.array(z.string().max(300)).max(20).default([]),
+      confidence: z.number().min(0).max(1).default(0.7),
+    }),
+    async run(a, ctx) {
+      return needTeam(ctx).send(a);
+    },
+  }),
 ];
+
+function needTeam(ctx: ToolContext): TeamHooks {
+  if (!ctx.team) throw new ToolError("The blackboard is only available when you work as part of the team.");
+  return ctx.team;
+}
+
+/** Add tools to the built-in set (later phases register theirs here). A tool with the same name is replaced. */
+export function registerTools(...tools: AgentTool<z.ZodType>[]): void {
+  for (const t of tools) {
+    const i = TOOLS.findIndex((x) => x.name === t.name);
+    if (i >= 0) TOOLS[i] = t;
+    else TOOLS.push(t);
+  }
+}
 
 const LINE_NO = /^\s*\d+\s*[│|:]\s?/;
 
@@ -531,14 +611,16 @@ function indent(s: string): string {
 }
 
 /** Tool definitions in the provider-neutral format the model gateway sends to the model. */
-export function toolDefinitions(names?: string[]): ToolDefinition[] {
-  return TOOLS.filter((t) => !names || names.includes(t.name)).map((t) => {
-    const { $schema: _s, ...parameters } = z.toJSONSchema(t.schema, { io: "input" }) as Record<
-      string,
-      unknown
-    >;
-    return { name: t.name, description: t.description, parameters };
-  });
+export function toolDefinitions(names?: string[], extra: AgentTool<z.ZodType>[] = []): ToolDefinition[] {
+  return [...TOOLS, ...extra]
+    .filter((t) => !names || names.includes(t.name))
+    .map((t) => {
+      const { $schema: _s, ...parameters } = z.toJSONSchema(t.schema, { io: "input" }) as Record<
+        string,
+        unknown
+      >;
+      return { name: t.name, description: t.description, parameters };
+    });
 }
 
 /**
@@ -546,10 +628,11 @@ export function toolDefinitions(names?: string[]): ToolDefinition[] {
  * failures come back as an error result the model can read and react to.
  */
 export async function executeTool(name: string, rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
-  const t = TOOLS.find((x) => x.name === name);
+  const all = [...TOOLS, ...(ctx.extraTools ?? [])];
+  const t = all.find((x) => x.name === name);
   if (!t)
     return {
-      content: `Unknown tool "${name}". Available: ${TOOLS.map((x) => x.name).join(", ")}`,
+      content: `Unknown tool "${name}". Available: ${all.map((x) => x.name).join(", ")}`,
       isError: true,
     };
   const parsed = t.schema.safeParse(rawArgs ?? {});

@@ -1,23 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
-import {
-  type ChatMessage,
-  type ChatResult,
-  collectChat,
-  ModelGatewayError,
-  type ModelProvider,
-  PARSE_ERROR,
-  type ToolCall,
-} from "@depo/model-gateway";
+import type { ChatMessage } from "@depo/model-gateway";
 import {
   type ChatItem,
   newId,
+  PlanSchema,
   type ProjectSettings,
   type Task,
   TaskSchema,
   type TaskStatus,
+  type WorkMode,
+  WorkModeSchema,
 } from "@depo/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
+import { Blackboard } from "../agents/blackboard";
+import { agentTag } from "../agents/manifests";
+import { agentStatuses, TeamRunner } from "../agents/team";
 import type { ApprovalCenter } from "../approvals";
 import type { CodeIndexer } from "../codeindex/indexer";
 import type { AppDb } from "../db";
@@ -27,20 +25,18 @@ import type { Logger } from "../logger";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelScheduler } from "../scheduler/scheduler";
-import { executeTool, TOOLS, type ToolContext, toolDefinitions } from "../tools/index";
+import type { SettingsRepo } from "../settings";
+import { TOOLS, type ToolContext } from "../tools/index";
 import type { ProjectService, Workspace } from "../workspace/service";
+import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
-import { extractTextToolCalls, looksLikeToolCall, stripToolMarkup } from "./textcalls";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
 const DEFAULT_CONTEXT = 16_384;
-/** A model call may be retried this many times after a transient failure. */
-const MODEL_RETRIES = 4;
-/** Waits between retries grow, so a runtime that is busy (re)loading a model gets about a minute. */
-const RETRY_BACKOFF = [1, 3, 8, 15];
 
 export interface TaskManagerOptions {
+  settings?: SettingsRepo;
   db: AppDb;
   bus: EventBus;
   logger: Logger;
@@ -53,6 +49,8 @@ export interface TaskManagerOptions {
   projectSettings?: (projectId: string) => ProjectSettings;
   maxSteps?: number;
   retryDelayMs?: number;
+  /** Skills and MCP tools for team agents (Phase 5). */
+  extras?: ConstructorParameters<typeof TeamRunner>[0]["extras"];
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -67,9 +65,66 @@ export class TaskManager {
   private readonly running = new Map<string, AbortController>();
   private readonly done = new Map<string, Promise<void>>();
   private readonly log: Logger;
+  readonly blackboard: Blackboard;
+  private readonly team: TeamRunner;
 
   constructor(private readonly o: TaskManagerOptions) {
     this.log = o.logger.child({ component: "tasks" });
+    this.blackboard = new Blackboard(o.db);
+    this.team = new TeamRunner({
+      db: o.db,
+      bus: o.bus,
+      logger: this.log,
+      models: o.models,
+      approvals: o.approvals,
+      scheduler: o.scheduler,
+      blackboard: this.blackboard,
+      retryDelayMs: o.retryDelayMs,
+      maxSteps: o.maxSteps,
+      options: () => this.teamOptions(),
+      projectSettings: (id) => o.projectSettings?.(id),
+      addMessage: (taskId, msg, agent) => this.addMessage(taskId, msg as ChatMessage, undefined, agent),
+      knowledge: (id) => this.knowledge(id),
+      lessons: (id) => this.lessonTracker(id),
+      memoryContext: (id) => o.memory?.contextFor(id, MEMORY_BUDGET).trim() ?? "",
+      repoMap: (id) => o.indexer?.repoMap(id, REPO_MAP_BUDGET).trim() ?? "",
+      ...(o.extras ? { extras: o.extras } : {}),
+    });
+  }
+
+  private teamOptions() {
+    const st = this.o.settings;
+    const num = (k: string, d: number) => {
+      const v = st?.get(k);
+      return typeof v === "number" && v >= 1 ? Math.floor(v) : d;
+    };
+    const reviews = st?.get("team.reviews");
+    return {
+      approvePlan: st?.get("team.approve_plan") !== false,
+      reviews: (reviews === "key" || reviews === "off" ? reviews : "all") as "all" | "key" | "off",
+      fixLoops: num("team.fix_loops", 5),
+      parallel: num("team.parallel", 2),
+      exportDocs: st?.get("team.export_docs") !== false,
+    };
+  }
+
+  /** The agent team's view of a task: plan, board states and typed messages. */
+  teamState(taskId: string) {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row) throw new Error(`Unknown task: ${taskId}`);
+    const plan = row.plan ? PlanSchema.safeParse(JSON.parse(row.plan)) : null;
+    const waiting = new Set(
+      this.o.approvals
+        .list()
+        .filter((a) => a.taskId === taskId)
+        .map((a) => a.agent.split("@")[0] ?? ""),
+    );
+    return {
+      mode: WorkModeSchema.catch("single").parse(row.mode),
+      plan: plan?.success ? plan.data : null,
+      agents: agentStatuses(plan?.success ? plan.data : null, waiting),
+      messages: this.blackboard.messages(taskId),
+    };
   }
 
   list(projectId: string): Task[] {
@@ -136,7 +191,7 @@ export class TaskManager {
       .all();
     const items: ChatItem[] = [];
     for (const m of msgs) {
-      const c = JSON.parse(m.content) as ChatMessage & { isError?: boolean };
+      const c = JSON.parse(m.content) as ChatMessage & { isError?: boolean; agent?: string };
       if (c.role === "system") continue;
       if (c.role === "tool") {
         items.push({
@@ -145,6 +200,7 @@ export class TaskManager {
           text: c.content.slice(0, 2000),
           toolName: c.name,
           isError: c.isError === true,
+          agent: c.agent ?? null,
           createdAt: m.createdAt,
         });
       } else if (c.role === "assistant") {
@@ -155,6 +211,7 @@ export class TaskManager {
             text: c.content,
             toolName: null,
             isError: c.isError === true,
+            agent: c.agent ?? null,
             createdAt: m.createdAt,
           });
       } else {
@@ -164,6 +221,7 @@ export class TaskManager {
           text: c.content,
           toolName: null,
           isError: false,
+          agent: null,
           createdAt: m.createdAt,
         });
       }
@@ -172,7 +230,7 @@ export class TaskManager {
   }
 
   /** Start a new task, or continue an existing one with a follow-up message. */
-  send(projectId: string, text: string, taskId?: string): Task {
+  send(projectId: string, text: string, taskId?: string, mode?: WorkMode): Task {
     const project = this.o.db.select().from(projects).where(eq(projects.id, projectId)).get();
     if (!project) throw new Error(`Unknown project: ${projectId}`);
     if (!fs.existsSync(project.rootPath))
@@ -183,12 +241,24 @@ export class TaskManager {
       const row = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get();
       if (!row || row.projectId !== projectId) throw new Error(`Unknown task: ${id}`);
       if (this.running.has(id)) throw new Error("This task is still working. Wait for it or stop it first.");
+      if (mode && mode !== row.mode) {
+        this.o.db.update(tasks).set({ mode }).where(eq(tasks.id, id)).run();
+      }
     } else {
       id = newId("tsk");
       const title = text.trim().split("\n")[0]?.slice(0, 80) ?? "Task";
       this.o.db
         .insert(tasks)
-        .values({ id, projectId, title, prompt: text, status: "queued", createdAt: now, updatedAt: now })
+        .values({
+          id,
+          projectId,
+          title,
+          prompt: text,
+          status: "queued",
+          mode: mode ?? "single",
+          createdAt: now,
+          updatedAt: now,
+        })
         .run();
     }
     this.addMessage(id, { role: "user", content: text });
@@ -275,6 +345,10 @@ export class TaskManager {
     }
 
     this.setStatus(taskId, "running");
+    if (row.mode !== "single") {
+      await this.runTeam(row, project, ws, signal);
+      return;
+    }
     emit({
       type: "planning",
       text: `Working on: ${row.title}`,
@@ -297,6 +371,7 @@ export class TaskManager {
       history[0] = sys;
     }
 
+    const lessons = this.lessonTracker(project.id);
     const ctx: ToolContext = {
       root: ws.root,
       bus: this.o.bus,
@@ -308,172 +383,26 @@ export class TaskManager {
       env: venvEnv(ws.root),
       ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
       ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
-      onTestResult: (r) => {
-        lastTest = { command: r.command, passed: r.passed };
-        editedSinceTest = false;
-        return lessons.onTest(r);
-      },
       readPaths: new Set<string>(),
     };
-    const lessons = this.lessonTracker(project.id);
-    const tools = toolDefinitions();
-    const toolNames = TOOLS.map((t) => t.name);
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
-    const failures = new Map<string, number>();
-    let finalText = "";
-    let steps = 0;
-    let badOutputs = 0;
-    // Small models often say "tests passed" when they did not, so check before accepting the end.
-    let lastTest = null as { command: string; passed: boolean } | null;
-    let editedSinceTest = false;
-    let finishNudges = 0;
-
-    while (steps < maxSteps) {
-      if (signal.aborted) break;
-      steps++;
-      compressHistory(history, contextLength);
-      const messageId = newId("msg");
-      // Runtimes send nothing while they read the prompt; say so, since it can take minutes.
-      emit({
-        type: "planning",
-        text: `Waiting for ${model} to answer (step ${steps})`,
-        details: { jobId: `wait-${taskId}`, step: steps },
-        ephemeral: true,
-        status: "running",
-      });
-      let streamed = "";
-      let lastEmit = 0;
-      const res = await this.chatWithRetry(
-        { projectId: project.id, taskId, label: row.title },
-        provider,
-        { model, messages: history, tools, contextLength, signal },
-        (delta) => {
-          streamed += delta;
-          const now = Date.now();
-          if (now - lastEmit > 150) {
-            lastEmit = now;
-            emit({
-              type: "thinking",
-              text: lastLine(streamed),
-              details: { jobId: messageId, text: streamed.slice(-4000) },
-              ephemeral: true,
-              status: "running",
-            });
-          }
-        },
-        emit,
-      );
-      emit({
-        type: "planning",
-        text: "Model answered",
-        details: { jobId: `wait-${taskId}`, clear: true },
-        ephemeral: true,
-        status: "succeeded",
-      });
-      if (res === null) break; // cancelled
-      if ("badOutput" in res) {
-        // The runtime could not read the model's reply (usually a broken tool call). Tell the model
-        // and let it try again, unless it keeps happening.
-        badOutputs++;
-        if (badOutputs >= 3) throw new Error(`${res.badOutput} This happened 3 times in a row.`);
-        emit({
-          type: "retrying",
-          text: `${res.badOutput} Asking the model to try again.`,
-          status: "running",
-        });
-        history.push({
-          role: "user",
-          content:
-            "Your last reply could not be read: the tool call was malformed or cut off. Reply again and make exactly one complete, valid tool call.",
-        });
-        continue;
-      }
-      badOutputs = 0;
-      let calls: ToolCall[] = res.toolCalls;
-      if (calls.length === 0) {
-        const parsed = extractTextToolCalls(res.text, toolNames);
-        calls = parsed.calls;
-        if (calls.length) res.text = parsed.rest;
-        else if (looksLikeToolCall(res.text, toolNames)) {
-          // A tool call written as text that could not be read: not a final answer.
-          badOutputs++;
-          if (badOutputs >= 3)
-            throw new Error("The model kept writing tool calls that could not be read. Try a larger model.");
-          emit({
-            type: "retrying",
-            text: "The model's tool call could not be read. Asking it to try again.",
-            status: "running",
-          });
-          history.push({ role: "assistant", content: res.text });
-          history.push({
-            role: "user",
-            content:
-              "That tool call could not be read: it is not complete, valid JSON. Make exactly one tool call, using the tool-calling format, with every bracket closed.",
-          });
-          continue;
-        }
-      }
-      if (calls.length === 0) res.text = stripToolMarkup(res.text);
-      const assistant: ChatMessage = {
-        role: "assistant",
-        content: res.text,
-        ...(calls.length ? { toolCalls: calls } : {}),
-      };
-      history.push(assistant);
-      this.addMessage(taskId, assistant);
-      if (res.text.trim()) {
-        emit({
-          type: "thinking",
-          text: lastLine(res.text),
-          details: { jobId: messageId, text: res.text.slice(-4000) },
-          status: "info",
-        });
-      }
-      if (calls.length === 0) {
-        const nudge =
-          finishNudges >= 2
-            ? null
-            : lastTest && !lastTest.passed
-              ? `The last test run (${lastTest.command}) failed, so the task is not done. Read the failure, fix the code, and run the tests again before you finish.`
-              : editedSinceTest && lastTest
-                ? "You changed files after the last test run. Run the tests again before you finish."
-                : null;
-        if (nudge) {
-          finishNudges++;
-          emit({ type: "retrying", text: "Checking the tests before finishing.", status: "running" });
-          history.push({ role: "user", content: nudge });
-          continue;
-        }
-        finalText = res.text.trim();
-        if (lastTest && !lastTest.passed) {
-          const note = `Note from Depo: the last test run (${lastTest.command}) failed. Check the changes before you approve them.`;
-          finalText += `\n\n${note}`;
-          this.addMessage(taskId, { role: "assistant", content: note });
-        }
-        break;
-      }
-      for (const call of calls) {
-        if (signal.aborted) break;
-        lessons.onCall(call.name, (call.arguments ?? {}) as Record<string, unknown>);
-        if (call.name === "edit_file" || call.name === "write_file") editedSinceTest = true;
-        const result = await executeTool(call.name, call.arguments, ctx);
-        let content = result.content;
-        if (result.isError) {
-          const key = `${call.name}:${call.rawArguments}`;
-          const n = (failures.get(key) ?? 0) + 1;
-          failures.set(key, n);
-          if (n >= 3) content += "\nThis exact call has failed 3 times. Try a different approach.";
-        }
-        const toolMsg: ChatMessage & { isError?: boolean } = {
-          role: "tool",
-          toolCallId: call.id,
-          name: call.name,
-          content,
-        };
-        history.push(toolMsg);
-        this.addMessage(taskId, { ...toolMsg, ...(result.isError ? { isError: true } : {}) } as ChatMessage);
-      }
-    }
+    const result = await runAgentLoop({
+      provider,
+      model,
+      contextLength,
+      history,
+      toolNames: TOOLS.map((t) => t.name),
+      ctx,
+      maxSteps,
+      signal,
+      scheduler: this.o.scheduler,
+      job: { projectId: project.id, taskId, label: row.title },
+      retryDelayMs: this.o.retryDelayMs,
+      emit,
+      persist: (m) => this.addMessage(taskId, m as ChatMessage),
+      lessons,
+    });
+    let finalText = result.finalText;
 
     if (signal.aborted) {
       this.setStatus(taskId, "cancelled");
@@ -490,6 +419,50 @@ export class TaskManager {
       .set({ summary: finalText.slice(0, 4000), updatedAt: new Date().toISOString() })
       .where(eq(tasks.id, taskId))
       .run();
+    this.finishChanges(project.id, taskId, ws, row.title, emit, (cs) => (cs ? "review" : "done"));
+  }
+
+  /** Team modes: the Manager plans, the agents work through the task graph, reviewers sign off. */
+  private async runTeam(
+    row: typeof tasks.$inferSelect,
+    project: typeof projects.$inferSelect,
+    ws: Workspace,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const taskId = row.id;
+    const mode = WorkModeSchema.parse(row.mode) as Exclude<WorkMode, "single">;
+    const emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) =>
+      this.o.bus.emit({ ...e, agent: agentTag("manager"), projectId: project.id, taskId });
+    // The newest user message is the request; earlier ones stay in the blackboard and transcript.
+    const lastUser = [...this.get(taskId).messages].reverse().find((m) => m.role === "user");
+    this.o.indexer?.ensure(project.id);
+    emit({ type: "planning", text: `Team mode "${mode}": ${row.title}`, status: "started" });
+    const res = await this.team.run({
+      taskId,
+      projectId: project.id,
+      projectName: project.name,
+      text: lastUser?.text ?? row.prompt,
+      mode,
+      ws,
+      signal,
+    });
+    if (signal.aborted) {
+      this.setStatus(taskId, "cancelled");
+      emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
+      this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+      return;
+    }
+    this.addMessage(taskId, { role: "assistant", content: res.finalText }, undefined, agentTag("manager"));
+    this.o.db
+      .update(tasks)
+      .set({ summary: res.finalText.slice(0, 4000), updatedAt: new Date().toISOString() })
+      .where(eq(tasks.id, taskId))
+      .run();
+    if (res.declined) {
+      this.setStatus(taskId, "done");
+      emit({ type: "handoff", text: "Plan declined: nothing was built", status: "cancelled" });
+      return;
+    }
     this.finishChanges(project.id, taskId, ws, row.title, emit, (cs) => (cs ? "review" : "done"));
   }
 
@@ -517,44 +490,6 @@ export class TaskManager {
       emit({ type: "handoff", text: "Finished with no file changes", status: "succeeded" });
     }
     return cs;
-  }
-
-  private async chatWithRetry(
-    job: { projectId: string; taskId: string; label: string },
-    provider: ModelProvider,
-    req: Parameters<ModelProvider["chat"]>[0],
-    onText: (d: string) => void,
-    emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown,
-  ): Promise<ChatResult | { badOutput: string } | null> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const call = () => collectChat(provider.chat(req), onText);
-        return await (this.o.scheduler
-          ? this.o.scheduler.run({ ...job, model: req.model, priority: "task" }, call, req.signal)
-          : call());
-      } catch (err) {
-        if (err instanceof ModelGatewayError && err.kind === "cancelled") return null;
-        if (isBadModelOutput(err)) {
-          // Sampling is random, so a plain retry often succeeds; after that, the loop nudges the model.
-          if (attempt < 1) continue;
-          return { badOutput: (err as Error).message };
-        }
-        const transient =
-          err instanceof ModelGatewayError &&
-          (err.kind === "timeout" ||
-            err.kind === "unreachable" ||
-            (err.kind === "http" && (err.status ?? 0) >= 500));
-        if (!transient || attempt >= MODEL_RETRIES) throw err;
-        emit({
-          type: "retrying",
-          text: `${(err as Error).message} Retrying…`,
-          details: { attempt: attempt + 1 },
-          status: "running",
-        });
-        await Bun.sleep(this.o.retryDelayMs ?? (RETRY_BACKOFF[attempt] ?? 15) * 1000);
-        if (req.signal?.aborted) return null;
-      }
-    }
   }
 
   // ---- memory, index and lessons ---------------------------------------------------------
@@ -643,7 +578,7 @@ export class TaskManager {
       });
   }
 
-  private addMessage(taskId: string, msg: ChatMessage, at?: string) {
+  private addMessage(taskId: string, msg: ChatMessage, at?: string, agent?: string) {
     const now = new Date().toISOString();
     this.o.db
       .insert(messages)
@@ -651,7 +586,7 @@ export class TaskManager {
         id: newId("msg"),
         taskId,
         role: msg.role,
-        content: JSON.stringify(msg),
+        content: JSON.stringify(agent ? { ...msg, agent } : msg),
         createdAt: at ?? now,
         updatedAt: now,
       })
@@ -691,6 +626,7 @@ function toTask(r: typeof tasks.$inferSelect): Task {
     title: r.title,
     prompt: r.prompt,
     status: r.status,
+    mode: r.mode,
     model: r.model,
     summary: r.summary,
     error: r.error,
@@ -699,50 +635,4 @@ function toTask(r: typeof tasks.$inferSelect): Task {
   });
 }
 
-function lastLine(s: string): string {
-  const lines = s
-    .trim()
-    .split("\n")
-    .filter((l) => l.trim());
-  return (lines.at(-1) ?? "").slice(0, 200);
-}
-
-/**
- * Keep the conversation inside the model's context window: old tool outputs are trimmed first
- * (the model can re-read files), then the oldest exchanges after the first request are dropped.
- */
-export function compressHistory(history: ChatMessage[], contextLength: number): void {
-  const budget = contextLength * 0.7 * 3.5; // ~3.5 characters per token
-  const size = () =>
-    history.reduce(
-      (n, m) =>
-        n + m.content.length + (m.role === "assistant" ? JSON.stringify(m.toolCalls ?? []).length : 0),
-      0,
-    );
-  if (size() <= budget) return;
-  const keepTail = 6;
-  for (let i = 0; i < history.length - keepTail && size() > budget; i++) {
-    const m = history[i];
-    if (m?.role === "tool" && m.content.length > 400) {
-      history[i] = {
-        ...m,
-        content: `${m.content.slice(0, 300)}\n[older output trimmed to save context; read the file again if needed]`,
-      };
-    }
-  }
-  // Still too large: drop whole assistant+tool exchanges after the system prompt and first user message.
-  while (size() > budget && history.length > keepTail + 2) {
-    const idx = history.findIndex((m, i) => i >= 2 && m.role === "assistant");
-    if (idx < 0 || idx >= history.length - keepTail) break;
-    let end = idx + 1;
-    while (end < history.length && history[end]?.role === "tool") end++;
-    history.splice(idx, end - idx);
-  }
-}
-
-/** The runtime rejected the model's own output (e.g. a malformed tool call), as opposed to failing. */
-export function isBadModelOutput(err: unknown): boolean {
-  if (!(err instanceof ModelGatewayError)) return false;
-  if (err.kind === "invalid_output") return true;
-  return err.kind === "http" && PARSE_ERROR.test(`${err.message} ${err.detail ?? ""}`);
-}
+export { compressHistory, isBadModelOutput } from "./loop";

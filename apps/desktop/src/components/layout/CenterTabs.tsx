@@ -6,6 +6,7 @@ import {
   FlaskConical,
   FolderKanban,
   FolderTree,
+  ListChecks,
   type LucideIcon,
   MessageSquare,
   Network,
@@ -20,6 +21,7 @@ import { MemoryPanel } from "@/components/panels/MemoryPanel";
 import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { OverviewPanel } from "@/components/panels/OverviewPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
+import { PlanBoard } from "@/components/panels/PlanBoard";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
 
@@ -34,6 +36,7 @@ interface TabDef {
 export const CENTER_TABS: TabDef[] = [
   { id: "overview", label: "Project", icon: FolderKanban },
   { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "plan", label: "Plan", icon: ListChecks },
   { id: "files", label: "Files", icon: FolderTree },
   { id: "diff", label: "Diff Review", icon: FileDiff },
   { id: "memory", label: "Memory", icon: BookMarked },
@@ -141,6 +144,8 @@ export function CenterTabs() {
             <MemoryPanel />
           ) : current.id === "chat" ? (
             <ChatPanel />
+          ) : current.id === "plan" ? (
+            <PlanBoard />
           ) : current.id === "files" ? (
             <FilesPanel />
           ) : current.id === "diff" ? (

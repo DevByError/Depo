@@ -7,6 +7,14 @@ import {
   RoleSchema,
 } from "@depo/model-gateway";
 import { z } from "zod";
+import {
+  AgentManifestSchema,
+  AgentMessageSchema,
+  AgentStatusSchema,
+  BlackboardEntrySchema,
+  PlanSchema,
+  WorkModeSchema,
+} from "./agents";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
@@ -261,6 +269,7 @@ export const TaskStatusSchema = z.enum([
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 export const TaskSchema = z.object({
+  mode: WorkModeSchema.default("single"),
   id: z.string(),
   projectId: z.string(),
   title: z.string(),
@@ -281,6 +290,8 @@ export const ChatItemSchema = z.object({
   text: z.string(),
   toolName: z.string().nullable(),
   isError: z.boolean(),
+  /** `backend@1.0.0` when the message comes from a team agent. */
+  agent: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type ChatItem = z.infer<typeof ChatItemSchema>;
@@ -296,7 +307,13 @@ const TaskMethods = {
   },
   "tasks.send": {
     params: z
-      .object({ projectId: z.string(), text: z.string().min(1).max(20_000), taskId: z.string().optional() })
+      .object({
+        projectId: z.string(),
+        text: z.string().min(1).max(20_000),
+        taskId: z.string().optional(),
+        /** How to work: "single" (one coding agent, the default) or a team mode. */
+        mode: WorkModeSchema.optional(),
+      })
       .strict(),
     result: TaskSchema,
   },
@@ -307,6 +324,23 @@ const TaskMethods = {
   "tasks.cancel": {
     params: z.object({ id: z.string() }).strict(),
     result: z.object({ cancelled: z.boolean() }),
+  },
+  "agents.list": {
+    params: z.object({}).strict(),
+    result: z.object({ agents: z.array(AgentManifestSchema) }),
+  },
+  "team.get": {
+    params: z.object({ taskId: z.string() }).strict(),
+    result: z.object({
+      mode: WorkModeSchema,
+      plan: PlanSchema.nullable(),
+      agents: z.array(AgentStatusSchema),
+      messages: z.array(AgentMessageSchema),
+    }),
+  },
+  "blackboard.list": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({ entries: z.array(BlackboardEntrySchema) }),
   },
 } as const;
 

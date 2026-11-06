@@ -1,4 +1,4 @@
-import { blob, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { blob, index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
  * App database tables (Drizzle). Phase 0 only creates what Phase 0 uses;
@@ -127,6 +127,48 @@ export const tasks = sqliteTable("tasks", {
   model: text("model"),
   summary: text("summary"),
   error: text("error"),
+  /** single | full | backend | frontend | ai | import | fix | refactor | ask | business */
+  mode: text("mode").notNull().default("single"),
+  /** JSON-encoded Plan (team modes) */
+  plan: text("plan"),
+  ...timestamps,
+});
+
+export const blackboard = sqliteTable(
+  "blackboard",
+  {
+    projectId: text("project_id").notNull(),
+    section: text("section").notNull(),
+    content: text("content").notNull(),
+    version: integer("version").notNull(),
+    owner: text("owner").notNull(),
+    taskId: text("task_id"),
+    ...timestamps,
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.section] })],
+);
+
+export const blackboardHistory = sqliteTable("blackboard_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: text("project_id").notNull(),
+  section: text("section").notNull(),
+  version: integer("version").notNull(),
+  content: text("content").notNull(),
+  owner: text("owner").notNull(),
+  taskId: text("task_id"),
+  createdAt: text("created_at").notNull(),
+});
+
+export const agentMessages = sqliteTable("agent_messages", {
+  id: text("id").primaryKey(),
+  taskId: text("task_id").notNull(),
+  fromAgent: text("from_agent").notNull(),
+  toAgent: text("to_agent").notNull(),
+  type: text("type").notNull(),
+  summary: text("summary").notNull(),
+  artifacts: text("artifacts").notNull(),
+  criteria: text("criteria").notNull(),
+  confidence: real("confidence").notNull(),
   ...timestamps,
 });
 

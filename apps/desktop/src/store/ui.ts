@@ -4,6 +4,7 @@ export type Theme = "dark" | "light";
 export type CenterTab =
   | "overview"
   | "chat"
+  | "plan"
   | "files"
   | "diff"
   | "memory"

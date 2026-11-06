@@ -1,4 +1,4 @@
-import type { ChatItem, DepoEvent, PendingApprovalDto, Task, TaskStatus } from "@depo/shared";
+import type { ChatItem, DepoEvent, PendingApprovalDto, Task, TaskStatus, WorkMode } from "@depo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -42,6 +42,19 @@ const PILLARS = [
     title: "Tested work",
     text: "The agent runs your tests in the copy and fixes what fails before handing over.",
   },
+];
+
+const MODES: { id: WorkMode; label: string }[] = [
+  { id: "single", label: "Single agent" },
+  { id: "full", label: "Full system" },
+  { id: "backend", label: "Backend only" },
+  { id: "frontend", label: "Frontend only" },
+  { id: "ai", label: "AI integration" },
+  { id: "import", label: "Study project" },
+  { id: "fix", label: "Fix / debug" },
+  { id: "refactor", label: "Refactor / upgrade" },
+  { id: "ask", label: "Ask / explain" },
+  { id: "business", label: "Business" },
 ];
 
 const STATUS_TEXT: Record<TaskStatus, string> = {
@@ -355,6 +368,7 @@ function ToolRow({ item }: { item: ChatItem }) {
           className={cn("size-3.5 shrink-0", item.isError ? "text-danger" : "text-subtle")}
           aria-hidden
         />
+        {item.agent && <span className="text-subtle">{item.agent.split("@")[0]}</span>}
         <span className="font-mono text-fg">{item.toolName}</span>
         <span className={cn("min-w-0 flex-1 truncate", item.isError && "text-danger")}>{firstLine}</span>
       </summary>
@@ -401,6 +415,7 @@ function ApprovalCard({ approval }: { approval: PendingApprovalDto }) {
     onSettled: () => qc.invalidateQueries({ queryKey: ["approvals"] }),
   });
   const command = approval.details?.command;
+  const planText = approval.details?.plan;
   return (
     <section
       aria-label="Approval needed"
@@ -410,7 +425,12 @@ function ApprovalCard({ approval }: { approval: PendingApprovalDto }) {
         <ShieldAlert className="size-4 text-warning" aria-hidden />
         {approval.title}
       </div>
-      <p className="mt-1 text-xs text-muted">{approval.reason}</p>
+      <p className="mt-1 text-xs whitespace-pre-wrap text-muted">{approval.reason}</p>
+      {typeof planText === "string" && (
+        <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-bg px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap text-fg">
+          {planText}
+        </pre>
+      )}
       {typeof command === "string" && (
         <pre className="mt-2 overflow-x-auto rounded-md bg-bg px-2.5 py-1.5 font-mono text-xs text-fg">
           {command}
@@ -455,11 +475,17 @@ function Composer({ task }: { task: Task | undefined }) {
   const setTaskId = useUi((s) => s.setTaskId);
   const qc = useQueryClient();
   const [text, setText] = useState("");
+  const [mode, setMode] = useState<WorkMode>("single");
   const running = isActive(task?.status);
 
   const send = useMutation({
     mutationFn: (body: string) =>
-      call("tasks.send", { projectId: projectId ?? "", text: body, ...(task ? { taskId: task.id } : {}) }),
+      call("tasks.send", {
+        projectId: projectId ?? "",
+        text: body,
+        ...(task ? { taskId: task.id } : {}),
+        ...(!task && mode !== "single" ? { mode } : {}),
+      }),
     onSuccess: (t) => {
       setText("");
       setTaskId(t.id);
@@ -501,6 +527,25 @@ function Composer({ task }: { task: Task | undefined }) {
             !projectId && "opacity-70",
           )}
         >
+          {!task && (
+            <div className="self-end">
+              <label htmlFor="work-mode" className="sr-only">
+                Work mode
+              </label>
+              <select
+                id="work-mode"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as WorkMode)}
+                className="h-8 max-w-36 rounded-lg border border-border bg-panel px-2 text-xs text-muted outline-none focus:border-accent"
+              >
+                {MODES.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <textarea
             id="composer"
             rows={2}

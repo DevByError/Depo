@@ -6,6 +6,7 @@ import {
   DEPO_VERSION,
 } from "@depo/shared";
 import type { TaskManager } from "../agent/tasks";
+import { MANIFESTS } from "../agents/manifests";
 import type { ApprovalCenter } from "../approvals";
 import type { CodeIndexer } from "../codeindex/indexer";
 import type { EventBus } from "../events/bus";
@@ -215,7 +216,10 @@ export const handlers: Handlers = {
   "tasks.list": (p, ctx) => ({ tasks: ctx.tasks.list(p.projectId) }),
   "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
-  "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId),
+  "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
+  "agents.list": () => ({ agents: MANIFESTS }),
+  "team.get": (p, ctx) => ctx.tasks.teamState(p.taskId),
+  "blackboard.list": (p, ctx) => ({ entries: ctx.tasks.blackboard.list(p.projectId) }),
   "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),
   "checkpoints.list": (p, ctx) => ({ checkpoints: ctx.projects.listCheckpoints(p.projectId) }),
   "checkpoints.restore": (p, ctx) => ctx.projects.restoreCheckpoint(p.id, p.force),

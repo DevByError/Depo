@@ -167,6 +167,50 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX embeddings_path ON embeddings (project_id, path);
     `,
   },
+  {
+    version: 4,
+    name: "agent_team",
+    sql: `
+      ALTER TABLE tasks ADD COLUMN mode TEXT NOT NULL DEFAULT 'single';
+      ALTER TABLE tasks ADD COLUMN plan TEXT;
+      CREATE TABLE blackboard (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        section TEXT NOT NULL,
+        content TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        owner TEXT NOT NULL,
+        task_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, section)
+      );
+      CREATE TABLE blackboard_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        section TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        task_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX blackboard_history_section ON blackboard_history (project_id, section, version);
+      CREATE TABLE agent_messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        task_id TEXT NOT NULL,
+        from_agent TEXT NOT NULL,
+        to_agent TEXT NOT NULL,
+        type TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        artifacts TEXT NOT NULL,
+        criteria TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX agent_messages_task ON agent_messages (task_id, created_at);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

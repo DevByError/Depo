@@ -8,6 +8,7 @@ const item = (id: string, role: ChatItem["role"], text = id, isError = false): C
   text,
   toolName: role === "tool" ? "read_file" : null,
   isError,
+  agent: null,
   createdAt: "2026-10-31T00:00:00Z",
 });
 

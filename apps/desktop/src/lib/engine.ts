@@ -41,6 +41,9 @@ export function startEngineConnection(): void {
     if (e.taskId && !e.ephemeral) {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      void queryClient.invalidateQueries({ queryKey: ["team"] });
+    } else if (e.taskId && e.details?.planUpdate === true) {
+      void queryClient.invalidateQueries({ queryKey: ["team"] });
     }
   });
   engine.onStatus((status, error) => {

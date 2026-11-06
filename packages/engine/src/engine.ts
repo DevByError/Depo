@@ -107,6 +107,7 @@ export function createEngine(opts: EngineOptions): Engine {
     memory,
     scheduler,
     indexer,
+    settings,
     projectSettings: (id) => registry.getSettings(id),
     ...opts.tasks,
   });

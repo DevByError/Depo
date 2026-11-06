@@ -10,6 +10,16 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "quality.mode": "max_quality",
   /** Model requests served at once across all projects (one local GPU: usually 1). */
   "scheduler.max_parallel": 1,
+  /** Ask the user to approve the Manager's plan before the team starts. */
+  "team.approve_plan": true,
+  /** Who reviews agent output: "all" (every task), "key" (architecture and API work only) or "off". */
+  "team.reviews": "all",
+  /** Maximum attempts per task when a reviewer sends the work back. */
+  "team.fix_loops": 5,
+  /** Tasks the team may work on at once (model calls still queue). */
+  "team.parallel": 2,
+  /** Put the brief, options, decisions and audit notes into the project as docs/depo/*.md. */
+  "team.export_docs": true,
 };
 
 export class SettingsRepo {
