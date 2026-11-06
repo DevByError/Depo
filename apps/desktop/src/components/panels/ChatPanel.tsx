@@ -24,6 +24,7 @@ import { EVENT_STYLE, TONE_TEXT } from "@/lib/event-style";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 import { connectionLabel } from "./ConnectionBadge";
+import { Markdown } from "./Markdown";
 
 const PILLARS = [
   {
@@ -228,7 +229,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
           {task.model && <span className="text-subtle">· {task.model}</span>}
         </span>
       </header>
-      <ol className="flex flex-col gap-3" aria-label="Conversation">
+      <ol className="flex flex-col gap-6" aria-label="Conversation">
         {turns.map((t, i) => (
           <li key={t.user?.id ?? `turn-${i}`}>
             <TurnView turn={t} latest={i === turns.length - 1} working={active && i === turns.length - 1} />
@@ -268,42 +269,21 @@ export function groupTurns(items: ChatItem[]): Turn[] {
   return turns;
 }
 
-function TurnView({ turn, latest, working }: { turn: Turn; latest: boolean; working: boolean }) {
-  const [open, setOpen] = useState(latest);
-  // Older turns fold away when a new prompt is sent; the newest one opens.
-  useEffect(() => setOpen(latest), [latest]);
-  const tools = turn.steps.filter((s) => s.role === "tool");
-  const failedTools = tools.filter((s) => s.isError).length;
+function TurnView({ turn, working }: { turn: Turn; latest: boolean; working: boolean }) {
   const failed = turn.answer?.isError === true;
   return (
-    <section
-      aria-label={`Prompt: ${turn.user?.text.slice(0, 80) ?? "task"}`}
-      className={cn("rounded-lg border bg-panel/40", failed ? "border-danger/40" : "border-border")}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-hover/50"
-      >
-        <ChevronRight
-          className={cn("mt-0.5 size-4 shrink-0 text-muted transition-transform", open && "rotate-90")}
-          aria-hidden
-        />
-        <span className={cn("min-w-0 flex-1 text-[13px] text-fg", !open && "truncate")}>
-          {turn.user?.text ?? "Task"}
-        </span>
-        <span className="shrink-0 text-[11px] whitespace-nowrap text-subtle">
-          {tools.length} step{tools.length === 1 ? "" : "s"}
-          {failedTools > 0 && <span className="text-danger"> · {failedTools} failed</span>}
-        </span>
-      </button>
-      {open && (
-        <div className="flex flex-col gap-3 border-t border-border px-3 py-3">
-          {turn.steps.length > 0 && <Process steps={turn.steps} defaultOpen={working} />}
-          {turn.answer && <Answer item={turn.answer} />}
+    <section aria-label={`Prompt: ${turn.user?.text.slice(0, 80) ?? "task"}`} className="flex flex-col gap-3">
+      {turn.user && (
+        <div className="flex justify-end">
+          <div className="max-w-[85%] rounded-2xl rounded-br-md bg-hover px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap text-fg">
+            {turn.user.text}
+          </div>
         </div>
       )}
+      <div className={cn("flex flex-col gap-2", failed && "text-danger")}>
+        {turn.steps.length > 0 && <Process steps={turn.steps} defaultOpen={working} />}
+        {turn.answer && <Answer item={turn.answer} />}
+      </div>
     </section>
   );
 }
@@ -314,6 +294,7 @@ function Process({ steps, defaultOpen }: { steps: ChatItem[]; defaultOpen: boole
     if (defaultOpen) setOpen(true);
   }, [defaultOpen]);
   const n = steps.filter((s) => s.role === "tool").length;
+  const failedN = steps.filter((s) => s.role === "tool" && s.isError).length;
   return (
     <div>
       <button
@@ -324,6 +305,7 @@ function Process({ steps, defaultOpen }: { steps: ChatItem[]; defaultOpen: boole
       >
         <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} aria-hidden />
         {open ? "Hide" : "Show"} the work ({n} step{n === 1 ? "" : "s"})
+        {failedN > 0 && <span className="text-danger"> · {failedN} failed</span>}
       </button>
       {open && (
         <ol className="mt-2 flex flex-col gap-1.5 border-l border-border pl-3">
@@ -332,14 +314,9 @@ function Process({ steps, defaultOpen }: { steps: ChatItem[]; defaultOpen: boole
               {m.role === "tool" ? (
                 <ToolRow item={m} />
               ) : (
-                <p
-                  className={cn(
-                    "text-xs leading-relaxed whitespace-pre-wrap",
-                    m.isError ? "text-danger" : "text-muted",
-                  )}
-                >
-                  {m.text}
-                </p>
+                <div className={cn("text-xs leading-relaxed", m.isError ? "text-danger" : "text-muted")}>
+                  <Markdown text={m.text} />
+                </div>
               )}
             </li>
           ))}
@@ -361,7 +338,11 @@ function Answer({ item }: { item: ChatItem }) {
       </div>
     );
   }
-  return <div className="text-[13px] leading-relaxed whitespace-pre-wrap text-fg">{item.text}</div>;
+  return (
+    <div className="text-[13.5px] leading-relaxed text-fg">
+      <Markdown text={item.text} />
+    </div>
+  );
 }
 
 function ToolRow({ item }: { item: ChatItem }) {
@@ -390,8 +371,12 @@ function LiveRow({ stream, step }: { stream: string | null; step: DepoEvent | nu
   return (
     <div role="status" aria-live="polite" className="flex flex-col gap-2">
       {stream && (
-        <div className="text-[13px] leading-relaxed whitespace-pre-wrap text-muted">
-          {stream.slice(-1500)}
+        <div className="text-[13.5px] leading-relaxed text-fg">
+          <Markdown text={stream.slice(-3000)} />
+          <span
+            className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-accent align-middle"
+            aria-hidden
+          />
         </div>
       )}
       <div className="flex items-center gap-2 text-xs text-muted">
