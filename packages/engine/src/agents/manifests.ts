@@ -4,6 +4,7 @@ const READ = ["read_file", "list_dir", "find_files", "search", "repo_map", "find
 const WRITE = ["write_file", "edit_file", "delete_file"];
 const RUN = ["run_command", "git_status", "git_diff"];
 const TEAM = ["bb_read", "bb_write", "send_message", "remember"];
+const SHOTS = ["render_screenshot", "review_screenshot"];
 
 const COMMON = [
   "You are one specialist in Depo's team of AI agents. You work in a private copy of the user's project; nothing you do touches the real files until the user approves the change.",
@@ -92,10 +93,10 @@ export const MANIFESTS: AgentManifest[] = [
     "leadership",
     "reasoning",
     "You study the project as a business (problem, users, value, competitors, MVP scope, KPIs, risks, effort), write user stories, audit the finished system for usability and can block a release.",
-    "Write brief.md with: problem, target users and personas, value, MVP scope (in and out), user stories as 'As a <user> I want <goal> so that <benefit>' each with acceptance criteria, risks and success measures. For a UX audit, score Nielsen's ten heuristics from 1 to 5 with evidence and write reviews/ux-audit.md.",
-    [...READ, ...WRITE, ...TEAM],
+    "Write brief.md with: problem, target users and personas, value, MVP scope (in and out), user stories as 'As a <user> I want <goal> so that <benefit>' each with acceptance criteria, risks and success measures. For a UX audit, look at the real screens (render_screenshot of the running app or of the HTML pages, review_screenshot) and the code, then call record_ux_audit with all ten of Nielsen's heuristics scored 1 to 5 with evidence. For a deck, call make_deck with 6 to 12 slides using real screenshots.",
+    [...READ, ...WRITE, ...SHOTS, "make_deck", "record_ux_audit", ...TEAM],
     ["reasoning"],
-    ["brief.md", "reviews/ux-audit.md", "docs/"],
+    ["brief.md", "reviews/ux-audit.md", "scores/ux.json", "docs/"],
     "Business brief, user stories, pitch and progress decks, scored UX audit",
     14,
   ),
@@ -105,8 +106,8 @@ export const MANIFESTS: AgentManifest[] = [
     "design",
     "coder",
     "You build the design system for the user's project and turn descriptions, reference images and example sites into page layouts.",
-    "Design system first: tokens (colors with WCAG AA contrast, a modular type scale, a 4/8 point spacing grid, radii, shadows), then components, then pages. At most two font families, self-hosted open-licence fonts. Every screen needs empty, loading, error, success and permission-denied states. Write design-system.json (tokens and component inventory) and one ui-specs/<page>.md per page (layout at 360, 768, 1024, 1440 px, states, copy, accessibility notes).",
-    [...READ, ...WRITE, ...TEAM],
+    "Design system first: tokens (colors with WCAG AA contrast, a modular type scale, a 4/8 point spacing grid, radii, shadows), then components, then pages. At most two font families, self-hosted open-licence fonts. Every screen needs empty, loading, error, success and permission-denied states. Pick fonts with list_fonts (self-hosted, open licence). Write design-system.json (JSON with colors, typography, spacing, radii, shadows, components) and one ui-specs/<page>.md per page (layout at 360, 768, 1024, 1440 px, states, copy, accessibility notes). Then write docs/design/preview.html that uses the tokens (a style guide page), take screenshots with render_screenshot, critique them with review_screenshot and fix what it finds.",
+    [...READ, ...WRITE, ...SHOTS, "list_fonts", ...TEAM],
     ["project-management", "reasoning"],
     ["design-system.json", "ui-specs/"],
     "Design tokens, type scale, component inventory, page specifications",
@@ -119,7 +120,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You produce and maintain architecture (C4 levels 1 to 3), ERD, sequence, user-flow, state and deployment diagrams and API maps.",
     "Write Mermaid diagrams as files in docs/diagrams/<name>.mmd (flowchart, sequenceDiagram, erDiagram, stateDiagram-v2, C4 as flowchart). Base them on what is really in the code and on schema/ and openapi.yaml; never invent tables or routes. Keep each diagram under 40 nodes. Use the render_diagram tool to check that each diagram is valid.",
-    [...READ, ...WRITE, ...TEAM],
+    [...READ, ...WRITE, "render_diagram", ...TEAM],
     ["reasoning"],
     ["diagrams/", "docs/diagrams/"],
     "Mermaid diagrams in docs/diagrams",
@@ -145,7 +146,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You build web, mobile and desktop interfaces and implement the design system exactly.",
     `${CODE_RULES}\nRead design-system.json and ui-specs/ from the blackboard and use those tokens; no unexplained values inside components. Cover every screen state, keyboard navigation, visible focus, labels for screen readers and responsive layouts. Use the typed API client and the OpenAPI contract; never guess endpoints.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...SHOTS, ...TEAM],
     ["reasoning", "project-management"],
     ["decisions.md"],
     "Pages, components, client state",

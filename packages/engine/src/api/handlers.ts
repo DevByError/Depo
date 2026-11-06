@@ -9,6 +9,8 @@ import type { TaskManager } from "../agent/tasks";
 import { MANIFESTS } from "../agents/manifests";
 import type { ApprovalCenter } from "../approvals";
 import type { CodeIndexer } from "../codeindex/indexer";
+import { FONT_LIBRARY } from "../design/fonts";
+import type { DesignService } from "../design/service";
 import type { EventBus } from "../events/bus";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
@@ -28,6 +30,7 @@ export interface HandlerContext {
   memory: MemoryStore;
   scheduler: ModelScheduler;
   indexer: CodeIndexer;
+  design: DesignService;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -220,6 +223,30 @@ export const handlers: Handlers = {
   "agents.list": () => ({ agents: MANIFESTS }),
   "team.get": (p, ctx) => ctx.tasks.teamState(p.taskId),
   "blackboard.list": (p, ctx) => ({ entries: ctx.tasks.blackboard.list(p.projectId) }),
+  "diagrams.list": async (p, ctx) => ({ diagrams: await ctx.design.listDiagrams(p.projectId, p.taskId) }),
+  "diagrams.save": (p, ctx) => ctx.design.saveDiagram(p.projectId, p.path, p.content),
+  "decks.list": async (p, ctx) => ({ decks: await ctx.design.listDecks(p.projectId, p.taskId) }),
+  "decks.html": async (p, ctx) => ({ html: await ctx.design.deckHtml(p.projectId, p.taskId, p.dir) }),
+  "decks.export": (p, ctx) => ctx.design.exportDeck(p.projectId, p.taskId, p.dir, p.format, p.destDir),
+  "design.fonts": () => ({ fonts: FONT_LIBRARY }),
+  "scores.get": (p, ctx) => {
+    const e = ctx.tasks.blackboard.read(p.projectId, "scores/ux.json");
+    let ux: { overall: number; grade: string; blocksRelease: boolean; at: string } | null = null;
+    if (e) {
+      try {
+        const j = JSON.parse(e.content) as {
+          overall: number;
+          grade: string;
+          blocksRelease: boolean;
+          at: string;
+        };
+        ux = { overall: j.overall, grade: j.grade, blocksRelease: j.blocksRelease === true, at: j.at };
+      } catch {
+        ux = null;
+      }
+    }
+    return { ux };
+  },
   "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),
   "checkpoints.list": (p, ctx) => ({ checkpoints: ctx.projects.listCheckpoints(p.projectId) }),
   "checkpoints.restore": (p, ctx) => ctx.projects.restoreCheckpoint(p.id, p.force),

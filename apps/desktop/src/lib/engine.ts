@@ -42,6 +42,12 @@ export function startEngineConnection(): void {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["approvals"] });
       void queryClient.invalidateQueries({ queryKey: ["team"] });
+      if (e.type === "handoff" || e.type === "writing_file" || e.type === "reviewing") {
+        void queryClient.invalidateQueries({ queryKey: ["diagrams"] });
+        void queryClient.invalidateQueries({ queryKey: ["decks"] });
+        void queryClient.invalidateQueries({ queryKey: ["blackboard"] });
+        void queryClient.invalidateQueries({ queryKey: ["scores"] });
+      }
     } else if (e.taskId && e.details?.planUpdate === true) {
       void queryClient.invalidateQueries({ queryKey: ["team"] });
     }

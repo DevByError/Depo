@@ -13,6 +13,7 @@ import {
   WorkModeSchema,
 } from "@depo/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
+import "../tools/design-tools";
 import { Blackboard } from "../agents/blackboard";
 import { agentTag } from "../agents/manifests";
 import { agentStatuses, TeamRunner } from "../agents/team";
@@ -106,6 +107,13 @@ export class TaskManager {
       parallel: num("team.parallel", 2),
       exportDocs: st?.get("team.export_docs") !== false,
     };
+  }
+
+  /** The private workspace folder of a task, when it still exists. */
+  workspaceRoot(taskId: string): string | null {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row?.workspacePath || !fs.existsSync(path.join(row.workspacePath, "manifest.json"))) return null;
+    return this.o.projects.loadWorkspace(row.workspacePath).root;
   }
 
   /** The agent team's view of a task: plan, board states and typed messages. */

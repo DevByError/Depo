@@ -338,6 +338,75 @@ const TaskMethods = {
       messages: z.array(AgentMessageSchema),
     }),
   },
+  "diagrams.list": {
+    params: z.object({ projectId: z.string(), taskId: z.string().optional() }).strict(),
+    result: z.object({
+      diagrams: z.array(
+        z.object({ path: z.string(), content: z.string(), source: z.enum(["project", "workspace"]) }),
+      ),
+    }),
+  },
+  "diagrams.save": {
+    params: z
+      .object({ projectId: z.string(), path: z.string().max(200), content: z.string().max(80_000) })
+      .strict(),
+    result: z.object({ path: z.string() }),
+  },
+  "decks.list": {
+    params: z.object({ projectId: z.string(), taskId: z.string().optional() }).strict(),
+    result: z.object({
+      decks: z.array(
+        z.object({
+          dir: z.string(),
+          title: z.string(),
+          kind: z.enum(["pitch", "progress"]),
+          slides: z.number().int(),
+          files: z.array(z.string()),
+          source: z.enum(["project", "workspace"]),
+        }),
+      ),
+    }),
+  },
+  "decks.html": {
+    params: z.object({ projectId: z.string(), taskId: z.string().optional(), dir: z.string() }).strict(),
+    result: z.object({ html: z.string() }),
+  },
+  "decks.export": {
+    params: z
+      .object({
+        projectId: z.string(),
+        taskId: z.string().optional(),
+        dir: z.string(),
+        format: z.enum(["pptx", "pdf", "html"]),
+        destDir: z.string().optional(),
+      })
+      .strict(),
+    result: z.object({ path: z.string(), bytes: z.number().int() }),
+  },
+  "design.fonts": {
+    params: z.object({}).strict(),
+    result: z.object({
+      fonts: z.array(
+        z.object({
+          family: z.string(),
+          category: z.string(),
+          license: z.string(),
+          fontsource: z.string(),
+          weights: z.array(z.number()),
+          scripts: z.array(z.string()),
+          tags: z.array(z.string()),
+        }),
+      ),
+    }),
+  },
+  "scores.get": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({
+      ux: z
+        .object({ overall: z.number(), grade: z.string(), blocksRelease: z.boolean(), at: z.string() })
+        .nullable(),
+    }),
+  },
   "blackboard.list": {
     params: z.object({ projectId: z.string() }).strict(),
     result: z.object({ entries: z.array(BlackboardEntrySchema) }),

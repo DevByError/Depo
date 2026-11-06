@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type ChatMessage, extractJson, generateObject, type ModelProvider } from "@depo/model-gateway";
+import {
+  type ChatMessage,
+  collectChat,
+  extractJson,
+  generateObject,
+  type ModelProvider,
+} from "@depo/model-gateway";
 import {
   AGENT_IDS,
   type AgentId,
@@ -177,17 +183,31 @@ export function templateNodes(mode: Exclude<WorkMode, "single">, text: string): 
           criteria: ["before and after figures reported", "tests still pass"],
         },
         {
+          id: "diagrams-final",
+          title: "ERD and API map from the real schema and routes",
+          owner: "diagram",
+          deps: ["integration"],
+          criteria: ["the erDiagram matches the schema", "every diagram passes render_diagram"],
+        },
+        {
           id: "ux-audit",
           title: "UX audit",
           owner: "project-management",
           deps: ["enhancement"],
-          criteria: ["reviews/ux-audit.md scores the ten heuristics"],
+          criteria: ["record_ux_audit scores all ten heuristics"],
+        },
+        {
+          id: "deck",
+          title: "Pitch deck with real screenshots",
+          owner: "project-management",
+          deps: ["ux-audit", "diagrams-final"],
+          criteria: ["docs/deck has deck.pptx and deck.html", "uses real screenshots"],
         },
         {
           id: "final-review",
           title: "Final review of the whole change",
           owner: "reasoning",
-          deps: ["ux-audit"],
+          deps: ["deck"],
           criteria: ["no blocking findings"],
         },
         {
@@ -991,7 +1011,36 @@ export class TeamRunner {
       readPaths: new Set<string>(),
       onFileChanged: (f) => files.add(f),
       team,
+      vision: (prompt, images) => this.askVision(input, prompt, images),
     };
+  }
+
+  private async askVision(input: TeamInput, prompt: string, images: string[]): Promise<string | null> {
+    const v = this.h.models.resolve("vision");
+    if (!v) return null;
+    const run = () =>
+      collectChat(
+        v.provider.chat({
+          model: v.model,
+          messages: [{ role: "user", content: prompt, images }],
+          signal: input.signal,
+          contextLength: v.contextLength ?? DEFAULT_CONTEXT,
+        }),
+      );
+    const res = await (this.h.scheduler
+      ? this.h.scheduler.run(
+          {
+            projectId: input.projectId,
+            taskId: input.taskId,
+            label: "Vision review",
+            model: v.model,
+            priority: "task",
+          },
+          run,
+          input.signal,
+        )
+      : run());
+    return res.text;
   }
 
   private systemPrompt(input: TeamInput, manifest: AgentManifest, extra: string): string {

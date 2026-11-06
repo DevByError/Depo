@@ -6,6 +6,7 @@ import { type ApiServer, startApiServer } from "./api/server";
 import { ApprovalCenter } from "./approvals";
 import { CodeIndexer } from "./codeindex/indexer";
 import { type OpenedDatabase, openDatabase } from "./db";
+import { DesignService } from "./design/service";
 import { EventBus } from "./events/bus";
 import { createLogger, type Logger, type LogLevel } from "./logger";
 import { MemoryStore } from "./memory/store";
@@ -45,6 +46,7 @@ export interface Engine {
   readonly memory: MemoryStore;
   readonly scheduler: ModelScheduler;
   readonly indexer: CodeIndexer;
+  readonly design: DesignService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -111,6 +113,7 @@ export function createEngine(opts: EngineOptions): Engine {
     projectSettings: (id) => registry.getSettings(id),
     ...opts.tasks,
   });
+  const design = new DesignService(projects, (id) => tasks.workspaceRoot(id), bus);
   const startedAt = new Date();
 
   let server: ApiServer | null = null;
@@ -148,6 +151,7 @@ export function createEngine(opts: EngineOptions): Engine {
     memory,
     scheduler,
     indexer,
+    design,
     database,
     async start() {
       server = startApiServer({
@@ -167,6 +171,7 @@ export function createEngine(opts: EngineOptions): Engine {
           memory,
           scheduler,
           indexer,
+          design,
           info: {
             startedAt,
             dataDir: dirs.root,

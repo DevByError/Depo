@@ -10,11 +10,14 @@ import {
   type LucideIcon,
   MessageSquare,
   Network,
+  Palette,
   Presentation,
   Puzzle,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { ChatPanel } from "@/components/panels/ChatPanel";
+import { DesignPanel } from "@/components/panels/DesignPanel";
+import { DiagramsPanel } from "@/components/panels/DiagramsPanel";
 import { DiffReviewPanel } from "@/components/panels/DiffReviewPanel";
 import { FilesPanel } from "@/components/panels/FilesPanel";
 import { MemoryPanel } from "@/components/panels/MemoryPanel";
@@ -22,6 +25,7 @@ import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { OverviewPanel } from "@/components/panels/OverviewPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { PlanBoard } from "@/components/panels/PlanBoard";
+import { SlidesPanel } from "@/components/panels/SlidesPanel";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
 
@@ -40,20 +44,9 @@ export const CENTER_TABS: TabDef[] = [
   { id: "files", label: "Files", icon: FolderTree },
   { id: "diff", label: "Diff Review", icon: FileDiff },
   { id: "memory", label: "Memory", icon: BookMarked },
-  {
-    id: "diagrams",
-    label: "Diagrams",
-    icon: Network,
-    phase: "Phase 4",
-    blurb: "Architecture, ERD, sequence and flow diagrams in Mermaid, with a visual editor.",
-  },
-  {
-    id: "slides",
-    label: "Slides",
-    icon: Presentation,
-    phase: "Phase 4",
-    blurb: "Pitch and progress decks with real screenshots. Export to PPTX and PDF.",
-  },
+  { id: "design", label: "Design", icon: Palette },
+  { id: "diagrams", label: "Diagrams", icon: Network },
+  { id: "slides", label: "Slides", icon: Presentation },
   {
     id: "agent-lab",
     label: "Agent Lab",
@@ -144,6 +137,12 @@ export function CenterTabs() {
             <MemoryPanel />
           ) : current.id === "chat" ? (
             <ChatPanel />
+          ) : current.id === "design" ? (
+            <DesignPanel />
+          ) : current.id === "diagrams" ? (
+            <DiagramsPanel />
+          ) : current.id === "slides" ? (
+            <SlidesPanel />
           ) : current.id === "plan" ? (
             <PlanBoard />
           ) : current.id === "files" ? (

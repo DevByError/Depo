@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+
+process.env.DEPO_NO_BROWSER = "1";
+
 import fs from "node:fs";
 import path from "node:path";
 import type { ChatChunk, ChatRequest, ModelProvider, ToolCall } from "@depo/model-gateway";
@@ -270,7 +273,84 @@ function todoModel(): ModelProvider {
         const n = req.messages.filter((m) => m.role === "tool").length;
         const plan: Reply[] = [];
         const f = files[who];
-        if (f) plan.push({ calls: [call("write_file", { path: f[0], content: f[1] })] });
+        if (f && who !== "Diagram") plan.push({ calls: [call("write_file", { path: f[0], content: f[1] })] });
+        if (who === "Diagram") {
+          const erd = title.includes("ERD and API map");
+          const file = erd ? "docs/diagrams/erd.mmd" : "docs/diagrams/architecture.mmd";
+          const body = erd
+            ? [
+                "erDiagram",
+                "  USERS ||--o{ TODOS : owns",
+                "  USERS {",
+                "    int id PK",
+                "    text email",
+                "  }",
+                "  TODOS {",
+                "    int id PK",
+                "    int user_id FK",
+                "    text title",
+                "  }",
+              ].join("\n")
+            : ["flowchart LR", "  Web --> API --> DB[(PostgreSQL)]"].join("\n");
+          plan.push({ calls: [call("write_file", { path: file, content: `${body}\n` })] });
+          plan.push({ calls: [call("render_diagram", { path: file })] });
+        }
+        if (who === "Project Management" && title.includes("UX audit")) {
+          const names = [
+            "Visibility of system status",
+            "Match between system and the real world",
+            "User control and freedom",
+            "Consistency and standards",
+            "Error prevention",
+            "Recognition rather than recall",
+            "Flexibility and efficiency of use",
+            "Aesthetic and minimalist design",
+            "Help users recognize, diagnose and recover from errors",
+            "Help and documentation",
+          ];
+          plan.push({
+            calls: [
+              call("record_ux_audit", {
+                summary: "Clear and consistent; add shortcuts.",
+                scores: names.map((h, i) => ({
+                  heuristic: h,
+                  score: i === 6 ? 3 : 4,
+                  evidence: "Seen on the todo list screen.",
+                  fix: i === 6 ? "Add keyboard shortcuts." : "",
+                })),
+              }),
+            ],
+          });
+        }
+        if (who === "Project Management" && title.includes("deck")) {
+          plan.push({
+            calls: [
+              call("make_deck", {
+                dir: "docs/deck",
+                spec: {
+                  title: "Todo app",
+                  kind: "pitch",
+                  slides: [
+                    { layout: "title", title: "Todo app", subtitle: "Plan your day" },
+                    {
+                      layout: "bullets",
+                      title: "Problem",
+                      bullets: ["Tasks are scattered", "No shared view"],
+                    },
+                    {
+                      layout: "stats",
+                      title: "Status",
+                      stats: [
+                        { label: "Tests", value: "pass" },
+                        { label: "UX", value: "A-" },
+                      ],
+                    },
+                  ],
+                },
+              }),
+            ],
+          });
+        }
         const secs = sections[who] ?? [];
         const sec =
           who === "Reasoning"
@@ -278,8 +358,8 @@ function todoModel(): ModelProvider {
               ? secs[0]
               : secs[1]
             : who === "Project Management"
-              ? title.includes("UX")
-                ? secs[1]
+              ? title.includes("UX") || title.includes("deck")
+                ? undefined
                 : secs[0]
               : secs[0];
         if (sec) plan.push({ calls: [call("bb_write", { section: sec, content: `${who}: ${title}` })] });
@@ -525,7 +605,7 @@ describe("agent team", () => {
     expect(done.status).toBe("review");
     const state = e.tasks.teamState(task.id);
     const nodes = state.plan?.nodes ?? [];
-    expect(nodes).toHaveLength(15);
+    expect(nodes).toHaveLength(17);
     expect(nodes.filter((n) => n.status !== "done").map((n) => `${n.id}:${n.status}:${n.note}`)).toEqual([]);
 
     // Dependencies were respected: every node started after all of its dependencies.
@@ -556,6 +636,7 @@ describe("agent team", () => {
       "openapi.yaml",
       "reviews/security.md",
       "reviews/ux-audit.md",
+      "scores/ux.json",
       "plan.json",
     ])
       expect(sections).toContain(s);
@@ -571,9 +652,12 @@ describe("agent team", () => {
       "README.md",
       "docs/depo/brief.md",
       "docs/depo/reviews/security.md",
+      "docs/diagrams/erd.mmd",
+      "docs/deck/deck.pptx",
+      "docs/deck/deck.html",
     ])
       expect(files).toContain(f);
-    expect(messages.at(-1)?.text).toContain("finished all 15 tasks");
+    expect(messages.at(-1)?.text).toContain("finished all 17 tasks");
   }, 120_000);
 
   test("loop limit: work the reviewer keeps rejecting stops, later steps are blocked, and the summary says so", async () => {

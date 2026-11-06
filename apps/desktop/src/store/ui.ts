@@ -8,6 +8,7 @@ export type CenterTab =
   | "files"
   | "diff"
   | "memory"
+  | "design"
   | "diagrams"
   | "slides"
   | "agent-lab"

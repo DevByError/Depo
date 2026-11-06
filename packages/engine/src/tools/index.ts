@@ -41,6 +41,8 @@ export interface ToolContext {
   extraTools?: AgentTool<z.ZodType>[];
   /** Team hooks: the blackboard and agent messages (set when an agent works in a team). */
   team?: TeamHooks;
+  /** Ask the vision model about images (base64). Returns null when no vision model is set up. */
+  vision?: (prompt: string, images: string[]) => Promise<string | null>;
   /** Called after each test run; may return text to add to what the model sees (lessons learned). */
   onTestResult?: (r: { command: string; passed: boolean; output: string }) => string | undefined;
 }

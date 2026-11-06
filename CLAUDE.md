@@ -29,8 +29,8 @@ Leadership: Manager, Thinking, Reasoning, Project Management. Design: UI/UX Desi
 | 0 | Foundations (shell, engine, API, SQLite, events, installers) | Done |
 | 1 | Single agent core (gateway, Auto-Fit, tools, workspace, Diff Review, undo) | Done, accepted on Windows with qwen3-coder:30b |
 | 2 | Projects, memory, code index, scheduler, concurrent projects | Done, concurrency confirmed on Windows |
-| 3 | **Agent team**: manifests, all 15 agents, Manager + task graph, blackboard, message protocol, two-key reviews, loop limits, Plan Board, Agent Board. Accept: todo app (Next.js + FastAPI + PostgreSQL + login) built and tested through the full pipeline | **NEXT, not started** |
-| 4 | Design systems, diagrams, screenshots + vision review, business brief, UX audit, slide decks | Planned |
+| 3 | Agent team: manifests, 15 agents, Manager + task graph, blackboard, message protocol, two-key reviews, loop limits, Plan Board, Agent Board | Done (engine test runs the full 17-node todo-app pipeline with a scripted model) |
+| 4 | Design systems, fonts, diagrams (Mermaid check + UI editor), screenshots + vision review, UX audit, decks (HTML/PPTX/PDF) | Done |
 | 5 | Skills installer/vetting, MCP client, knowledge packs (+ offline OSV) | Planned |
 | 6 | Security + testing depth (Semgrep, gitleaks, OSV, Trivy, Bandit, ZAP, k6, Lighthouse) | Planned |
 | 7 | Agent Lab (versions, evals, A/B, promote/rollback) | Planned |
@@ -38,6 +38,7 @@ Leadership: Manager, Thinking, Reasoning, Project Management. Design: UI/UX Desi
 | 9 | Polish and release (onboarding, palette, notifications, auto-update, signed installers) | Planned |
 
 ## Status log (newest first; add an entry every session)
+- 2026-11-06 (autonomous run, user asked: finish phases 3-5 without stopping, build/test loop, clean up test environments): chat redesigned like Claude (user bubble, flowing reply, markdown); Phase 3 and Phase 4 built and tested. Key code: `packages/engine/src/agent/loop.ts` (shared tool loop), `agents/` (manifests, blackboard, team runner), `design/` (mermaid check, fonts, browser screenshots/PDF, deck, UX audit, service), `tools/design-tools.ts`. Browser e2e (Playwright) could NOT be run in this sandbox (Edge cannot reach localhost here); run `bun run test:e2e` on the PC (set PW_CHROMIUM_PATH to msedge.exe if Chromium is not installed).
 - 2026-11-06: Read `Depo-System-Description.docx` fully; created this CLAUDE.md. No code changes. Repo state: branch `main`; `bun.lock` modified; untracked `scripts/fixtures/fastapi-demo/fastapi-demo2/` (probably a leftover from a test run; check before committing) and the .docx.
 - Before that (from git log): small-model hardening (read-before-edit, tolerant text tool calls, unclosed-call repair, stripping copied line numbers, retry unreadable calls); tests checked before accepting a finished task; Stop works on tasks left "working" by an old engine.
 
