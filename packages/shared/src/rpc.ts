@@ -443,6 +443,23 @@ const TaskMethods = {
     params: z.object({ json: z.string().min(2).max(300_000) }).strict(),
     result: LabVersionSchema,
   },
+  "blocks.list": {
+    params: z.object({}).strict(),
+    result: z.object({
+      blocks: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          description: z.string(),
+          stack: z.enum(["ts", "py", "react", "docker"]),
+          tags: z.array(z.string()),
+          files: z.array(z.string()),
+          test: z.string(),
+          notes: z.array(z.string()),
+        }),
+      ),
+    }),
+  },
   "team.get": {
     params: z.object({ taskId: z.string() }).strict(),
     result: z.object({

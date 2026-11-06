@@ -99,6 +99,21 @@ export interface TeamResult {
 
 type Draft = Pick<PlanNode, "id" | "title" | "owner"> & { deps?: string[]; criteria?: string[] };
 
+/** Which builder owns a change, from the words of the request. */
+export function builderFor(text: string): AgentId {
+  const t = text.toLowerCase();
+  const word = (words: string) => new RegExp(String.raw`\b(?:${words})\b`).test(t);
+  if (
+    word(
+      "css|style|styling|ui|ux|button|page|screen|component|layout|form|react|html|frontend|front-end|responsive|dark mode|menu|modal",
+    )
+  )
+    return "frontend";
+  if (word("sql|schema|migrations?|tables?|quer(?:y|ies)|index|database|db|postgres|sqlite"))
+    return "database";
+  return "backend";
+}
+
 /** The standard pipeline of each mode (system description, Section 5.2). */
 export function templateNodes(mode: Exclude<WorkMode, "single">, text: string): Draft[] {
   const ask = text.trim().slice(0, 140);
@@ -253,6 +268,13 @@ export function templateNodes(mode: Exclude<WorkMode, "single">, text: string): 
           deps: ["testing"],
           criteria: ["no high-severity findings left"],
         },
+        {
+          id: "docs",
+          title: "Document the endpoints and how to run the service",
+          owner: "devops-docs",
+          deps: ["security"],
+          criteria: ["README or docs/api.md matches the real routes", "run instructions work"],
+        },
       ];
     case "frontend":
       return [
@@ -336,41 +358,85 @@ export function templateNodes(mode: Exclude<WorkMode, "single">, text: string): 
           deps: ["analysis"],
           criteria: ["architecture diagram in docs/diagrams"],
         },
+        {
+          id: "baseline",
+          title: "Run the existing tests and record what passes today (change nothing)",
+          owner: "testing",
+          deps: ["analysis"],
+          criteria: [
+            "reviews/baseline.md lists the command, the result and any failing tests",
+            "no source file was changed",
+          ],
+        },
+        {
+          id: "security",
+          title: "Baseline security scan of the existing code",
+          owner: "security",
+          deps: ["analysis"],
+          criteria: ["security_scan run", "reviews/security.md lists the existing findings with owners"],
+        },
+        {
+          id: "docs",
+          title: "Write docs/PROJECT-OVERVIEW.md: how it is built, how to run it, known problems",
+          owner: "devops-docs",
+          deps: ["diagrams", "baseline", "security"],
+          criteria: ["the overview matches what the other steps found"],
+        },
       ];
     case "fix":
       return [
         {
-          id: "fix",
-          title: `Reproduce and fix: ${ask}`,
+          id: "reproduce",
+          title: `Write a failing test that reproduces: ${ask}`,
           owner: "testing",
           criteria: [
-            "a failing test reproduces the problem",
-            "the fix makes it pass",
-            "the whole suite passes",
+            "a new test fails for the reported reason",
+            "reviews/test-report.md says how to run it and what it shows",
           ],
+        },
+        {
+          id: "fix",
+          title: `Fix the cause: ${ask}`,
+          owner: builderFor(text),
+          deps: ["reproduce"],
+          criteria: ["the new test passes", "no other test was changed or weakened"],
+        },
+        {
+          id: "verify",
+          title: "Run the whole suite and confirm nothing else broke",
+          owner: "testing",
+          deps: ["fix"],
+          criteria: ["the whole suite passes"],
         },
       ];
     case "refactor":
       return [
         {
+          id: "baseline",
+          title: "Run the tests before the change and record the result",
+          owner: "testing",
+          criteria: ["reviews/baseline.md records the passing tests", "no source file was changed"],
+        },
+        {
           id: "analysis",
           title: `Plan the change: ${ask}`,
           owner: "reasoning",
+          deps: ["baseline"],
           criteria: ["decisions.md lists the steps and the risks"],
         },
         {
           id: "change",
           title: `Carry out: ${ask}`,
-          owner: "backend",
+          owner: builderFor(text),
           deps: ["analysis"],
-          criteria: ["behaviour unchanged"],
+          criteria: ["behaviour unchanged", "small steps, each leaving the code working"],
         },
         {
           id: "testing",
-          title: "Run the full test suite and fix failures",
+          title: "Run the full test suite and compare with the baseline",
           owner: "testing",
           deps: ["change"],
-          criteria: ["the whole suite passes"],
+          criteria: ["every test that passed before still passes", "tests were not weakened to get there"],
         },
       ];
     case "ask":

@@ -1,4 +1,5 @@
 import {
+  Blocks,
   BookMarked,
   BookOpen,
   Boxes,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { AgentLabPanel } from "@/components/panels/AgentLabPanel";
+import { BlocksPanel } from "@/components/panels/BlocksPanel";
 import { ChatPanel } from "@/components/panels/ChatPanel";
 import { DesignPanel } from "@/components/panels/DesignPanel";
 import { DiagramsPanel } from "@/components/panels/DiagramsPanel";
@@ -60,6 +62,7 @@ export const CENTER_TABS: TabDef[] = [
     icon: Boxes,
   },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
+  { id: "blocks", label: "Blocks", icon: Blocks },
   { id: "security", label: "Security", icon: ShieldCheck },
 ];
 
@@ -143,6 +146,8 @@ export function CenterTabs() {
             <KnowledgePanel />
           ) : current.id === "agent-lab" ? (
             <AgentLabPanel />
+          ) : current.id === "blocks" ? (
+            <BlocksPanel />
           ) : current.id === "security" ? (
             <SecurityPanel />
           ) : current.id === "models" ? (

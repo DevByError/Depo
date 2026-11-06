@@ -9,6 +9,7 @@ import type { TaskManager } from "../agent/tasks";
 import type { AgentLab } from "../agents/lab";
 import { MANIFESTS } from "../agents/manifests";
 import type { ApprovalCenter } from "../approvals";
+import { BLOCKS } from "../blocks";
 import type { CodeIndexer } from "../codeindex/indexer";
 import { FONT_LIBRARY } from "../design/fonts";
 import type { DesignService } from "../design/service";
@@ -233,6 +234,18 @@ export const handlers: Handlers = {
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
   "agents.list": () => ({ agents: MANIFESTS }),
+  "blocks.list": () => ({
+    blocks: BLOCKS.map((b) => ({
+      id: b.id,
+      name: b.name,
+      description: b.description,
+      stack: b.stack,
+      tags: b.tags,
+      files: b.files.map((f) => f.path),
+      test: b.test,
+      notes: b.notes,
+    })),
+  }),
   "lab.agents": (_p, ctx) => ({ agents: ctx.lab.list() }),
   "lab.versions": (p, ctx) => ({
     versions: ctx.lab.versions(p.agentId),

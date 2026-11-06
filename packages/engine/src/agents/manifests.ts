@@ -3,6 +3,7 @@ import type { AgentGroup, AgentId, AgentManifest, WorkMode } from "@depo/shared"
 const READ = ["read_file", "list_dir", "find_files", "search", "repo_map", "find_symbol", "semantic_search"];
 const WRITE = ["write_file", "edit_file", "delete_file"];
 const RUN = ["run_command", "git_status", "git_diff"];
+const BLOCK_TOOLS = ["list_blocks", "use_block"];
 const TEAM = ["bb_read", "bb_write", "send_message", "remember"];
 const SHOTS = ["render_screenshot", "review_screenshot"];
 
@@ -133,7 +134,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You design and build the server: REST API with an OpenAPI 3.1 contract first, business logic, authentication, validation, background jobs, file storage, configuration and Dockerfiles, in the stack the project uses.",
     `${CODE_RULES}\nWrite or update openapi.yaml on the blackboard before you code routes, then build the routes from it. Validate every input, return consistent errors, hash passwords with a modern algorithm (Argon2id or bcrypt), never log secrets, read configuration from the environment. Add tests for each route.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
     ["reasoning", "security"],
     ["openapi.yaml", "schema/", "decisions.md"],
     "Server code, OpenAPI specification, tests",
@@ -146,7 +147,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You build web, mobile and desktop interfaces and implement the design system exactly.",
     `${CODE_RULES}\nRead design-system.json and ui-specs/ from the blackboard and use those tokens; no unexplained values inside components. Cover every screen state, keyboard navigation, visible focus, labels for screen readers and responsive layouts. Use the typed API client and the OpenAPI contract; never guess endpoints.`,
-    [...READ, ...WRITE, ...RUN, ...SHOTS, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...SHOTS, ...TEAM, ...BLOCK_TOOLS],
     ["reasoning", "project-management"],
     ["decisions.md"],
     "Pages, components, client state",
@@ -159,7 +160,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You do data modelling, indexes, constraints, migrations, seed data, query tuning and multi-tenancy across relational, document, search and vector databases.",
     `${CODE_RULES}\nWrite the schema as migrations plus a readable description in schema/ on the blackboard (tables, columns, types, keys, indexes, relations). Use constraints, not application checks, for integrity. Provide seed data for development. Never put secrets in seed files.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
     ["reasoning"],
     ["schema/", "decisions.md"],
     "Schema, migrations, seeds, ERD input",
@@ -172,7 +173,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You own the contracts between layers: OpenAPI, shared types, environment variables, CORS and the whole authentication flow. You generate typed API clients and prove the UI, API and database path with contract tests.",
     `${CODE_RULES}\nCompare openapi.yaml with the implemented routes and the frontend calls; fix mismatches at their source or report them to the owner with send_message. Document every environment variable in .env.example.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
     ["reasoning", "security"],
     ["openapi.yaml", "decisions.md"],
     "Typed clients, wiring, contract test results",
@@ -185,7 +186,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You add chat, search over company documents, summarisation, classification and tool-using agents to new or existing backends, using local models by default, and place the files where the user chooses.",
     `${CODE_RULES}\nUse a local runtime (Ollama or an OpenAI-compatible local server) through a small client module with the model name and URL read from configuration. Add routes, services, configuration and tests; mock the model in tests.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
     ["reasoning", "security"],
     ["decisions.md"],
     "AI services, routes, configuration, tests",
@@ -237,7 +238,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You write Dockerfiles, docker-compose, .env.example, CI pipelines, the README, setup, API and deployment guides and a changelog, and keep the project runnable with one command.",
     `${CODE_RULES}\nRead the real project files before you write about them; every command in the docs must be one that works. Provide a one-command run script (run.cmd for Windows and run.sh) and keep the README accurate: what it is, requirements, setup, run, test, folder layout.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
     ["reasoning"],
     ["docs/"],
     "Run scripts, pipelines, documentation",
@@ -272,11 +273,11 @@ export const MODE_AGENTS: Record<Exclude<WorkMode, "single">, AgentId[]> = {
     "enhancement",
     "devops-docs",
   ],
-  backend: ["database", "backend", "testing", "security"],
+  backend: ["database", "backend", "testing", "security", "devops-docs"],
   frontend: ["ui-ux-design", "frontend", "testing", "project-management"],
   ai: ["ai-integration", "backend", "integration", "testing", "security"],
-  import: ["reasoning", "diagram", "project-management"],
-  fix: ["backend", "frontend", "database", "testing"],
+  import: ["reasoning", "diagram", "testing", "security", "devops-docs", "project-management"],
+  fix: ["reasoning", "backend", "frontend", "database", "testing"],
   refactor: ["reasoning", "backend", "frontend", "database", "testing"],
   ask: ["reasoning"],
   business: ["project-management"],

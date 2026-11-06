@@ -13,6 +13,7 @@ import {
   WorkModeSchema,
 } from "@depo/shared";
 import { asc, desc, eq, inArray } from "drizzle-orm";
+import "../tools/block-tools";
 import "../tools/design-tools";
 import { Blackboard } from "../agents/blackboard";
 import { agentTag } from "../agents/manifests";
