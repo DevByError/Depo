@@ -20,6 +20,12 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "team.parallel": 2,
   /** Put the brief, options, decisions and audit notes into the project as docs/depo/*.md. */
   "team.export_docs": true,
+  /** GitHub repository (owner/name) the "Check for updates" button looks at. Empty = not configured. */
+  "update.repo": "",
+  /** Tell the person (in the app, and with a system notification when the window is in the background). */
+  "notify.enabled": true,
+  /** Set once the welcome tour was shown. */
+  "ui.onboarded": false,
 };
 
 export class SettingsRepo {

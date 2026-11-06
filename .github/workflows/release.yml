@@ -1,0 +1,104 @@
+name: Release
+
+# Builds the Windows installers when a version tag is pushed (git tag v0.2.0 && git push --tags).
+# Not yet run in anger: read docs/RELEASE.md before the first release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build, test and publish (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test tools
+        run: python -m pip install fastapi httpx pytest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: The tag must match the app version (DEPO_VERSION)
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          app=$(grep -oP 'DEPO_VERSION = "\K[^"]+' packages/shared/src/index.ts)
+          if [ "$tag" != "$app" ]; then
+            echo "Tag v$tag does not match DEPO_VERSION $app. Run: bun scripts/set-version.ts $tag"
+            exit 1
+          fi
+
+      - name: Lint, type-check and test
+        run: bun run check
+
+      - name: Build engine sidecar
+        run: bun run build:engine
+
+      # Optional: sign the installers. Without the secrets the installers are built unsigned and
+      # Windows SmartScreen will warn people. See docs/RELEASE.md.
+      - name: Is a signing certificate configured?
+        id: cert
+        shell: bash
+        env:
+          CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          if [ -n "$CERT" ]; then echo "has=true" >> "$GITHUB_OUTPUT"; else echo "No certificate: the installers will be unsigned."; fi
+
+      - name: Import the code-signing certificate
+        if: steps.cert.outputs.has == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pw = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx
+          "SIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build installers (MSI + NSIS)
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          if ($env:SIGN_THUMBPRINT) {
+            $env:TAURI_CONFIG = '{"bundle":{"windows":{"certificateThumbprint":"' + $env:SIGN_THUMBPRINT + '","digestAlgorithm":"sha256","timestampUrl":"http://timestamp.digicert.com"}}}'
+          }
+          bun run tauri build
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem apps/desktop/src-tauri/target/release/bundle -Recurse -Include *.msi,*.exe
+          $files | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Out-File SHA256SUMS.txt -Encoding ascii
+
+      - name: Publish a draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            SHA256SUMS.txt

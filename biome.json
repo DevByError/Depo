@@ -30,6 +30,12 @@
       "a11y": { "noNoninteractiveTabindex": "off" }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/engine/src/blocks/**"],
+      "linter": { "rules": { "complexity": { "noUselessStringRaw": "off" } } }
+    }
+  ],
   "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
   "css": { "parser": { "tailwindDirectives": true } }
 }

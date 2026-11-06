@@ -24,6 +24,7 @@ import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SecurityService } from "../security/service";
 import type { SettingsRepo } from "../settings";
 import type { SkillService } from "../skills/service";
+import { checkForUpdate } from "../util/update";
 import type { ProjectService } from "../workspace/service";
 
 export interface HandlerContext {
@@ -44,6 +45,8 @@ export interface HandlerContext {
   osv: OsvService;
   security: SecurityService;
   lab: AgentLab;
+  /** Test hook: where the release lookup goes. */
+  updateApi?: string;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -234,6 +237,14 @@ export const handlers: Handlers = {
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
   "agents.list": () => ({ agents: MANIFESTS }),
+  "app.checkUpdate": async (_p, ctx) => {
+    const repo = ctx.settings.get("update.repo");
+    return checkForUpdate({
+      current: DEPO_VERSION,
+      repo: typeof repo === "string" ? repo : "",
+      ...(ctx.updateApi ? { api: ctx.updateApi } : {}),
+    });
+  },
   "blocks.list": () => ({
     blocks: BLOCKS.map((b) => ({
       id: b.id,

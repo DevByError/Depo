@@ -38,7 +38,7 @@ export interface EngineOptions {
   /** Test hooks for the agent loop. */
   tasks?: { maxSteps?: number; retryDelayMs?: number };
   /** Test hooks for downloads (GitHub archives, OSV dumps). */
-  downloads?: { github?: GithubEndpoints; osvBase?: string };
+  downloads?: { github?: GithubEndpoints; osvBase?: string; updateApi?: string };
   /** Test hook: replaces the git runner used for clones. */
   git?: ConstructorParameters<typeof ProjectRegistry>[0]["git"];
 }
@@ -255,6 +255,7 @@ export function createEngine(opts: EngineOptions): Engine {
           osv,
           security,
           lab,
+          ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
             dataDir: dirs.root,

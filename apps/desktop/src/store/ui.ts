@@ -43,6 +43,8 @@ interface UiState extends Layout {
   bottomTab: BottomTab;
   rightTab: RightTab;
   settingsOpen: boolean;
+  paletteOpen: boolean;
+  onboardingOpen: boolean;
   feedQuery: string;
   showHeartbeats: boolean;
   /** The project shown in the center tabs. Tasks of other projects keep running. */
@@ -64,6 +66,8 @@ interface UiState extends Layout {
   setBottomTab(t: BottomTab): void;
   setRightTab(t: RightTab): void;
   setSettingsOpen(v: boolean): void;
+  setPaletteOpen(v: boolean): void;
+  setOnboardingOpen(v: boolean): void;
   setFeedQuery(q: string): void;
   setShowHeartbeats(v: boolean): void;
   setLayout(patch: Partial<Layout>): void;
@@ -124,6 +128,8 @@ export const useUi = create<UiState>((set, get) => ({
   bottomTab: "engine",
   rightTab: "activity",
   settingsOpen: false,
+  paletteOpen: false,
+  onboardingOpen: false,
   feedQuery: "",
   showHeartbeats: false,
   projectId: null,
@@ -145,6 +151,8 @@ export const useUi = create<UiState>((set, get) => ({
   setBottomTab: (bottomTab) => set({ bottomTab, bottomOpen: true }),
   setRightTab: (rightTab) => set({ rightTab, rightOpen: true }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
   setFeedQuery: (feedQuery) => set({ feedQuery }),
   setShowHeartbeats: (showHeartbeats) => set({ showHeartbeats }),
   setLayout: (patch) => {

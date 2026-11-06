@@ -1,8 +1,10 @@
 import { API_FINGERPRINT, type ApiMethod, type ApiParams, type ApiResult, DEPO_VERSION } from "@depo/shared";
 import { useEngine } from "@/store/engine";
+import { systemNotify, useNotifications } from "@/store/notifications";
 import { useUi } from "@/store/ui";
 import { isTauri, resolveEngineUrl } from "./connection";
 import { EngineClient } from "./engine-client";
+import { eventToNotice } from "./notify";
 import { queryClient } from "./query";
 
 /** The single engine connection for this window. */
@@ -36,6 +38,11 @@ export function startEngineConnection(): void {
   const store = useEngine.getState();
   engine.onEvent((e) => {
     store.receive(e);
+    const notice = eventToNotice(e);
+    if (notice && useNotifications.getState().enabled) {
+      useNotifications.getState().push(notice);
+      systemNotify(notice);
+    }
     invalidateFor(e.type, e.status);
     // Task transcripts and approvals change with every finished agent step.
     if (e.taskId && !e.ephemeral) {
@@ -121,6 +128,8 @@ async function onConnected() {
   if (typeof projectId === "string" && !useUi.getState().projectId) useUi.getState().setProjectId(projectId);
   const theme = settings.settings["ui.theme"];
   if (theme === "light" || theme === "dark") useUi.getState().setTheme(theme);
+  useNotifications.getState().setEnabled(settings.settings["notify.enabled"] !== false);
+  if (settings.settings["ui.onboarded"] !== true) useUi.getState().setOnboardingOpen(true);
   if (info.engineVersion !== DEPO_VERSION) {
     void call("events.emit", {
       type: "warning",

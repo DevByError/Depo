@@ -4,11 +4,13 @@ import { ProjectDialogs } from "@/components/projects/ProjectDialogs";
 import { Splitter } from "@/components/ui/splitter";
 import { clamp, LAYOUT_LIMITS, useUi } from "@/store/ui";
 import { CenterTabs } from "./CenterTabs";
+import { CommandPalette } from "./CommandPalette";
+import { OnboardingDialog } from "./OnboardingDialog";
 import { Sidebar } from "./Sidebar";
 import { BottomPanel, RightPanel } from "./SidePanels";
 import { StatusBar } from "./StatusBar";
 
-/** Global shortcuts. Ctrl+B sidebar, Ctrl+J bottom panel, Ctrl+L activity panel, Ctrl+, settings. */
+/** Global shortcuts. Ctrl+B sidebar, Ctrl+J bottom panel, Ctrl+L activity panel, Ctrl+, settings, Ctrl+K command palette. */
 function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -19,6 +21,7 @@ function useShortcuts() {
       else if (k === "j") ui.toggle("bottomOpen");
       else if (k === "l") ui.toggle("rightOpen");
       else if (k === ",") ui.setSettingsOpen(true);
+      else if (k === "k") ui.setPaletteOpen(!ui.paletteOpen);
       else return;
       e.preventDefault();
     };
@@ -132,6 +135,8 @@ export function AppShell() {
       </div>
       <StatusBar />
       <SettingsDialog />
+      <CommandPalette />
+      <OnboardingDialog />
       <ProjectDialogs />
     </div>
   );

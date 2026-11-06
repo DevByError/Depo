@@ -4,6 +4,7 @@ import { HeartbeatPulse } from "@/components/panels/HeartbeatPulse";
 import { cn } from "@/lib/cn";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
+import { NotificationBell } from "./NotificationBell";
 
 function Toggle({
   on,
@@ -49,6 +50,15 @@ export function StatusBar() {
       {info && <span className="hidden sm:inline">v{info.engineVersion}</span>}
       <span className="hidden md:inline">{eventCount} events</span>
       <span className="ml-auto inline-flex items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() => ui.setPaletteOpen(true)}
+          className="mr-1 hidden rounded border border-border px-1.5 py-px text-[10px] text-subtle hover:text-fg sm:inline"
+          aria-label="Open the command palette (Ctrl+K)"
+        >
+          Ctrl+K
+        </button>
+        <NotificationBell />
         <Toggle on={ui.sidebarOpen} label="Toggle sidebar (Ctrl+B)" onClick={() => ui.toggle("sidebarOpen")}>
           <PanelLeft className="size-3.5" aria-hidden />
         </Toggle>

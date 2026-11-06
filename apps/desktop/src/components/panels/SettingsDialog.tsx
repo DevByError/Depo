@@ -6,6 +6,7 @@ import { call, setTheme } from "@/lib/engine";
 import { queryClient } from "@/lib/query";
 import { useEngine } from "@/store/engine";
 import { type Theme, useUi } from "@/store/ui";
+import { NotificationSetting, TeamSettings, UpdateSetting } from "./SettingsSections";
 
 export function SettingsDialog() {
   const open = useUi((s) => s.settingsOpen);
@@ -22,7 +23,7 @@ export function SettingsDialog() {
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl">
+        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 max-h-[88vh] w-[min(560px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-panel p-5 shadow-2xl">
           <div className="flex items-center justify-between">
             <Dialog.Title className="text-[15px] font-semibold text-fg">Settings</Dialog.Title>
             <Dialog.Close
@@ -62,6 +63,9 @@ export function SettingsDialog() {
           </fieldset>
 
           <ParallelSetting />
+          <TeamSettings />
+          <NotificationSetting />
+          <UpdateSetting />
 
           {info && (
             <dl className="mt-5 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">

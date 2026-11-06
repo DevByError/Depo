@@ -460,6 +460,17 @@ const TaskMethods = {
       ),
     }),
   },
+  "app.checkUpdate": {
+    params: z.object({}).strict(),
+    result: z.object({
+      status: z.enum(["unconfigured", "up_to_date", "available", "error"]),
+      current: z.string(),
+      latest: z.string().nullable(),
+      url: z.string().nullable(),
+      notes: z.string(),
+      message: z.string(),
+    }),
+  },
   "team.get": {
     params: z.object({ taskId: z.string() }).strict(),
     result: z.object({
