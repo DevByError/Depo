@@ -19,6 +19,7 @@ import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { ModelScheduler } from "../scheduler/scheduler";
+import type { SecurityService } from "../security/service";
 import type { SettingsRepo } from "../settings";
 import type { SkillService } from "../skills/service";
 import type { ProjectService } from "../workspace/service";
@@ -39,6 +40,7 @@ export interface HandlerContext {
   mcp: McpManager;
   knowledge: KnowledgeService;
   osv: OsvService;
+  security: SecurityService;
   info: {
     startedAt: Date;
     dataDir: string;
@@ -304,9 +306,9 @@ export const handlers: Handlers = {
   "decks.export": (p, ctx) => ctx.design.exportDeck(p.projectId, p.taskId, p.dir, p.format, p.destDir),
   "design.fonts": () => ({ fonts: FONT_LIBRARY }),
   "scores.get": (p, ctx) => {
-    const e = ctx.tasks.blackboard.read(p.projectId, "scores/ux.json");
-    let ux: { overall: number; grade: string; blocksRelease: boolean; at: string } | null = null;
-    if (e) {
+    const read = (section: string) => {
+      const e = ctx.tasks.blackboard.read(p.projectId, section);
+      if (!e) return null;
       try {
         const j = JSON.parse(e.content) as {
           overall: number;
@@ -314,13 +316,31 @@ export const handlers: Handlers = {
           blocksRelease: boolean;
           at: string;
         };
-        ux = { overall: j.overall, grade: j.grade, blocksRelease: j.blocksRelease === true, at: j.at };
+        return { overall: j.overall, grade: j.grade, blocksRelease: j.blocksRelease === true, at: j.at };
       } catch {
-        ux = null;
+        return null;
       }
-    }
-    return { ux };
+    };
+    return { ux: read("scores/ux.json"), security: read("scores/security.json") };
   },
+  "security.status": (_p, ctx) => ({
+    scanners: ctx.security.scanners().map((s) => ({
+      id: s.id,
+      name: s.name,
+      kind: s.kind,
+      purpose: s.purpose,
+      install: s.install,
+      installed: s.installed,
+    })),
+    runtimes: ctx.security
+      .runtimes()
+      .map((r) => ({ id: r.id, name: r.name, install: r.install, installed: r.installed })),
+  }),
+  "security.scan": async (p, ctx) => {
+    const project = await ctx.projects.get(p.projectId);
+    return ctx.security.scan(project.rootPath, { projectId: p.projectId });
+  },
+  "security.last": (p, ctx) => ({ report: ctx.security.lastReport(p.projectId) }),
   "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),
   "checkpoints.list": (p, ctx) => ({ checkpoints: ctx.projects.listCheckpoints(p.projectId) }),
   "checkpoints.restore": (p, ctx) => ctx.projects.restoreCheckpoint(p.id, p.force),

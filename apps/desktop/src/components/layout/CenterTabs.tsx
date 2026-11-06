@@ -13,6 +13,7 @@ import {
   Palette,
   Presentation,
   Puzzle,
+  ShieldCheck,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { ChatPanel } from "@/components/panels/ChatPanel";
@@ -26,6 +27,7 @@ import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { OverviewPanel } from "@/components/panels/OverviewPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { PlanBoard } from "@/components/panels/PlanBoard";
+import { SecurityPanel } from "@/components/panels/SecurityPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { SlidesPanel } from "@/components/panels/SlidesPanel";
 import { cn } from "@/lib/cn";
@@ -63,6 +65,7 @@ export const CENTER_TABS: TabDef[] = [
     icon: Boxes,
   },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
+  { id: "security", label: "Security", icon: ShieldCheck },
 ];
 
 export function CenterTabs() {
@@ -143,6 +146,8 @@ export function CenterTabs() {
             <SkillsPanel />
           ) : current.id === "knowledge" ? (
             <KnowledgePanel />
+          ) : current.id === "security" ? (
+            <SecurityPanel />
           ) : current.id === "models" ? (
             <ModelsPanel />
           ) : (

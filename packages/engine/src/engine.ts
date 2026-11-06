@@ -17,6 +17,7 @@ import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { ProjectRegistry } from "./projects/registry";
 import { ModelScheduler } from "./scheduler/scheduler";
+import { SecurityService } from "./security/service";
 import { SettingsRepo } from "./settings";
 import { SkillService } from "./skills/service";
 import type { GithubEndpoints } from "./util/github";
@@ -58,6 +59,7 @@ export interface Engine {
   readonly mcp: McpManager;
   readonly knowledge: KnowledgeService;
   readonly osv: OsvService;
+  readonly security: SecurityService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -130,6 +132,7 @@ export function createEngine(opts: EngineOptions): Engine {
     dir: dirs.knowledge,
     ...(opts.downloads?.osvBase ? { base: opts.downloads.osvBase } : {}),
   });
+  const security = new SecurityService({ bus, osv });
   /** Skills, MCP tools, knowledge packs and the OSV check, merged for one agent run. */
   const extras = (agentId: string, projectId: string, run: { taskId: string }) => {
     const parts = [
@@ -137,6 +140,7 @@ export function createEngine(opts: EngineOptions): Engine {
       mcp.extrasFor(agentId, projectId, run),
       knowledge.extrasFor(),
       osv.extrasFor(),
+      security.extrasFor(agentId),
     ];
     return {
       prompt: parts
@@ -205,6 +209,7 @@ export function createEngine(opts: EngineOptions): Engine {
     mcp,
     knowledge,
     osv,
+    security,
     database,
     async start() {
       server = startApiServer({
@@ -229,6 +234,7 @@ export function createEngine(opts: EngineOptions): Engine {
           mcp,
           knowledge,
           osv,
+          security,
           info: {
             startedAt,
             dataDir: dirs.root,

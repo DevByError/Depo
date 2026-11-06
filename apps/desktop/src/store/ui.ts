@@ -14,7 +14,8 @@ export type CenterTab =
   | "agent-lab"
   | "skills"
   | "models"
-  | "knowledge";
+  | "knowledge"
+  | "security";
 export type BottomTab = "terminal" | "problems" | "tests" | "engine";
 export type RightTab = "activity" | "agents";
 

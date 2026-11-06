@@ -108,3 +108,35 @@ export const OsvStatusSchema = z.object({
   importedAt: z.string(),
   source: z.string(),
 });
+
+export const ScoreSchema = z.object({
+  overall: z.number(),
+  grade: z.string(),
+  blocksRelease: z.boolean(),
+  at: z.string(),
+});
+
+export const SecurityFindingSchema = z.object({
+  tool: z.string(),
+  rule: z.string(),
+  severity: z.enum(["critical", "high", "medium", "low", "info"]),
+  file: z.string(),
+  line: z.number().int(),
+  title: z.string(),
+  fix: z.string(),
+});
+
+export const SecurityReportSchema = z.object({
+  at: z.string(),
+  findings: z.array(SecurityFindingSchema),
+  score: z.object({
+    overall: z.number(),
+    grade: z.string(),
+    blocksRelease: z.boolean(),
+    counts: z.record(z.string(), z.number()),
+    reasons: z.array(z.string()),
+  }),
+  ran: z.array(z.object({ tool: z.string(), note: z.string() })),
+  skipped: z.array(z.object({ tool: z.string(), install: z.string() })),
+});
+export type SecurityReport = z.infer<typeof SecurityReportSchema>;

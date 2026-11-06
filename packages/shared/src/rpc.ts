@@ -22,6 +22,8 @@ import {
   KnowledgePackSchema,
   McpServerSchema,
   OsvStatusSchema,
+  ScoreSchema,
+  SecurityReportSchema,
   SkillCandidateSchema,
   SkillSchema,
 } from "./extensions";
@@ -411,10 +413,35 @@ const TaskMethods = {
   "scores.get": {
     params: z.object({ projectId: z.string() }).strict(),
     result: z.object({
-      ux: z
-        .object({ overall: z.number(), grade: z.string(), blocksRelease: z.boolean(), at: z.string() })
-        .nullable(),
+      ux: ScoreSchema.nullable(),
+      security: ScoreSchema.nullable(),
     }),
+  },
+  "security.status": {
+    params: z.object({}).strict(),
+    result: z.object({
+      scanners: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          kind: z.string(),
+          purpose: z.string(),
+          install: z.string(),
+          installed: z.boolean(),
+        }),
+      ),
+      runtimes: z.array(
+        z.object({ id: z.string(), name: z.string(), install: z.string(), installed: z.boolean() }),
+      ),
+    }),
+  },
+  "security.scan": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: SecurityReportSchema,
+  },
+  "security.last": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({ report: SecurityReportSchema.nullable() }),
   },
   "skills.list": {
     params: z.object({}).strict(),
