@@ -106,8 +106,8 @@ function BoardCard({
       </div>
       <p className="mt-1.5 line-clamp-2 font-medium leading-snug text-fg">{node.title}</p>
       {(review || showEta) && (
-        <p className="mt-1.5 flex items-center gap-2 text-[11px] text-subtle">
-          {review && <span className="min-w-0 truncate">{review}</span>}
+        <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-subtle">
+          {review && <span className="min-w-0">{review}</span>}
           {showEta && eta && (
             <span
               className={cn(

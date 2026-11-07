@@ -234,14 +234,19 @@ function MissionControl({
               label={
                 <>
                   {live ? "Time left" : "Time left then"}
-                  {eta.basis === "guess" && <span className="text-subtle"> · first guess</span>}
+                  {eta.basis === "guess" && (
+                    <>
+                      <span className="hidden text-subtle @4xl:inline"> · first guess</span>
+                      <span className="text-subtle @4xl:hidden"> · guess</span>
+                    </>
+                  )}
                 </>
               }
               title={etaBasisText(eta.basis, eta.samples)}
               testId="team-eta"
             >
               {totalEtaText(eta.total)}
-              <span className="text-xs font-normal text-subtle"> on this PC</span>
+              <span className="hidden text-xs font-normal text-subtle @4xl:inline"> on this PC</span>
             </Stat>
           )}
         </dl>
