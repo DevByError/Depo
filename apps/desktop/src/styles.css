@@ -1,59 +1,86 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/ibm-plex-sans";
 @import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-/* Design tokens. Components use only these, never raw colours. */
+/* Design tokens. Components use only these, never raw colours.
+   Depo's look: a slate workshop with one teal signal colour for "go" and focus.
+   Every text colour here meets WCAG AA (4.5:1) on bg, panel, raised and hover in its theme. */
 :root,
 [data-theme="light"] {
-  --bg: #f6f7f9;
+  --bg: #f3f5f8;
   --panel: #ffffff;
-  --raised: #eff1f4;
-  --hover: #e8ebef;
-  --border: #dfe3e8;
-  --fg: #15181d;
-  --muted: #586170;
-  --subtle: #5f6773;
-  --accent: #3350e0;
+  --raised: #edf0f4;
+  --hover: #e5e9ef;
+  --border: #d9dfe6;
+  --border-strong: #c3cbd6;
+  --fg: #111720;
+  --muted: #4c5768;
+  --subtle: #566173;
+  --accent: #0b766d;
   --accent-fg: #ffffff;
-  --accent-soft: #e6ebfe;
-  --success: #1c8551;
-  --warning: #9a6500;
-  --danger: #c43737;
-  --info: #1d6aad;
-  --ring: #3350e0;
+  --accent-soft: #dcf2ef;
+  --success: #167140;
+  --warning: #8f5c06;
+  --danger: #be3232;
+  --info: #2c5cc9;
+  --ring: #0b766d;
+  --shadow-pop: 0 1px 2px rgb(17 23 32 / 0.06), 0 8px 24px -6px rgb(17 23 32 / 0.16);
+  --shadow-drawer: 0 0 0 1px rgb(17 23 32 / 0.06), 0 16px 48px -12px rgb(17 23 32 / 0.28);
+  /* Agent colours (one per agent family), readable as text on every surface. */
+  --agent-lead: #6b4fd8;
+  --agent-design: #b4387f;
+  --agent-build: #2c5cc9;
+  --agent-data: #0b766d;
+  --agent-quality: #167140;
+  --agent-ops: #8f5c06;
+  --agent-security: #be3232;
+  --agent-docs: #5b6474;
   color-scheme: light;
 }
 
 [data-theme="dark"] {
-  --bg: #0d0f13;
-  --panel: #13161b;
-  --raised: #1a1e24;
-  --hover: #20252c;
-  --border: #272c34;
-  --fg: #e5e8ec;
-  --muted: #9aa3af;
-  --subtle: #8a939f;
-  --accent: #7d97ff;
-  --accent-fg: #0d0f13;
-  --accent-soft: #1e2540;
-  --success: #45b883;
-  --warning: #e2a842;
-  --danger: #f06666;
-  --info: #57a8e6;
-  --ring: #7d97ff;
+  --bg: #0f1319;
+  --panel: #141921;
+  --raised: #1a2029;
+  --hover: #212834;
+  --border: #29313d;
+  --border-strong: #38424f;
+  --fg: #e7eaf0;
+  --muted: #a0aabb;
+  --subtle: #8c97aa;
+  --accent: #3fc7b5;
+  --accent-fg: #06201c;
+  --accent-soft: #13312e;
+  --success: #5cc483;
+  --warning: #e8a83e;
+  --danger: #f2716f;
+  --info: #82a8ff;
+  --ring: #3fc7b5;
+  --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -8px rgb(0 0 0 / 0.55);
+  --shadow-drawer: 0 0 0 1px rgb(255 255 255 / 0.04), 0 24px 64px -12px rgb(0 0 0 / 0.7);
+  --agent-lead: #a996ff;
+  --agent-design: #f08bc4;
+  --agent-build: #82a8ff;
+  --agent-data: #3fc7b5;
+  --agent-quality: #5cc483;
+  --agent-ops: #e8a83e;
+  --agent-security: #f2716f;
+  --agent-docs: #a0aabb;
   color-scheme: dark;
 }
 
 @theme inline {
-  --font-sans: "Inter Variable", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-sans:
+    "IBM Plex Sans Variable", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "Cascadia Code", Consolas, ui-monospace, monospace;
   --color-bg: var(--bg);
   --color-panel: var(--panel);
   --color-raised: var(--raised);
   --color-hover: var(--hover);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-subtle: var(--subtle);
@@ -65,6 +92,16 @@
   --color-danger: var(--danger);
   --color-info: var(--info);
   --color-ring: var(--ring);
+  --color-agent-lead: var(--agent-lead);
+  --color-agent-design: var(--agent-design);
+  --color-agent-build: var(--agent-build);
+  --color-agent-data: var(--agent-data);
+  --color-agent-quality: var(--agent-quality);
+  --color-agent-ops: var(--agent-ops);
+  --color-agent-security: var(--agent-security);
+  --color-agent-docs: var(--agent-docs);
+  --shadow-pop: var(--shadow-pop);
+  --shadow-drawer: var(--shadow-drawer);
 }
 
 html,

@@ -226,7 +226,7 @@ function Preview({ source, name }: { source: string; name: string }) {
   const dataUrl = svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : "";
   const exportPng = () => {
     const el = host.current?.querySelector("img");
-    if (!el || !el.naturalWidth) return;
+    if (!el?.naturalWidth) return;
     const w = el.naturalWidth;
     const h = el.naturalHeight;
     const canvas = document.createElement("canvas");
