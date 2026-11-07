@@ -9,6 +9,7 @@ import { OnboardingDialog } from "./OnboardingDialog";
 import { Sidebar } from "./Sidebar";
 import { BottomPanel, RightPanel } from "./SidePanels";
 import { StatusBar } from "./StatusBar";
+import { ToolRail } from "./ToolRail";
 
 /** Global shortcuts. Ctrl+B sidebar, Ctrl+J bottom panel, Ctrl+L activity panel, Ctrl+, settings, Ctrl+K command palette. */
 function useShortcuts() {
@@ -41,7 +42,7 @@ function useWindowWidth(): number {
 }
 
 /** Keep the center usable on small windows: side panels give way before the center drops below this. */
-const MIN_CENTER = 460;
+const MIN_CENTER = 460 + 48; // plus the tool rail
 /** Below these window widths a side panel floats over the center as a drawer instead of squeezing it. */
 export const RIGHT_DRAWER_BELOW = 1180;
 export const LEFT_DRAWER_BELOW = 860;
@@ -98,7 +99,7 @@ export function AppShell() {
   const rightDrawer = windowWidth < RIGHT_DRAWER_BELOW;
   useDrawerMode("sidebarOpen", leftDrawer);
   useDrawerMode("rightOpen", rightDrawer);
-  const drawerMax = Math.max(280, windowWidth - 64);
+  const drawerMax = Math.max(280, windowWidth - 112);
   const sidebarWidth = leftDrawer
     ? Math.min(ui.sidebarWidth, drawerMax)
     : ui.sidebarOpen
@@ -120,12 +121,13 @@ export function AppShell() {
   return (
     <div className="flex h-full flex-col">
       <div className="relative flex min-h-0 flex-1">
+        <ToolRail />
         {ui.sidebarOpen && leftDrawer && (
           <>
             <Scrim label="Close sidebar" onClose={() => ui.setLayout({ sidebarOpen: false })} />
             <div
               style={{ width: sidebarWidth }}
-              className="absolute inset-y-0 left-0 z-30 border-r border-border shadow-drawer"
+              className="absolute inset-y-0 left-12 z-30 border-r border-border shadow-drawer"
             >
               <Sidebar />
             </div>

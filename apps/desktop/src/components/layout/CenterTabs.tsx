@@ -66,21 +66,69 @@ export const CENTER_TABS: TabDef[] = [
   { id: "security", label: "Security", icon: ShieldCheck },
 ];
 
+/**
+ * The centre has two kinds of screens. Work screens (the task flow) sit in the tab strip above the centre,
+ * with labels. Tool screens (knowledge, design, models, settings-like screens) sit in the tool rail at the
+ * window's left edge, as icons with tooltips. Both are tabs that control the same panel.
+ */
+export const WORK_TAB_ORDER: CenterTab[] = ["overview", "chat", "plan", "files", "diff"];
+export const TOOL_TAB_ORDER: CenterTab[] = [
+  "memory",
+  "knowledge",
+  "skills",
+  "design",
+  "diagrams",
+  "slides",
+  "blocks",
+  "agent-lab",
+  "models",
+  "security",
+];
+
+function ordered(order: CenterTab[]): TabDef[] {
+  const byId = new Map(CENTER_TABS.map((t) => [t.id, t]));
+  return order.map((id) => byId.get(id)).filter((t): t is TabDef => !!t);
+}
+
+/** Work tabs in strip order. Tabs added later that are in neither list join the strip at the end. */
+export function workTabs(): TabDef[] {
+  const known = new Set([...WORK_TAB_ORDER, ...TOOL_TAB_ORDER]);
+  return [...ordered(WORK_TAB_ORDER), ...CENTER_TABS.filter((t) => !known.has(t.id))];
+}
+
+export function toolTabs(): TabDef[] {
+  return ordered(TOOL_TAB_ORDER);
+}
+
+/** Arrow-key movement inside one tab list (roving focus). */
+export function moveInTabs(tabs: TabDef[], active: CenterTab, key: string, vertical: boolean): TabDef | null {
+  const back = vertical ? "ArrowUp" : "ArrowLeft";
+  const forward = vertical ? "ArrowDown" : "ArrowRight";
+  if (key !== back && key !== forward && key !== "Home" && key !== "End") return null;
+  if (tabs.length === 0) return null;
+  if (key === "Home") return tabs[0] ?? null;
+  if (key === "End") return tabs[tabs.length - 1] ?? null;
+  const i = tabs.findIndex((t) => t.id === active);
+  // From outside this list, the first press enters at the start (or end).
+  if (i < 0) return key === forward ? (tabs[0] ?? null) : (tabs[tabs.length - 1] ?? null);
+  const next = key === forward ? i + 1 : i - 1;
+  return tabs[(next + tabs.length) % tabs.length] ?? null;
+}
+
 export function CenterTabs() {
   const active = useUi((s) => s.centerTab);
   const setActive = useUi((s) => s.setCenterTab);
   const current = CENTER_TABS.find((t) => t.id === active) ?? CENTER_TABS[0];
 
+  const strip = workTabs();
+  const inStrip = strip.some((t) => t.id === active);
+
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const i = CENTER_TABS.findIndex((t) => t.id === active);
-    const next = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : null;
-    if (next === null) return;
+    const tab = moveInTabs(strip, active, e.key, false);
+    if (!tab) return;
     e.preventDefault();
-    const tab = CENTER_TABS[(next + CENTER_TABS.length) % CENTER_TABS.length];
-    if (tab) {
-      setActive(tab.id);
-      document.getElementById(`tab-${tab.id}`)?.focus();
-    }
+    setActive(tab.id);
+    document.getElementById(`tab-${tab.id}`)?.focus();
   };
 
   return (
@@ -89,9 +137,9 @@ export function CenterTabs() {
         role="tablist"
         aria-label="Workspace"
         onKeyDown={onKey}
-        className="no-scrollbar flex h-10 shrink-0 items-end gap-0.5 overflow-x-auto border-b border-border bg-panel px-2"
+        className="no-scrollbar flex h-10 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border bg-panel px-2"
       >
-        {CENTER_TABS.map((t) => {
+        {strip.map((t, i) => {
           const Icon = t.icon;
           const selected = t.id === active;
           return (
@@ -102,18 +150,30 @@ export function CenterTabs() {
               role="tab"
               aria-selected={selected}
               aria-controls={`panel-${t.id}`}
-              tabIndex={selected ? 0 : -1}
+              tabIndex={selected || (!inStrip && i === 0) ? 0 : -1}
               onClick={() => setActive(t.id)}
               className={cn(
-                "flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs transition-colors",
-                selected ? "border-accent text-fg" : "border-transparent text-muted hover:text-fg",
+                "relative flex shrink-0 items-center gap-1.5 px-3 text-[12.5px] font-medium transition-colors",
+                "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
+                selected
+                  ? "text-fg after:bg-accent"
+                  : "text-muted after:bg-transparent hover:text-fg hover:after:bg-border-strong",
               )}
             >
-              <Icon className="size-3.5" aria-hidden />
+              <Icon className={cn("size-3.5", selected ? "text-accent" : "")} aria-hidden />
               {t.label}
             </button>
           );
         })}
+        {!inStrip && current && (
+          <span
+            className="ml-auto flex shrink-0 items-center gap-1.5 pr-1 text-[12px] text-subtle"
+            aria-hidden
+          >
+            <current.icon className="size-3.5" />
+            {current.label}
+          </span>
+        )}
       </div>
       {current && (
         <div
