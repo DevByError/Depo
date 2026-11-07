@@ -7,6 +7,7 @@ import { Composer } from "@/components/chat/Composer";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { SteerNote } from "@/components/chat/SteerNote";
 import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
+import { EtaHint } from "@/components/team/EtaHint";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
@@ -475,18 +476,13 @@ function ReviewBanner() {
 /** "for 1m 20s" while working, "took 3m 05s" once the latest run has finished. */
 function RunTime({ task, items }: { task: Task; items: ChatItem[] }) {
   const active = isActive(task.status);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [active]);
   // The latest run starts at the latest user message and ends with the last message after it
   // (the task's own update time also moves when changes are applied later).
   const lastUser = [...items].reverse().find((m) => m.role === "user" && !isSteerNote(m));
   const start = Date.parse(lastUser?.createdAt ?? task.createdAt);
   if (Number.isNaN(start)) return null;
-  if (active) return <span className="tabular-nums">for {formatDuration(now - start)}</span>;
+  // While working: elapsed time plus what Depo learned about this PC's speed ("about 2 to 8 min left").
+  if (active) return <EtaHint taskId={task.id} startedAt={start} className="text-muted" />;
   const lastItem = items.at(-1);
   const end = Date.parse(lastItem && lastItem !== lastUser ? lastItem.createdAt : task.updatedAt);
   if (Number.isNaN(end) || end < start) return null;
