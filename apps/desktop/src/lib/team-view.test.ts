@@ -159,6 +159,7 @@ test("tones and labels say what a decision means", () => {
   expect(decisionTone({ kind: "release", outcome: "ready" })).toBe("success");
   expect(decisionLabel({ kind: "review", outcome: "changes" })).toBe("Changes asked");
   expect(decisionLabel({ kind: "plan", outcome: "standard" })).toBe("Standard plan");
+  expect(decisionLabel({ kind: "plan", outcome: "replanned" })).toBe("Plan changed");
   expect(decisionLabel({ kind: "recommendation", outcome: null })).toBe("Recommends");
 });
 

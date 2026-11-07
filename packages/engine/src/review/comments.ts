@@ -6,7 +6,7 @@ import {
   type ReviewComment,
   ReviewCommentSchema,
 } from "@depo/shared";
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import type { AppDb } from "../db";
 import { changeSets, reviewComments } from "../db/schema";
 import type { EventBus } from "../events/bus";
@@ -123,7 +123,7 @@ export class ReviewStore {
       .select()
       .from(reviewComments)
       .where(or(eq(reviewComments.changeSetId, changeSetId), eq(reviewComments.addressedIn, changeSetId)))
-      .orderBy(asc(reviewComments.createdAt), asc(reviewComments.id))
+      .orderBy(asc(reviewComments.createdAt), sql`rowid`)
       .all()
       .map(toComment);
   }
@@ -237,7 +237,7 @@ export class ReviewStore {
       .select()
       .from(reviewComments)
       .where(and(eq(reviewComments.changeSetId, cs.id), eq(reviewComments.status, "open")))
-      .orderBy(asc(reviewComments.path), asc(reviewComments.createdAt))
+      .orderBy(asc(reviewComments.path), asc(reviewComments.createdAt), sql`rowid`)
       .all()
       .map(toComment);
     const extra = note?.trim() ?? "";
