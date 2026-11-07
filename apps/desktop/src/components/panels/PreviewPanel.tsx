@@ -94,6 +94,16 @@ export function PreviewPanel() {
     refetchInterval: (q) => (q.state.data?.previews.some((p) => p.state === "starting") ? 1000 : 5000),
   });
 
+  // Nothing picked for this project yet: follow what is already running (for example the private
+  // copy Depo started when a task's changes became ready) instead of offering to start another.
+  useEffect(() => {
+    if (!projectId || ui.projectId === projectId) return;
+    const all = list.data?.previews ?? [];
+    if (all.some((p) => p.taskId === null && active(p))) return;
+    const running = all.find(active);
+    if (running) usePreviewUi.getState().show({ projectId, taskId: running.taskId, previewId: running.id });
+  }, [projectId, ui.projectId, list.data]);
+
   const forTarget = (list.data?.previews ?? []).filter((p) => p.taskId === taskId);
   const current =
     forTarget.find((p) => p.id === ui.previewId) ?? forTarget.find(active) ?? forTarget[0] ?? null;

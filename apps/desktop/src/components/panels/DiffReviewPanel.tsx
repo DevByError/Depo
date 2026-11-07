@@ -76,6 +76,7 @@ export function DiffReviewPanel() {
   // Discard asks first, with an optional reason that Depo remembers as a preference.
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [reason, setReason] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
   // Reset the selection when another change set is shown (or the same one changes status).
   const key = `${current?.id}:${current?.updatedAt}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the shown change set changes
@@ -135,7 +136,7 @@ export function DiffReviewPanel() {
   const canComment = !!reviewable && !!current?.taskId;
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="@container flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
           <div className="min-w-0 flex-1">
@@ -167,6 +168,17 @@ export function DiffReviewPanel() {
               <h2 className="text-[13px] font-semibold text-fg">Diff Review</h2>
             )}
           </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="@4xl:hidden"
+            aria-expanded={showHistory}
+            aria-controls="undo-history"
+            title="Every apply saves a checkpoint you can undo"
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            <History /> Undo history
+          </Button>
           {reviewable && current.taskId && (
             <Button
               size="sm"
@@ -237,7 +249,7 @@ export function DiffReviewPanel() {
         {apply.data && (
           <p role="status" className="border-b border-border bg-raised/40 px-4 py-1.5 text-xs text-muted">
             Applied {apply.data.applied.length} file{apply.data.applied.length === 1 ? "" : "s"}. A checkpoint
-            was saved, so you can undo it from History.
+            was saved, so you can undo it from Undo history.
             {apply.data.conflicts.length > 0 && (
               <span className="text-warning">
                 {" "}
@@ -260,7 +272,7 @@ export function DiffReviewPanel() {
         ) : (
           <div className="flex min-h-0 flex-1">
             <ul
-              className="w-64 shrink-0 overflow-y-auto border-r border-border py-1"
+              className="w-48 shrink-0 overflow-y-auto border-r border-border py-1 @3xl:w-64"
               aria-label="Changed files"
             >
               {current.files.map((f) => (
@@ -311,7 +323,7 @@ export function DiffReviewPanel() {
           </div>
         )}
       </div>
-      <HistoryColumn projectId={projectId} />
+      <HistoryColumn projectId={projectId} open={showHistory} />
     </div>
   );
 }
@@ -748,7 +760,8 @@ function HunkView({
   );
 }
 
-function HistoryColumn({ projectId }: { projectId: string }) {
+/** Checkpoints to undo applies. Folds into a header button when the panel is narrow. */
+function HistoryColumn({ projectId, open }: { projectId: string; open: boolean }) {
   const enabled = useEngine((s) => s.status === "open");
   const qc = useQueryClient();
   const cps = useQuery({
@@ -768,9 +781,13 @@ function HistoryColumn({ projectId }: { projectId: string }) {
   });
   const list = cps.data?.checkpoints ?? [];
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-l border-border" aria-label="History">
+    <aside
+      id="undo-history"
+      className={cn("w-60 shrink-0 flex-col border-l border-border", open ? "flex" : "hidden @4xl:flex")}
+      aria-label="Undo history"
+    >
       <h3 className="flex items-center gap-1.5 border-b border-border px-3 py-2.5 text-xs font-semibold text-fg">
-        <History className="size-3.5 text-subtle" aria-hidden /> History
+        <History className="size-3.5 text-subtle" aria-hidden /> Undo history
       </h3>
       <section className="min-h-0 flex-1 overflow-y-auto p-2" tabIndex={0} aria-label="Checkpoints">
         {list.length === 0 ? (

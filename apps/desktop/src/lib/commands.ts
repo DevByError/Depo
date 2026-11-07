@@ -43,13 +43,21 @@ export function fuzzyScore(query: string, text: string): number {
   let score = 0;
   let ti = 0;
   let run = 0;
+  let first = -1;
+  // A scattered match only counts when every jump lands on a word start ("nt" for "New task").
+  let jumpsOnWords = true;
   for (const ch of q) {
     const found = t.indexOf(ch, ti);
     if (found < 0) return 0;
+    const wordStart = found === 0 || t[found - 1] === " ";
+    if (first < 0) first = found;
+    else if (found !== ti && !wordStart) jumpsOnWords = false;
     run = found === ti ? run + 1 : 0;
-    score += 1 + run * 2 + (found === 0 || t[found - 1] === " " ? 3 : 0);
+    score += 1 + run * 2 + (wordStart ? 3 : 0);
     ti = found + 1;
   }
+  // Letters spread over the whole title ("health" in "Switch between dark and light theme") are noise.
+  if (!jumpsOnWords && ti - first > q.length * 2 + 2) return 0;
   return score;
 }
 

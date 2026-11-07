@@ -17,6 +17,10 @@ test("fuzzy search prefers exact and early matches and ignores non-matches", () 
   expect(fuzzyScore("", "anything")).toBeGreaterThan(0);
   expect(fuzzyScore("go", "Go to Chat")).toBeGreaterThan(fuzzyScore("go", "Show the tour, then go"));
   expect(fuzzyScore("dr", "Diff Review")).toBeGreaterThan(0);
+  expect(fuzzyScore("nt", "New task")).toBeGreaterThan(0);
+  expect(fuzzyScore("setngs", "Open settings")).toBeGreaterThan(0);
+  // Letters scattered over a long title are not a match.
+  expect(fuzzyScore("health", "Switch between dark and light theme")).toBe(0);
 });
 
 test("commands are filtered, ranked, and found through their keywords", () => {

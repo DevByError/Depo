@@ -291,6 +291,23 @@ test("Preview these changes: the Preview tab starts the task's copy by itself", 
   expect(usePreviewUi.getState().autoStart).toBe(false);
 });
 
+test("Preview tab: opens on the task copy Depo already started instead of offering to start again", async () => {
+  previews = [
+    preview({
+      id: "prv_auto",
+      taskId: "tsk_1",
+      target: "workspace",
+      url: "http://127.0.0.1:41234/",
+      startedBy: "agent",
+    }),
+  ];
+  mount(<PreviewPanel />);
+  await waitFor(() =>
+    expect(usePreviewUi.getState()).toMatchObject({ taskId: "tsk_1", previewId: "prv_auto" }),
+  );
+  expect(calls.some((c) => c.method === "preview.start")).toBe(false);
+});
+
 test("Running section: running previews show their link and open the Preview tab", async () => {
   previews = [preview({ taskId: "tsk_1", target: "workspace" })];
   useUi.setState({ centerTab: "chat" });

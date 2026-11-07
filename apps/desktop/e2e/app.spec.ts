@@ -11,7 +11,8 @@ test("connects to the engine and shows live heartbeats", async ({ page }) => {
   const pulse = page.getByTestId("heartbeat").first();
   await expect(pulse).toContainText(/Heartbeat (just now|\ds ago)/);
 
-  // Heartbeats keep arriving: the uptime in the Engine panel increases.
+  // Heartbeats keep arriving: the uptime in the Engine panel (bottom panel, closed at first) increases.
+  await page.keyboard.press("Control+j");
   const uptime = page.locator("text=Uptime").locator("..");
   const first = await uptime.textContent();
   await expect.poll(async () => uptime.textContent(), { timeout: 8000 }).not.toBe(first);
@@ -38,11 +39,12 @@ test("theme is saved in the engine and survives a reload", async ({ page }) => {
 
 test("keyboard shortcuts toggle panels and tabs are keyboard reachable", async ({ page }) => {
   await page.goto("");
-  await expect(page.getByRole("region", { name: "Bottom panel" })).toBeVisible();
-  await page.keyboard.press("Control+j");
+  // The bottom panel starts closed so the work area has the room.
   await expect(page.getByRole("region", { name: "Bottom panel" })).toBeHidden();
   await page.keyboard.press("Control+j");
   await expect(page.getByRole("region", { name: "Bottom panel" })).toBeVisible();
+  await page.keyboard.press("Control+j");
+  await expect(page.getByRole("region", { name: "Bottom panel" })).toBeHidden();
 
   await page.getByRole("tab", { name: "Chat" }).focus();
   await page.keyboard.press("ArrowRight");

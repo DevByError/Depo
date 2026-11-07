@@ -355,7 +355,14 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         if (!pending) return;
         emit(ctx, {
           type: "command_output",
-          text: pending.trimEnd().split("\n").slice(-1)[0]?.slice(0, 200) ?? "",
+          // The last line that says something (pytest's progress dots alone do not).
+          text:
+            pending
+              .split("\n")
+              .map((l) => l.trim())
+              .filter((l) => /[\p{L}\p{N}]/u.test(l))
+              .at(-1)
+              ?.slice(0, 200) ?? `Output from ${a.command.slice(0, 120)}`,
           details: { jobId: runId, chunk: pending.slice(-4000) },
           ephemeral: true,
           status: "running",

@@ -109,7 +109,7 @@ const DEFAULT_LAYOUT: Layout = {
   bottomHeight: 220,
   sidebarOpen: true,
   rightOpen: true,
-  bottomOpen: true,
+  bottomOpen: false,
 };
 
 /** Browser storage can be unavailable (private mode, locked profile); never let that break the UI. */
