@@ -29,6 +29,7 @@ import { type Logger, withLogContext } from "../logger";
 import { AutoMemory } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
+import { ReviewStore } from "../review/comments";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
 import { TOOLS, type ToolContext } from "../tools/index";
@@ -36,6 +37,7 @@ import type { PreviewHooks } from "../tools/preview-tools";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
+import { SteerInbox, type StoredNote, steerPrompt } from "./steer";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
@@ -86,10 +88,20 @@ export class TaskManager {
   private readonly team: TeamRunner;
   /** Remembers what finished tasks taught (memory.auto); null without a memory store. */
   readonly autoMemory: AutoMemory | null;
+  /** Notes the owner sends while a task works, one inbox per running task (steering). */
+  private readonly inboxes = new Map<string, SteerInbox>();
+  /** Line comments on change sets and "Request changes" (Diff Review). */
+  readonly reviews: ReviewStore;
 
   constructor(private readonly o: TaskManagerOptions) {
     this.log = o.logger.child({ component: "tasks" });
     this.blackboard = new Blackboard(o.db);
+    this.reviews = new ReviewStore({
+      db: o.db,
+      bus: o.bus,
+      changeSet: (id) => o.projects.getChangeSet(id),
+      deliver: (taskId, text) => this.steer(taskId, text).delivery,
+    });
     this.autoMemory = o.memory
       ? new AutoMemory({
           db: o.db,
@@ -291,6 +303,7 @@ export class TaskManager {
             createdAt: m.createdAt,
           });
       } else {
+        const steer = (c as Partial<StoredNote>).steer;
         items.push({
           id: m.id,
           role: "user",
@@ -299,10 +312,48 @@ export class TaskManager {
           isError: false,
           agent: null,
           createdAt: m.createdAt,
+          // A note still queued by an engine that has since stopped will never be read.
+          ...(steer
+            ? {
+                steer:
+                  steer.state === "queued" && !this.inboxes.has(id) ? { ...steer, state: "dropped" } : steer,
+              }
+            : {}),
         });
       }
     }
     return { task: toTask(row), messages: items };
+  }
+
+  /**
+   * Steering: while the task works, the note is queued and read by the agents at their next step;
+   * otherwise it is a normal follow-up message that continues the task.
+   */
+  steer(
+    taskId: string,
+    text: string,
+  ): { delivery: "queued" | "followup"; taskId: string; noteId: string | null } {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row) throw new Error(`Unknown task: ${taskId}`);
+    const inbox = this.inboxes.get(taskId);
+    if (inbox && this.running.has(taskId)) {
+      const note = inbox.add(text.trim());
+      this.log.info("steering note queued", { taskId, projectId: row.projectId, noteId: note.id });
+      return { delivery: "queued", taskId, noteId: note.id };
+    }
+    this.send(row.projectId, text, taskId);
+    return { delivery: "followup", taskId, noteId: null };
+  }
+
+  /**
+   * The owner declined an approval and said why: the agent that asked reads the reason at its
+   * next step. A declined plan ends the run, so the reason becomes the next turn and the Manager
+   * plans again with it.
+   */
+  noteDecline(req: { taskId: string | null; title: string }, reason: string): void {
+    const why = reason.trim();
+    if (!req.taskId || !why || !this.running.has(req.taskId)) return;
+    this.steer(req.taskId, `Declined: ${req.title.trim().replace(/\?$/, "")}. Reason: ${why}`);
   }
 
   /** Start a new task, or continue an existing one with a follow-up message. */
@@ -338,31 +389,51 @@ export class TaskManager {
         .run();
     }
     this.addMessage(id, { role: "user", content: text });
+    this.launch(id, projectId, taskId ? "task continued" : "task started", mode);
+    return this.get(id).task;
+  }
+
+  /** Start a run of the task (its newest user message is the request). */
+  private launch(id: string, projectId: string, what: string, mode?: WorkMode): void {
     this.setStatus(id, "queued");
     const ctl = new AbortController();
     this.running.set(id, ctl);
-    const taskId_ = id;
+    const inbox = new SteerInbox({
+      db: this.o.db,
+      bus: this.o.bus,
+      taskId: id,
+      projectId,
+      stamp: () => this.stamp(),
+    });
+    this.inboxes.set(id, inbox);
     const started = performance.now();
-    this.log.info(taskId ? "task continued" : "task started", { taskId: id, projectId, mode: mode ?? null });
+    this.log.info(what, { taskId: id, projectId, mode: mode ?? null });
     // Everything logged while the task runs carries its id and project.
-    const run = withLogContext({ taskId: taskId_, projectId }, () => this.run(taskId_, ctl.signal))
+    const run = withLogContext({ taskId: id, projectId }, () => this.run(id, ctl.signal))
       .catch((err: unknown) => {
-        this.log.error("task crashed", { taskId: taskId_, err });
-        this.fail(taskId_, projectId, err instanceof Error ? err.message : String(err));
+        this.log.error("task crashed", { taskId: id, err });
+        this.fail(id, projectId, err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
-        this.running.delete(taskId_);
-        this.done.delete(taskId_);
-        const status = this.o.db.select().from(tasks).where(eq(tasks.id, taskId_)).get()?.status ?? null;
+        this.running.delete(id);
+        this.done.delete(id);
+        this.inboxes.delete(id);
+        const status = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get()?.status ?? null;
         this.log[status === "failed" ? "warn" : "info"]("task finished", {
-          taskId: taskId_,
+          taskId: id,
           projectId,
           status,
           durationMs: Math.round(performance.now() - started),
         });
+        // Notes nobody read: a finished run continues with them; a stopped one marks them unread.
+        const followup = (status === "review" || status === "done") && !ctl.signal.aborted && !this.stopping;
+        const left = inbox.settle(followup);
+        if (followup && left.length > 0) {
+          this.log.info("unread notes continue the task", { taskId: id, projectId, notes: left.length });
+          this.launch(id, projectId, "task continued with notes");
+        }
       });
     this.done.set(id, run);
-    return this.get(id).task;
   }
 
   cancel(id: string): boolean {
@@ -386,12 +457,16 @@ export class TaskManager {
     return true;
   }
 
-  /** Resolves when the task's current run has finished (tests). */
+  /** Resolves when the task has finished, including a run that unread notes started (tests). */
   async settled(id: string): Promise<void> {
-    await this.done.get(id);
+    for (let run = this.done.get(id); run; run = this.done.get(id)) await run;
   }
 
+  /** Set while the engine stops: no run starts any more. */
+  private stopping = false;
+
   async cancelAll(): Promise<void> {
+    this.stopping = true;
     for (const ctl of this.running.values()) ctl.abort();
     await Promise.allSettled([...this.done.values()]);
     await this.autoMemory?.stop();
@@ -478,6 +553,7 @@ export class TaskManager {
       ...(this.o.previews ? { previews: this.o.previews } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
+    const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);
     const result = await runAgentLoop({
       provider,
       model,
@@ -493,6 +569,7 @@ export class TaskManager {
       emit,
       persist: (m) => this.addMessage(taskId, m as ChatMessage),
       lessons,
+      inbox,
     });
     let finalText = result.finalText;
 
@@ -534,17 +611,24 @@ export class TaskManager {
     const emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) =>
       this.o.bus.emit({ ...e, agent: agentTag("manager"), projectId: project.id, taskId });
     // The newest user message is the request; earlier ones stay in the blackboard and transcript.
-    const lastUser = [...this.get(taskId).messages].reverse().find((m) => m.role === "user");
+    // Notes that became the next turn (nobody read them in time) are part of it.
+    const lastUser = latestRequest(this.get(taskId).messages);
     this.o.indexer?.ensure(project.id);
     emit({ type: "planning", text: `Team mode "${mode}": ${row.title}`, status: "started" });
     const res = await this.team.run({
       taskId,
       projectId: project.id,
       projectName: project.name,
-      text: lastUser?.text ?? row.prompt,
+      // A turn made only of late notes (or a declined plan's reason) keeps the original request.
+      text: lastUser
+        ? lastUser.fromNotes
+          ? `${row.prompt}\n\n${lastUser.text}`
+          : lastUser.text
+        : row.prompt,
       mode,
       ws,
       signal,
+      notes: this.inboxes.get(taskId),
     });
     if (signal.aborted) {
       this.setStatus(taskId, "cancelled");
@@ -584,6 +668,8 @@ export class TaskManager {
     statusFor: (cs: unknown) => TaskStatus,
   ) {
     const cs = this.o.projects.collectChanges(projectId, taskId, ws, title);
+    // Review comments on the previous version: addressed, outdated, or moved to this one.
+    this.reviews.onChangeSet(taskId, cs, this.latestReplies(taskId));
     // Set the final status before the handoff event, so a UI refreshing on that event sees it.
     this.setStatus(taskId, statusFor(cs));
     if (cs) {
@@ -599,6 +685,19 @@ export class TaskManager {
       emit({ type: "handoff", text: "Finished with no file changes", status: "succeeded" });
     }
     return cs;
+  }
+
+  /** What the agents wrote since the newest request (they may say "Addressed: 1, 3"). */
+  private latestReplies(taskId: string): string[] {
+    const items = this.get(taskId).messages;
+    let i = items.length - 1;
+    const isRequest = (m: ChatItem | undefined) =>
+      m?.role === "user" && (!m.steer || m.steer.state === "followup");
+    while (i >= 0 && !isRequest(items[i])) i--;
+    return items
+      .slice(i + 1)
+      .filter((m) => m.role === "assistant" && !m.isError)
+      .map((m) => m.text);
   }
 
   // ---- memory, index and lessons ---------------------------------------------------------
@@ -682,16 +781,27 @@ export class TaskManager {
   // ---- persistence -----------------------------------------------------------------------
 
   private loadHistory(taskId: string): ChatMessage[] {
-    return this.o.db
+    const out: ChatMessage[] = [];
+    for (const m of this.o.db
       .select()
       .from(messages)
       .where(eq(messages.taskId, taskId))
       .orderBy(asc(messages.createdAt), asc(messages.id))
-      .all()
-      .map((m) => {
-        const { isError: _e, ...c } = JSON.parse(m.content) as ChatMessage & { isError?: boolean };
-        return c as ChatMessage;
-      });
+      .all()) {
+      const {
+        isError: _e,
+        steer,
+        ...c
+      } = JSON.parse(m.content) as ChatMessage & {
+        isError?: boolean;
+        steer?: StoredNote["steer"];
+      };
+      // Steering notes: read ones as the agent saw them, ones that became a turn as plain
+      // requests; queued and unread notes are not part of the conversation.
+      if (steer?.state === "delivered") out.push({ role: "user", content: steerPrompt([c.content]) });
+      else if (!steer || steer.state === "followup") out.push(c as ChatMessage);
+    }
+    return out;
   }
 
   /** Strictly increasing timestamps, so messages written in the same millisecond keep their order. */
@@ -742,6 +852,21 @@ export class TaskManager {
       status: "failed",
     });
   }
+}
+
+/**
+ * The newest request in a transcript: the last user message, joined with notes that were sent
+ * right before it and became part of the same turn. Notes read during a run are not requests.
+ */
+export function latestRequest(items: ChatItem[]): { text: string; fromNotes: boolean } | null {
+  const isRequest = (m: ChatItem) => m.role === "user" && (!m.steer || m.steer.state === "followup");
+  let end = items.length - 1;
+  while (end >= 0 && !isRequest(items[end] as ChatItem)) end--;
+  if (end < 0) return null;
+  let start = end;
+  while (start > 0 && isRequest(items[start - 1] as ChatItem)) start--;
+  const turn = items.slice(start, end + 1);
+  return { text: turn.map((m) => m.text).join("\n\n"), fromNotes: turn.every((m) => !!m.steer) };
 }
 
 /** The task's request: the first message, plus the newest follow-up when there is one. */

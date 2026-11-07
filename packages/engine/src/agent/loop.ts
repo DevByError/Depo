@@ -45,6 +45,11 @@ export interface LoopParams {
     onTest(r: { passed: boolean; output: string }): string | undefined;
   };
   temperature?: number;
+  /**
+   * Steering: notes from the owner that arrived since the last call, as messages to add. Asked
+   * only between steps (before each model call, and before a final answer is accepted).
+   */
+  inbox?: () => ChatMessage[];
 }
 
 export interface LoopResult {
@@ -114,6 +119,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   while (steps < p.maxSteps) {
     if (signal.aborted) break;
     steps++;
+    // A step boundary: the previous tool calls have all finished, so the owner's notes fit here.
+    for (const note of p.inbox?.() ?? []) history.push(note);
     compressHistory(history, p.contextLength);
     const messageId = newId("msg");
     // Runtimes send nothing while they read the prompt; say so, since it can take minutes.
@@ -214,6 +221,12 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       });
     }
     if (calls.length === 0) {
+      // A note arrived while the model wrote its answer: read it before finishing.
+      const notes = steps < p.maxSteps ? (p.inbox?.() ?? []) : [];
+      if (notes.length > 0) {
+        history.push(...notes);
+        continue;
+      }
       const nudge =
         finishNudges >= 2
           ? null

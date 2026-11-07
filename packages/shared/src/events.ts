@@ -29,6 +29,8 @@ export const AGENT_EVENT_TYPES = [
   "queued",
   "memory_updated",
   "decision",
+  /** The owner sent a note while a task worked (queued), or an agent read it (delivered). */
+  "owner_note",
 ] as const;
 
 export const SYSTEM_EVENT_TYPES = [

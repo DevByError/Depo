@@ -265,3 +265,27 @@ export const knowledgePacks = sqliteTable("knowledge_packs", {
   enabled: integer("enabled").notNull().default(1),
   ...timestamps,
 });
+
+/** Line comments on a change set in Diff Review (migration 7). */
+export const reviewComments = sqliteTable("review_comments", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  taskId: text("task_id"),
+  changeSetId: text("change_set_id").notNull(),
+  path: text("path").notNull(),
+  /** new | old */
+  side: text("side").notNull(),
+  line: integer("line").notNull(),
+  endSide: text("end_side").notNull(),
+  endLine: integer("end_line").notNull(),
+  quote: text("quote").notNull(),
+  body: text("body").notNull(),
+  /** open | addressed | outdated */
+  status: text("status").notNull(),
+  /** changed | agent | owner */
+  addressedBy: text("addressed_by"),
+  addressedIn: text("addressed_in"),
+  sentAt: text("sent_at"),
+  ref: integer("ref"),
+  ...timestamps,
+});
