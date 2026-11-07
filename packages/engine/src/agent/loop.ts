@@ -9,6 +9,7 @@ import {
 } from "@depo/model-gateway";
 import { newId } from "@depo/shared";
 import type { EventBus } from "../events/bus";
+import { getLogger, withLogContext } from "../logger";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
 import { extractTextToolCalls, looksLikeToolCall, stripToolMarkup } from "./textcalls";
@@ -17,6 +18,7 @@ import { extractTextToolCalls, looksLikeToolCall, stripToolMarkup } from "./text
 const MODEL_RETRIES = 4;
 /** Waits between retries grow, so a runtime that is busy (re)loading a model gets about a minute. */
 const RETRY_BACKOFF = [1, 3, 8, 15];
+const log = getLogger({ component: "agent" });
 
 export type Emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown;
 
@@ -61,7 +63,28 @@ export interface LoopResult {
  * results, until it answers without a tool call. Hardened for small models (text tool calls,
  * unreadable output, copied line numbers) and it checks the tests before accepting "done".
  */
-export async function runAgentLoop(p: LoopParams): Promise<LoopResult> {
+export function runAgentLoop(p: LoopParams): Promise<LoopResult> {
+  // Every line logged during the loop (model calls, tools, queue) carries the task and agent.
+  return withLogContext(
+    { projectId: p.job.projectId, taskId: p.job.taskId, agent: p.ctx.agent },
+    async () => {
+      const started = performance.now();
+      const res = await agentLoop(p);
+      log.info("agent loop finished", {
+        model: p.model,
+        steps: res.steps,
+        aborted: res.aborted,
+        hitLimit: res.hitLimit,
+        changed: res.changed.length,
+        lastTest: res.lastTest?.passed ?? null,
+        durationMs: Math.round(performance.now() - started),
+      });
+      return res;
+    },
+  );
+}
+
+async function agentLoop(p: LoopParams): Promise<LoopResult> {
   const { history, emit, signal } = p;
   const tools = toolDefinitions(p.toolNames, p.ctx.extraTools);
   const toolNames = tools.map((t) => t.name);
@@ -261,6 +284,7 @@ async function chatWithRetry(
       if (err instanceof ModelGatewayError && err.kind === "cancelled") return null;
       if (isBadModelOutput(err)) {
         // Sampling is random, so a plain retry often succeeds; after that, the loop nudges the model.
+        log.warn("model output could not be read", { model: req.model, attempt: attempt + 1, err });
         if (attempt < 1) continue;
         return { badOutput: (err as Error).message };
       }
@@ -269,7 +293,11 @@ async function chatWithRetry(
         (err.kind === "timeout" ||
           err.kind === "unreachable" ||
           (err.kind === "http" && (err.status ?? 0) >= 500));
-      if (!transient || attempt >= MODEL_RETRIES) throw err;
+      if (!transient || attempt >= MODEL_RETRIES) {
+        log.error("model call gave up", { model: req.model, attempts: attempt + 1, err });
+        throw err;
+      }
+      log.warn("model call retry", { model: req.model, attempt: attempt + 1, of: MODEL_RETRIES, err });
       p.emit({
         type: "retrying",
         text: `${(err as Error).message} Retrying…`,

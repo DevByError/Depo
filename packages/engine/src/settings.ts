@@ -26,6 +26,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "notify.enabled": true,
   /** Set once the welcome tour was shown. */
   "ui.onboarded": false,
+  /** Lowest engine log level written to the log files: "debug", "info", "warn" or "error". */
+  "logs.level": "info",
 };
 
 export class SettingsRepo {

@@ -30,7 +30,7 @@ const engine = createEngine({
   dataRoot: resolveDataRoot(),
   token,
   port: Number.isFinite(port) ? port : 0,
-  logLevel: logLevel ?? "info",
+  ...(logLevel ? { logLevel } : {}),
   logToStderr: devMode,
 });
 

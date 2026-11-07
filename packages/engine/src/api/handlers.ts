@@ -16,6 +16,7 @@ import type { DesignService } from "../design/service";
 import type { EventBus } from "../events/bus";
 import type { OsvService } from "../knowledge/osv";
 import type { KnowledgeService } from "../knowledge/service";
+import type { LogService } from "../logs/service";
 import type { McpManager } from "../mcp/manager";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
@@ -45,6 +46,8 @@ export interface HandlerContext {
   osv: OsvService;
   security: SecurityService;
   lab: AgentLab;
+  /** Engine logs: search, live tail, diagnostics export, model timings. */
+  logs: LogService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -68,15 +71,8 @@ function removeProject(id: string, ctx: HandlerContext) {
   return { ok: true as const };
 }
 
-export type Handlers = {
-  [M in ApiMethod]: (params: ApiParsedParams<M>, ctx: HandlerContext) => ApiResult<M> | Promise<ApiResult<M>>;
-};
-
-/** Engine API implementation. Pure functions of (params, context): no UI, no transport. */
-export const handlers: Handlers = {
-  "system.ping": () => ({ pong: true, serverTime: new Date().toISOString() }),
-
-  "system.info": (_params, ctx) => ({
+function systemInfo(ctx: HandlerContext) {
+  return {
     engineVersion: DEPO_VERSION,
     runtime: `bun ${Bun.version}`,
     platform: process.platform,
@@ -87,7 +83,23 @@ export const handlers: Handlers = {
     dbPath: ctx.info.dbPath,
     schemaVersion: ctx.info.schemaVersion,
     apiFingerprint: API_FINGERPRINT,
-  }),
+  };
+}
+
+function needLogs(ctx: HandlerContext): LogService {
+  if (!ctx.logs) throw new Error("Logs are not available in this engine.");
+  return ctx.logs;
+}
+
+export type Handlers = {
+  [M in ApiMethod]: (params: ApiParsedParams<M>, ctx: HandlerContext) => ApiResult<M> | Promise<ApiResult<M>>;
+};
+
+/** Engine API implementation. Pure functions of (params, context): no UI, no transport. */
+export const handlers: Handlers = {
+  "system.ping": () => ({ pong: true, serverTime: new Date().toISOString() }),
+
+  "system.info": (_params, ctx) => systemInfo(ctx),
 
   "events.recent": (params, ctx) => ({
     events: ctx.bus.recent({
@@ -404,4 +416,30 @@ export const handlers: Handlers = {
   "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),
   "checkpoints.list": (p, ctx) => ({ checkpoints: ctx.projects.listCheckpoints(p.projectId) }),
   "checkpoints.restore": (p, ctx) => ctx.projects.restoreCheckpoint(p.id, p.force),
+  "logs.query": (p, ctx) => needLogs(ctx).query(p),
+  "logs.tail": (p, ctx) => needLogs(ctx).tail(p.cursor, p),
+  "logs.components": async (_p, ctx) => ({ components: await needLogs(ctx).components() }),
+  "logs.info": (_p, ctx) => needLogs(ctx).info(),
+  "logs.export": (p, ctx) =>
+    needLogs(ctx).export(
+      {
+        systemInfo: () => systemInfo(ctx),
+        hardware: () => ctx.models.hardware(),
+        settings: () => ctx.settings.all(),
+        events: () => ctx.bus.recent({ limit: 1000 }),
+        // A runtime that is not running must not hold up the export.
+        models: () =>
+          Promise.race([
+            ctx.models.installed(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out")), 8000).unref()),
+          ]),
+        scheduler: () => schedulerStatus(ctx),
+      },
+      p.destDir,
+    ),
+  "logs.openFolder": (_p, ctx) => needLogs(ctx).openFolder(),
+  "models.stats": (p, ctx) => ({
+    calls: needLogs(ctx).stats.recent(p.limit),
+    models: needLogs(ctx).stats.summary(),
+  }),
 };

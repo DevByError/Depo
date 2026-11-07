@@ -60,6 +60,9 @@ All methods have Zod schemas for params (validated by the engine) and results (v
 | `approvals.list` / `approvals.respond` | Commands waiting for the user |
 | `changes.list` / `changes.get` / `changes.apply` / `changes.discard` | Change sets from the shadow workspace; apply whole files or chosen hunks |
 | `checkpoints.list` / `checkpoints.restore` | Undo an apply |
+| `logs.query` / `logs.tail` / `logs.components` / `logs.info` | Engine log search (level, levels, component, text, task, project, since/until, paging with `before`, byte cap) read backwards over `engine.log` and the rotated files; live lines after a cursor from an in-memory ring |
+| `logs.export` / `logs.openFolder` | Diagnostics .zip in Downloads (logs, system info, hardware, redacted settings, recent events, installed models, model timings, scheduler); show the logs folder in Explorer |
+| `models.stats` | Recent model calls (tokens/s, time to first token, errors) and a per-model summary, in memory for this run |
 
 Server push: `{"jsonrpc":"2.0","method":"event","params": DepoEvent}` for every event.
 
@@ -71,6 +74,12 @@ Types are the spec's minimum list (`thinking`, `reading_file`, `running_command`
 
 Text and details are passed through the redactor (secret-looking keys, `.env`/`set`/`$env:` assignments, bearer tokens, JWTs, GitHub/AWS keys, private keys) before they are stored, logged or sent.
 
+## Logs (packages/engine/src/logger.ts, logs/)
+
+Every line is JSON: `ts`, `level` (debug/info/warn/error), `component` (api, agent, team, tasks, tools, models, scheduler, workspace, index, db, events, security, …), `msg`, then optional `projectId`, `taskId`, `agent`, `durationMs`, `err` ({ name, message, stack }) and other fields. `logger.child({ component, taskId })` adds bindings; `withLogContext({ taskId, projectId, agent }, fn)` (AsyncLocalStorage) adds them to every line logged inside, so model calls and scheduler lines carry the task without being told. Shared code without a logger uses `getLogger({ component })`, which writes through the engine's logger. Lines are redacted, batched (50 ms; errors at once; flushed on exit) and appended synchronously; rotation is size-based (5 MB, 5 files). Level: `DEPO_LOG_LEVEL`, else the `logs.level` setting (default `info`, applied at once).
+
+Instrumented: model calls (provider wrapper in ModelManager: provider, model, prompt/reply tokens, time to first chunk, total time, tokens/s, errors; retries in the tool loop), tool calls (tool, ok, duration, first line of the result), commands (command, exit code, duration), scheduler queue and run times, task and team node lifecycle, API failures and invalid params.
+
 ## Data
 
 `%LOCALAPPDATA%\Depo\` (override with `DEPO_DATA_DIR`):
@@ -78,7 +87,7 @@ Text and details are passed through the redactor (secret-looking keys, `.env`/`s
 ```
 db\depo.db            app database (WAL)
 db\backups\           automatic backups taken before migrations
-logs\engine.log       JSON lines, rotated at 5 MB, 5 files kept
+logs\engine.log       JSON lines, rotated at 5 MB (engine.1.log … engine.5.log kept)
 workspaces\ agents\ skills\ knowledge\ models\   created now, used from Phase 1+
 ```
 

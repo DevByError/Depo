@@ -870,6 +870,15 @@ export class TeamRunner {
     node.status = "doing";
     node.startedAt = new Date().toISOString();
     save();
+    const nodeLog = {
+      component: "team",
+      taskId,
+      projectId,
+      agent: ownerTag,
+      node: node.id,
+      title: node.title,
+    };
+    this.h.logger.info("team node started", nodeLog);
     baseEmit(mgrTag)({
       type: "handoff",
       text: `Manager → ${owner.name}: ${node.title}`,
@@ -977,6 +986,13 @@ export class TeamRunner {
     }
     node.finishedAt = new Date().toISOString();
     save();
+    this.h.logger[node.status === "done" ? "info" : "warn"]("team node finished", {
+      ...nodeLog,
+      status: node.status,
+      attempts: node.attempts,
+      reviewer: node.reviewer ?? null,
+      durationMs: Date.parse(node.finishedAt) - Date.parse(node.startedAt ?? node.finishedAt),
+    });
     baseEmit(ownerTag)({
       type: "handoff",
       text:

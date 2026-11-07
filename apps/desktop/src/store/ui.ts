@@ -17,7 +17,7 @@ export type CenterTab =
   | "knowledge"
   | "security"
   | "blocks";
-export type BottomTab = "terminal" | "problems" | "tests" | "engine";
+export type BottomTab = "terminal" | "problems" | "tests" | "engine" | "logs";
 export type RightTab = "activity" | "agents";
 
 interface Layout {
@@ -56,6 +56,11 @@ interface UiState extends Layout {
   changeSetId: string | null;
   /** Task shown in Chat; null starts a new task. */
   taskId: string | null;
+  /** Logs tab: only this task's lines; null shows every line. */
+  logsTaskId: string | null;
+  setLogsTaskId(id: string | null): void;
+  /** Open the Logs tab, filtered to one task (or to none). */
+  openLogs(taskId: string | null): void;
   setProjectId(id: string | null): void;
   setProjectDialog(d: ProjectDialog | null): void;
   setFeedScope(s: FeedScope): void;
@@ -137,6 +142,9 @@ export const useUi = create<UiState>((set, get) => ({
   feedScope: "project",
   changeSetId: null,
   taskId: null,
+  logsTaskId: null,
+  setLogsTaskId: (logsTaskId) => set({ logsTaskId }),
+  openLogs: (logsTaskId) => set({ logsTaskId, bottomTab: "logs", bottomOpen: true }),
   setProjectId: (projectId) => set({ projectId, changeSetId: null, taskId: null }),
   setProjectDialog: (projectDialog) => set({ projectDialog }),
   setFeedScope: (feedScope) => set({ feedScope }),
