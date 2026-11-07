@@ -16,6 +16,8 @@ export default defineConfig({
     sourcemap: true,
     chunkSizeWarningLimit: 1500,
   },
+  // The syntax highlighting worker loads each grammar on demand, which needs ES module workers.
+  worker: { format: "es" },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

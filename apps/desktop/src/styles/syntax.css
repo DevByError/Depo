@@ -1,0 +1,96 @@
+/* Syntax colours for highlighted code (lib/highlight). Imported once, after styles.css.
+   Calm tones that sit with the slate surfaces and the teal accent. Every colour meets WCAG AA
+   (4.5:1) on each code background of its theme: bg, panel, raised, hover, accent-soft, and the
+   added and removed line tints (success or danger at 10 to 12% over bg, panel and raised).
+   syntax-contrast.test.ts computes the ratios from this file; keep the two in step. */
+
+:root,
+[data-theme="light"] {
+  --syn-keyword: #7036bd;
+  --syn-builtin: #0b5e8a;
+  --syn-type: #08665c;
+  --syn-function: #2153b5;
+  --syn-string: #28651a;
+  --syn-number: #934200;
+  --syn-comment: #525d6f;
+  --syn-meta: #7d5100;
+  --syn-property: #3c5a82;
+  --syn-tag: #a82929;
+  --syn-regexp: #a12568;
+  --syn-section: #2153b5;
+  --syn-punct: #4a5566;
+  --syn-added: #16673a;
+  --syn-removed: #a82929;
+}
+
+[data-theme="dark"] {
+  --syn-keyword: #c4a5ff;
+  --syn-builtin: #7cc8f0;
+  --syn-type: #4fd1bf;
+  --syn-function: #86b3ff;
+  --syn-string: #a3d58b;
+  --syn-number: #f5b177;
+  --syn-comment: #97a2b5;
+  --syn-meta: #e9b35a;
+  --syn-property: #a8c4e6;
+  --syn-tag: #f68f8c;
+  --syn-regexp: #f29ac9;
+  --syn-section: #86b3ff;
+  --syn-punct: #b3bccb;
+  --syn-added: #6fd394;
+  --syn-removed: #ff8e8b;
+}
+
+.tok-keyword {
+  color: var(--syn-keyword);
+}
+.tok-builtin {
+  color: var(--syn-builtin);
+}
+.tok-type {
+  color: var(--syn-type);
+}
+.tok-function {
+  color: var(--syn-function);
+}
+.tok-string {
+  color: var(--syn-string);
+}
+.tok-number {
+  color: var(--syn-number);
+}
+.tok-comment {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+.tok-meta {
+  color: var(--syn-meta);
+}
+.tok-property {
+  color: var(--syn-property);
+}
+.tok-tag {
+  color: var(--syn-tag);
+}
+.tok-regexp {
+  color: var(--syn-regexp);
+}
+.tok-section {
+  color: var(--syn-section);
+  font-weight: 600;
+}
+.tok-punct {
+  color: var(--syn-punct);
+}
+.tok-added {
+  color: var(--syn-added);
+}
+.tok-removed {
+  color: var(--syn-removed);
+}
+.tok-strong {
+  font-weight: 600;
+}
+.tok-emphasis {
+  font-style: italic;
+}

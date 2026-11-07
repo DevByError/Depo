@@ -1,7 +1,11 @@
 import type { GitFileDiff, Hunk } from "@depo/shared";
 import { ChevronRight, FileMinus, FilePlus, FileSymlink, FileText } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Tokens } from "@/components/code/Tokens";
+import { hunkRows } from "@/components/review/ReviewComments";
 import { cn } from "@/lib/cn";
+import { type LanguageId, languageForPath } from "@/lib/highlight/languages";
+import { useDiffHighlight } from "@/lib/highlight/use-highlight";
 
 const KIND_ICON = { added: FilePlus, modified: FileText, deleted: FileMinus, renamed: FileSymlink } as const;
 const KIND_LABEL = { added: "New", modified: "Changed", deleted: "Deleted", renamed: "Renamed" } as const;
@@ -26,8 +30,15 @@ export function CommitDiff({ files }: { files: GitFileDiff[] }) {
 
 function FileBlock({ f, open }: { f: GitFileDiff; open: boolean }) {
   const Icon = KIND_ICON[f.kind];
+  const lang = useMemo(() => languageForPath(f.path), [f.path]);
+  // Closed files are not highlighted until they are opened.
+  const [isOpen, setIsOpen] = useState(open);
   return (
-    <details open={open} className="group overflow-hidden rounded-lg border border-border">
+    <details
+      open={open}
+      onToggle={(e) => setIsOpen(e.currentTarget.open)}
+      className="group overflow-hidden rounded-lg border border-border"
+    >
       <summary className="flex cursor-pointer list-none items-center gap-2 bg-raised/60 px-2.5 py-1.5 text-xs hover:bg-hover">
         <ChevronRight
           className="size-3 shrink-0 text-subtle transition-transform group-open:rotate-90"
@@ -48,7 +59,7 @@ function FileBlock({ f, open }: { f: GitFileDiff; open: boolean }) {
       ) : f.hunks.length === 0 ? (
         <p className="px-3 py-2 text-xs text-muted">No text changes (only the file name or mode changed).</p>
       ) : (
-        f.hunks.map((h) => <HunkRows key={`${h.oldStart}-${h.newStart}`} h={h} />)
+        f.hunks.map((h) => <HunkRows key={`${h.oldStart}-${h.newStart}`} h={h} lang={isOpen ? lang : null} />)
       )}
       {f.truncated && (
         <p className="border-t border-border px-3 py-1.5 text-[11px] text-muted">
@@ -59,29 +70,14 @@ function FileBlock({ f, open }: { f: GitFileDiff; open: boolean }) {
   );
 }
 
-function HunkRows({ h }: { h: Hunk }) {
-  const rows = useMemo(() => {
-    let o = h.oldStart;
-    let n = h.newStart;
-    return h.lines
-      .filter((l) => !l.startsWith("\\"))
-      .map((l) => {
-        const t = l[0];
-        const row = {
-          t,
-          text: l.slice(1).replace(/\r$/, ""),
-          o: t === "+" ? null : o,
-          n: t === "-" ? null : n,
-        };
-        if (t !== "+") o++;
-        if (t !== "-") n++;
-        return row;
-      });
-  }, [h]);
+function HunkRows({ h, lang }: { h: Hunk; lang: LanguageId | null }) {
+  const rows = useMemo(() => hunkRows(h), [h]);
+  const hl = useDiffHighlight(rows, lang);
   return (
     <div className="border-t border-border">
       <div className="bg-raised/40 px-2 py-0.5 font-mono text-[11px] text-subtle">
         @@ −{h.oldStart},{h.oldLines} +{h.newStart},{h.newLines} @@
+        {hl.large && <span className="ml-2 font-sans text-muted">Large change: shown without colours</span>}
       </div>
       <table className="w-full border-collapse font-mono text-[12px] leading-[1.55]">
         <tbody>
@@ -108,7 +104,7 @@ function HunkRows({ h }: { h: Hunk }) {
               </td>
               <td className="whitespace-pre-wrap break-all pr-3 align-top text-fg">
                 <span className="sr-only">{r.t === "+" ? "added: " : r.t === "-" ? "removed: " : ""}</span>
-                {r.text || " "}
+                <Tokens tokens={hl.tokens[k]} text={r.text} />
               </td>
             </tr>
           ))}

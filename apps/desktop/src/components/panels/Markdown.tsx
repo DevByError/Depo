@@ -1,4 +1,8 @@
 import { Fragment, type ReactNode } from "react";
+import { CodeBlock } from "@/components/code/CodeBlock";
+
+/** An opening code fence: three or more backticks (or tildes), then the language. */
+const FENCE = /^(`{3,}|~{3,})(.*)$/;
 
 /** Small, safe Markdown renderer (no HTML injection): headings, lists, code blocks, bold, italic, inline code, links as text. */
 function inline(text: string): ReactNode[] {
@@ -30,19 +34,19 @@ export function Markdown({ text }: { text: string }) {
   let key = 0;
   while (i < lines.length) {
     const line = lines[i] ?? "";
-    if (line.startsWith("```")) {
+    const fence = FENCE.exec(line);
+    if (fence) {
+      // The block ends at a fence of the same kind, at least as long (so code can quote ``` itself).
+      const mark = fence[1] ?? "```";
       const buf: string[] = [];
       i++;
-      while (i < lines.length && !(lines[i] ?? "").startsWith("```")) buf.push(lines[i++] ?? "");
+      while (i < lines.length) {
+        const close = /^(`{3,}|~{3,})\s*$/.exec(lines[i] ?? "")?.[1];
+        if (close && close[0] === mark[0] && close.length >= mark.length) break;
+        buf.push(lines[i++] ?? "");
+      }
       i++;
-      blocks.push(
-        <pre
-          key={key++}
-          className="my-2 max-h-80 overflow-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] whitespace-pre"
-        >
-          {buf.join("\n")}
-        </pre>,
-      );
+      blocks.push(<CodeBlock key={key++} code={buf.join("\n")} info={(fence[2] ?? "").trim()} />);
     } else if (/^#{1,4}\s/.test(line)) {
       blocks.push(
         <p key={key++} className="mt-2 font-semibold">
@@ -72,7 +76,7 @@ export function Markdown({ text }: { text: string }) {
       while (
         i < lines.length &&
         (lines[i] ?? "").trim() !== "" &&
-        !(lines[i] ?? "").startsWith("```") &&
+        !FENCE.test(lines[i] ?? "") &&
         !/^#{1,4}\s/.test(lines[i] ?? "") &&
         !/^\s*([-*]|\d+\.)\s+/.test(lines[i] ?? "")
       )

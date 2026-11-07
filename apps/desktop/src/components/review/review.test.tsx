@@ -330,9 +330,71 @@ describe("diff comments", () => {
     responses["changes.list"] = () => ({ changeSets: [changeSet(null)] });
     commentStore();
     wrap(<DiffReviewPanel />);
-    expect(await screen.findByText("import sys")).toBeTruthy();
+    // Code lines are split into coloured spans, so look for the text of the whole row.
+    await waitFor(() =>
+      expect(screen.getAllByRole("row").some((r) => r.textContent?.includes("import sys"))).toBe(true),
+    );
     expect(screen.queryByRole("button", { name: /^Comment on line/ })).toBeNull();
     expect(screen.queryByTestId("review-bar")).toBeNull();
+  });
+});
+
+describe("syntax highlighting", () => {
+  it("colours the code and keeps line buttons, comments, tints and hunk selection", async () => {
+    const cs = changeSet();
+    const file = cs.files[0] as ChangeSet["files"][number];
+    file.hunks.push({
+      oldStart: 20,
+      oldLines: 1,
+      newStart: 21,
+      newLines: 1,
+      lines: ['-    return "old"', '+    return "new"  # done'],
+    });
+    responses["changes.list"] = () => ({ changeSets: [cs] });
+    responses["changes.apply"] = () => ({
+      changeSet: { ...cs, status: "partially_applied" },
+      checkpointId: "cp_1",
+      applied: ["app/main.py"],
+      conflicts: [],
+    });
+    commentStore();
+    const { container } = wrap(<DiffReviewPanel />);
+
+    // Python colours arrive; the added and removed tints stay on their rows.
+    await waitFor(() => expect(container.querySelector(".tok-keyword")?.textContent).toBe("import"));
+    const added = screen.getByRole("button", { name: "Comment on line 2" }).closest("tr") as HTMLElement;
+    expect(added.className).toContain("bg-success/12");
+    expect(added.textContent).toContain("import sys");
+    const removed = screen
+      .getByRole("button", { name: "Comment on removed line 20" })
+      .closest("tr") as HTMLElement;
+    expect(removed.className).toContain("bg-danger/12");
+    // Each hunk is highlighted on its own (old and new side), so the second one may come a moment later.
+    await waitFor(() => expect(removed.querySelector(".tok-string")?.textContent).toBe('"old"'));
+    await waitFor(() => expect(container.querySelector(".tok-comment")?.textContent).toBe("# done"));
+
+    // A range comment still works on highlighted lines.
+    fireEvent.click(screen.getByRole("button", { name: "Comment on line 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Comment on line 2" }), { shiftKey: true });
+    expect(added.className).toContain("bg-accent-soft");
+    const box = screen.getByLabelText("Comment on lines 1 to 2", { selector: "textarea" });
+    fireEvent.change(box, { target: { value: "Explain why sys is needed" } });
+    fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+    await waitFor(() =>
+      expect(lastCall("review.comments.add")).toMatchObject({
+        start: { side: "new", line: 1 },
+        end: { side: "new", line: 2 },
+        body: "Explain why sys is needed",
+      }),
+    );
+    expect(await screen.findByRole("article", { name: "Comment on app/main.py:1-2" })).toBeTruthy();
+
+    // Leave the second change out and apply the rest.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include change 2" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Apply/ }));
+    await waitFor(() =>
+      expect(lastCall("changes.apply")).toEqual({ id: "cs_1", files: [{ path: "app/main.py", hunks: [0] }] }),
+    );
   });
 });
 

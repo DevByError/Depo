@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Tokens } from "@/components/code/Tokens";
 import { CommitChangesBar } from "@/components/git/CommitOffer";
 import {
   CommentCard,
@@ -31,6 +32,8 @@ import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
+import { type LanguageId, languageForPath } from "@/lib/highlight/languages";
+import { useDiffHighlight } from "@/lib/highlight/use-highlight";
 import { useEngine } from "@/store/engine";
 import { usePreviewUi } from "@/store/preview";
 import { useUi } from "@/store/ui";
@@ -452,6 +455,7 @@ function FileDiffView({
   const qc = useQueryClient();
   const isOn = (i: number) => selected === null || selected.has(i);
   const rowsByHunk = useMemo(() => f.hunks.map(hunkRows), [f.hunks]);
+  const lang = useMemo(() => languageForPath(f.path), [f.path]);
   const [sel, setSel] = useState<LineSelection | null>(null);
   const [composing, setComposing] = useState(false);
   // The row that takes Tab in each change; arrow keys move it (one tab stop per change).
@@ -569,6 +573,7 @@ function FileDiffView({
             key={`${h.oldStart}-${h.newStart}`}
             h={h}
             rows={rowsByHunk[i] ?? []}
+            lang={lang}
             index={i}
             selectable={selectable}
             on={isOn(i)}
@@ -613,6 +618,7 @@ function FileDiffView({
 function HunkView({
   h,
   rows,
+  lang,
   index,
   selectable,
   on,
@@ -630,6 +636,8 @@ function HunkView({
 }: {
   h: Hunk;
   rows: Row[];
+  /** For syntax colours; null shows plain text. */
+  lang: LanguageId | null;
   index: number;
   selectable: boolean;
   on: boolean;
@@ -646,6 +654,7 @@ function HunkView({
   onClear: () => void;
   editor: ReactNode;
 }) {
+  const hl = useDiffHighlight(rows, lang);
   return (
     <div
       className={cn(
@@ -663,6 +672,7 @@ function HunkView({
           />
         )}
         @@ −{h.oldStart},{h.oldLines} +{h.newStart},{h.newLines} @@
+        {hl.large && <span className="font-sans text-muted">Large change: shown without colours</span>}
       </div>
       <table className="w-full border-collapse font-mono text-[12px] leading-[1.55]">
         <tbody>
@@ -725,7 +735,7 @@ function HunkView({
                     <span className="sr-only">
                       {r.t === "+" ? "added: " : r.t === "-" ? "removed: " : ""}
                     </span>
-                    {r.text || " "}
+                    <Tokens tokens={hl.tokens[k]} text={r.text} />
                   </td>
                 </tr>
                 {here.length > 0 && (
