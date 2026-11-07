@@ -137,7 +137,10 @@ export function fakeEmbedding(text: string, dims = 64): number[] {
   return v;
 }
 
-function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
+/** Timing fields Ollama adds to its last chunk (nanoseconds), for a warm or a cold call. */
+type Timing = Record<string, number>;
+
+function scriptedChat(messages: WireMessage[], stepDelayMs: number, timing: Timing = {}): Response {
   const firstUser = messages.find((m) => m.role === "user")?.content ?? "";
   const toolMsgs = messages.filter((m) => m.role === "tool");
   const words = (s: string) => s.split(/(?<= )/).filter(Boolean);
@@ -151,6 +154,7 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
             prompt_eval_count: 900,
             eval_count: n,
             eval_duration: 5e8,
+            ...timing,
           }),
         );
       if (/broken tool call/.test(firstUser)) {
@@ -234,14 +238,16 @@ export const FAKE_MEMORY_ITEMS = [
   { kind: "fact", text: "Tests call the API with key sk-abcdefghijklmnopqrstuvwxyz123456 when needed." },
 ];
 
-function memoryReply(): Response {
+function memoryReply(timing: Timing = {}): Response {
   return new Response(
     new ReadableStream({
       start(ctl) {
         ctl.enqueue(
           line({ message: { role: "assistant", content: JSON.stringify({ items: FAKE_MEMORY_ITEMS }) } }),
         );
-        ctl.enqueue(line({ done: true, prompt_eval_count: 400, eval_count: 80, eval_duration: 5e8 }));
+        ctl.enqueue(
+          line({ done: true, prompt_eval_count: 400, eval_count: 80, eval_duration: 5e8, ...timing }),
+        );
         ctl.close();
       },
     }),
@@ -256,12 +262,14 @@ export const FAKE_COMMIT = {
   body: "- add GET /health that answers ok\n- cover it with a test",
 };
 
-function jsonReply(value: unknown): Response {
+function jsonReply(value: unknown, timing: Timing = {}): Response {
   return new Response(
     new ReadableStream({
       start(ctl) {
         ctl.enqueue(line({ message: { role: "assistant", content: JSON.stringify(value) } }));
-        ctl.enqueue(line({ done: true, prompt_eval_count: 300, eval_count: 60, eval_duration: 5e8 }));
+        ctl.enqueue(
+          line({ done: true, prompt_eval_count: 300, eval_count: 60, eval_duration: 5e8, ...timing }),
+        );
         ctl.close();
       },
     }),
@@ -273,6 +281,16 @@ export interface FakeOllamaOptions {
   stepDelayMs?: number;
 }
 
+/** A chat or generate request the fake received (tests assert keep_alive, num_ctx and prompts). */
+export interface FakeRequest {
+  path: string;
+  body: Record<string, unknown>;
+}
+
+/** What the fake reports as a model load: long when the model was not in memory (or its context changed). */
+export const FAKE_COLD_LOAD_NS = 1_200_000_000;
+export const FAKE_WARM_LOAD_NS = 20_000_000;
+
 export function startFakeOllama(
   port = 0,
   opts: FakeOllamaOptions = {},
@@ -280,8 +298,27 @@ export function startFakeOllama(
   url: string;
   port: number;
   models: Map<string, number>;
+  /** Every /api/chat and /api/generate request, oldest first. */
+  requests: FakeRequest[];
+  /** Models "in memory", with the context length they were loaded with (like /api/ps). */
+  loaded: Map<string, number | null>;
   stop: () => void;
 } {
+  const requests: FakeRequest[] = [];
+  const loaded = new Map<string, number | null>();
+  /** Load the model like Ollama does: again when it is not loaded or num_ctx changed. */
+  const load = (body: Record<string, unknown>): Timing => {
+    const model = String(body.model ?? "");
+    const ctx = (body.options as { num_ctx?: number } | undefined)?.num_ctx ?? null;
+    const cold = !loaded.has(model) || loaded.get(model) !== ctx;
+    if (body.keep_alive === 0) loaded.delete(model);
+    else loaded.set(model, ctx);
+    return {
+      load_duration: cold ? FAKE_COLD_LOAD_NS : FAKE_WARM_LOAD_NS,
+      prompt_eval_duration: 300_000_000,
+      total_duration: (cold ? FAKE_COLD_LOAD_NS : FAKE_WARM_LOAD_NS) + 800_000_000,
+    };
+  };
   const models = new Map<string, number>([
     ["qwen2.5-coder:1.5b", 986_000_000],
     ["nomic-embed-text:latest", 274_000_000],
@@ -331,14 +368,40 @@ export function startFakeOllama(
           models.delete(model);
           return new Response(null);
         }
+        case "/api/ps":
+          return Response.json({
+            models: [...loaded].map(([name, ctx]) => ({
+              name,
+              model: name,
+              size_vram: 1_000_000_000,
+              expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+              ...(ctx !== null ? { context_length: ctx } : {}),
+            })),
+          });
+        case "/api/generate": {
+          // An empty prompt loads (or with keep_alive 0, unloads) the model, like Ollama.
+          const body = (await req.json()) as Record<string, unknown>;
+          requests.push({ path: url.pathname, body });
+          const timing = load(body);
+          return Response.json({
+            model: body.model,
+            response: "",
+            done: true,
+            done_reason: body.keep_alive === 0 ? "unload" : "load",
+            ...timing,
+          });
+        }
         case "/api/chat": {
-          const body = (await req.json()) as { messages: WireMessage[]; tools?: unknown[] };
-          if (body.tools?.length) return scriptedChat(body.messages, opts.stepDelayMs ?? 0);
+          const raw = (await req.json()) as Record<string, unknown>;
+          requests.push({ path: url.pathname, body: raw });
+          const timing = load(raw);
+          const body = raw as unknown as { messages: WireMessage[]; tools?: unknown[] };
+          if (body.tools?.length) return scriptedChat(body.messages, opts.stepDelayMs ?? 0, timing);
           // Depo's automatic memory asks for durable items as JSON after a task.
           const sys = body.messages.find((m) => m.role === "system")?.content ?? "";
-          if (sys.includes("Depo's durable memory")) return memoryReply();
+          if (sys.includes("Depo's durable memory")) return memoryReply(timing);
           // Commit messages for applied changes.
-          if (sys.includes("git commit messages")) return jsonReply(FAKE_COMMIT);
+          if (sys.includes("git commit messages")) return jsonReply(FAKE_COMMIT, timing);
           // Benchmarks and plain chats: a short streamed answer.
           const words = "def merge_intervals(intervals):\n    return sorted(intervals)\n".split(/(?<= )/);
           return new Response(
@@ -348,7 +411,9 @@ export function startFakeOllama(
                   ctl.enqueue(line({ message: { content: w } }));
                   await Bun.sleep(5);
                 }
-                ctl.enqueue(line({ done: true, prompt_eval_count: 30, eval_count: 50, eval_duration: 1e9 }));
+                ctl.enqueue(
+                  line({ done: true, prompt_eval_count: 30, eval_count: 50, eval_duration: 1e9, ...timing }),
+                );
                 ctl.close();
               },
             }),
@@ -362,6 +427,8 @@ export function startFakeOllama(
     url: `http://127.0.0.1:${server.port}`,
     port: server.port ?? port,
     models,
+    requests,
+    loaded,
     stop: () => server.stop(true),
   };
 }

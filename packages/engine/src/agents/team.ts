@@ -1542,13 +1542,15 @@ export class TeamRunner {
   private systemPrompt(input: TeamInput, manifest: AgentManifest, extra: string): string {
     const info = detectProject(input.ws.root);
     const win = process.platform === "win32";
+    // Ordered for prompt caching: the agent's fixed text first, then the project, then the task.
     return [
       manifest.prompt,
-      "",
-      `Project: ${input.projectName} (${info.kind}). Top level: ${topLevelListing(input.ws.root) || "(empty)"}`,
+      extra,
       `Shell: commands run with ${win ? "cmd.exe on Windows (use Windows syntax; `&&` works)" : "/bin/sh"} in the project root. There is no interactive input.`,
+      `Project: ${input.projectName} (${info.kind}).`,
       ...(info.testCommand ? [`Run the tests with: ${info.testCommand}`] : []),
       ...info.notes,
+      `Top level: ${topLevelListing(input.ws.root) || "(empty)"}`,
       this.h.memoryContext(input.projectId)
         ? `# What you know about this project\n${this.h.memoryContext(input.projectId)}`
         : "",
@@ -1560,7 +1562,6 @@ export class TeamRunner {
         mode: input.mode,
         contextLength: this.resolve(manifest.role)?.contextLength ?? DEFAULT_CONTEXT,
       }),
-      extra,
     ]
       .filter(Boolean)
       .join("\n");

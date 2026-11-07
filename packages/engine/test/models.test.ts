@@ -205,7 +205,8 @@ describe("models API", () => {
     });
     expect(manual.effective.coder?.model).toBe("my-custom:latest");
     expect(e.models.resolve("coder")?.model).toBe("my-custom:latest");
-    expect(e.models.resolve("coder")?.contextLength).toBeUndefined();
+    // Not picked by Auto-Fit and not in the catalog: the default context, the same for every call.
+    expect(e.models.resolve("coder")?.contextLength).toBe(16384);
     const back = await call(e, "models.assign", { role: "coder", ref: null });
     expect(back.effective.coder?.model).toBe(plan?.roles.coder?.tag ?? "");
     expect(e.models.resolve("reasoning")?.contextLength).toBe(plan?.roles.reasoning?.contextLength ?? -1);

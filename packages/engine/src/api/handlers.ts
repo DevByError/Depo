@@ -22,6 +22,7 @@ import type { McpManager } from "../mcp/manager";
 import { readableDir } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
+import { checkSpeedSetting } from "../models/speed";
 import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { QaService } from "../qa/service";
@@ -146,7 +147,7 @@ export const handlers: Handlers = {
   "settings.get": (params, ctx) => ({ key: params.key, value: ctx.settings.get(params.key) }),
 
   "settings.set": (params, ctx) => {
-    const value = ctx.settings.set(params.key, params.value);
+    const value = ctx.settings.set(params.key, checkSpeedSetting(params.key, params.value));
     ctx.bus.emit({
       agent: "engine",
       type: "settings_changed",

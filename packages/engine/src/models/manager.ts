@@ -13,6 +13,7 @@ import {
   isLocalUrl,
   type ModelCatalog,
   type ModelProvider,
+  maxContextFor,
   type ProviderKind,
   parseCatalog,
   type QualityMode,
@@ -37,11 +38,17 @@ import { diskFreeGB, profileHardware } from "../hardware/profiler";
 import type { Logger } from "../logger";
 import { instrumentProvider, type ModelCallStats } from "../logs/model-calls";
 import type { SettingsRepo } from "../settings";
+import { readKeepAlive, tuneProvider } from "./speed";
 
 const KEY_PROVIDERS = "models.providers";
 const KEY_ASSIGNMENTS = "models.assignments";
 const KEY_CATALOG = "models.catalog";
 const KEY_PROFILE = "hardware.profile";
+
+/** The context length a role gets when Auto-Fit did not pick its model (callers used this before). */
+const DEFAULT_CONTEXT = 16_384;
+/** Roles that chat; embedding calls take no context length. */
+const CHAT_ROLES = ROLES.filter((r) => r !== "embedding");
 
 /** A fixed prompt so benchmark numbers are comparable between runs and machines. */
 const BENCH_PROMPT =
@@ -74,6 +81,10 @@ interface Job {
 export class ModelManager {
   private readonly jobs = new Map<string, Job>();
   private readonly log: Logger;
+  /** The context length chosen per model (logged once, and again only when it changes). */
+  private readonly chosenContext = new Map<string, number>();
+  /** Models chat or preload calls went to in this run, to unload at exit ("until Depo closes"). */
+  private readonly used = new Map<string, { providerId: string; model: string }>();
 
   constructor(private readonly o: ModelManagerOptions) {
     this.log = o.logger.child({ component: "models" });
@@ -106,8 +117,39 @@ export class ModelManager {
     const cfg = this.providerConfigs().find((p) => p.id === id);
     if (!cfg) throw new Error(`Unknown model provider: ${id}`);
     if (!cfg.enabled) throw new Error(`Model provider ${id} is turned off.`);
-    // Every chat call is timed and logged (tokens/s, time to first token, errors).
-    return instrumentProvider((this.o.providerFactory ?? createProvider)(cfg), this.log, this.o.callStats);
+    // Every chat call is timed and logged (tokens/s, time to first token, load time, errors), and
+    // gets the model's one context length and the keep-alive setting, so models stay loaded.
+    const measured = instrumentProvider(
+      (this.o.providerFactory ?? createProvider)(cfg),
+      this.log,
+      this.o.callStats,
+    );
+    return tuneProvider(measured, {
+      keepAlive: () => this.keepAlive(),
+      contextFor: (model) => this.contextFor(cfg.id, model),
+      onUse: (model) => this.used.set(`${cfg.id}\u0000${model}`, { providerId: cfg.id, model }),
+    });
+  }
+
+  /** How long runtimes keep a model loaded after a call (setting `models.keep_alive`). */
+  keepAlive(): string {
+    return readKeepAlive(this.o.settings);
+  }
+
+  /**
+   * "Until Depo closes": unload the models this run used when the engine stops. Other keep-alive
+   * values let the runtime unload them on its own timer. Best effort, a few seconds at most.
+   */
+  async releaseModels(timeoutMs = 3000): Promise<void> {
+    if (this.keepAlive() !== "-1") return;
+    await Promise.allSettled(
+      [...this.used.values()].map(async ({ providerId, model }) => {
+        const p = this.provider(providerId);
+        if (!p.unload) return;
+        await p.unload(model, AbortSignal.timeout(timeoutMs));
+        this.log.info("model unloaded at exit", { provider: providerId, model });
+      }),
+    );
   }
 
   async providerStatus(): Promise<ProviderStatus[]> {
@@ -210,9 +252,12 @@ export class ModelManager {
   // ---- assignments -----------------------------------------------------------------------
 
   assignments(): { assignments: Assignments; effective: Assignments } {
+    return this.assignmentsWith(this.plan());
+  }
+
+  private assignmentsWith(plan: AutoFitPlan | null): { assignments: Assignments; effective: Assignments } {
     const parsed = AssignmentsSchema.safeParse(this.o.settings.get(KEY_ASSIGNMENTS) ?? {});
     const assignments = parsed.success ? parsed.data : {};
-    const plan = this.plan();
     const ollama = this.providerConfigs().find((p) => p.kind === "ollama" && p.enabled);
     const effective: Assignments = {};
     for (const role of ROLES) {
@@ -236,16 +281,56 @@ export class ModelManager {
     return this.assignments();
   }
 
-  /** The model an agent in `role` should use right now, with the context length to request. */
+  /**
+   * The model an agent in `role` should use right now, with the context length to request: the
+   * same for every role that shares the model (see contextFor).
+   */
   resolve(role: Role): { provider: ModelProvider; model: string; contextLength: number | undefined } | null {
-    const ref = this.assignments().effective[role];
+    const plan = this.plan();
+    const { effective } = this.assignmentsWith(plan);
+    const ref = effective[role];
     if (!ref) return null;
-    const planned = this.plan()?.roles[role];
     return {
       provider: this.provider(ref.providerId),
       model: ref.model,
-      contextLength: planned && planned.tag === ref.model ? planned.contextLength : undefined,
+      contextLength: this.contextWith(plan, effective, ref.providerId, ref.model),
     };
+  }
+
+  /**
+   * The one context length used for every call to this model in this run: the largest that any
+   * role assigned to it needs (its Auto-Fit pick, else 16k), capped by what fits in VRAM and RAM.
+   * Ollama reloads a model whenever `num_ctx` changes, which takes seconds to minutes on a small
+   * GPU. Undefined for a model no role uses (its callers' own value is kept).
+   */
+  contextFor(providerId: string, model: string): number | undefined {
+    const plan = this.plan();
+    return this.contextWith(plan, this.assignmentsWith(plan).effective, providerId, model);
+  }
+
+  private contextWith(
+    plan: AutoFitPlan | null,
+    effective: Assignments,
+    providerId: string,
+    model: string,
+  ): number | undefined {
+    const roles = CHAT_ROLES.filter(
+      (r) => effective[r]?.providerId === providerId && effective[r]?.model === model,
+    );
+    if (roles.length === 0) return undefined;
+    const needs = roles.map((r) => {
+      const planned = plan?.roles[r];
+      return planned && planned.tag === model ? planned.contextLength : DEFAULT_CONTEXT;
+    });
+    const hw = this.hardware();
+    const cap = hw ? maxContextFor(hw, model, this.catalog().catalog) : null;
+    const ctx = Math.min(Math.max(...needs), cap ?? Number.POSITIVE_INFINITY);
+    const key = `${providerId}\u0000${model}`;
+    if (this.chosenContext.get(key) !== ctx) {
+      this.chosenContext.set(key, ctx);
+      this.log.info("context length chosen", { provider: providerId, model, contextLength: ctx, roles, cap });
+    }
+    return ctx;
   }
 
   // ---- downloads -------------------------------------------------------------------------

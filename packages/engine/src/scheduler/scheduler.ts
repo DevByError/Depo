@@ -6,6 +6,11 @@ import type { Logger } from "../logger";
 const PRIORITY_RANK: Record<SchedulerPriority, number> = { chat: 0, task: 1, background: 2 };
 /** A job that has waited this long ignores the "stay on the loaded model" preference. */
 const STARVATION_MS = 20_000;
+/**
+ * After a chat or task job finishes, background work for another model waits this long before it
+ * may swap the model: an agent's next step usually follows within a few seconds (its tools ran).
+ */
+const FOREGROUND_GRACE_MS = 3000;
 
 export interface SchedulerRequest {
   projectId: string | null;
@@ -36,6 +41,8 @@ export interface SchedulerOptions {
  * One queue for model work across all projects. A single local GPU serves few requests at a
  * time, so jobs wait here, ordered by priority (chat > task > background), then by staying on
  * the model that is already loaded (avoids slow reloads), then round-robin between projects.
+ * Background work (indexing, memory, warm-up) never swaps the model while chat or task work for
+ * another model waits or is between steps. No job waits on these preferences for more than 20 s.
  * CPU work (tests, builds) does not go through the scheduler and runs in parallel.
  */
 export class ModelScheduler {
@@ -45,6 +52,9 @@ export class ModelScheduler {
   private pausedAll = false;
   private resident: string | null = null;
   private readonly startedAt = new Map<string, number>();
+  /** The model and finish time of the last chat or task job. */
+  private lastForeground: { model: string; at: number } | null = null;
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly o: SchedulerOptions) {}
 
@@ -98,6 +108,7 @@ export class ModelScheduler {
     if (job && began !== undefined) {
       this.o.logger?.debug("model job finished", { ...this.logFields(job), durationMs: this.now() - began });
     }
+    if (job && job.priority !== "background") this.lastForeground = { model: job.model, at: this.now() };
     this.pump();
     this.notifyQueue();
   }
@@ -176,10 +187,65 @@ export class ModelScheduler {
     });
   }
 
+  /** Waiting for chat or task work, not held by a pause. */
+  private waitsForeground(j: Waiting): boolean {
+    return (
+      j.priority !== "background" &&
+      !this.pausedAll &&
+      !(j.projectId !== null && this.o.isProjectPaused(j.projectId))
+    );
+  }
+
+  /**
+   * How long a background job must still wait so it does not swap the loaded model while chat or
+   * task work for another model waits, runs, or is between steps (0 = it may start).
+   */
+  private holdMs(j: Waiting, now: number): number {
+    if (j.priority !== "background") return 0;
+    const left = STARVATION_MS - (now - j.enqueuedAt);
+    if (left <= 0) return 0;
+    const running = [...this.running.values()];
+    // Its model is in use already: starting it swaps nothing.
+    if (j.model === this.resident || running.some((r) => r.model === j.model)) return 0;
+    const busy =
+      running.some((r) => r.priority !== "background" && r.model !== j.model) ||
+      this.queue.some((q) => q !== j && q.model !== j.model && this.waitsForeground(q));
+    if (busy) return left;
+    const f = this.lastForeground;
+    if (f && f.model !== j.model && now - f.at < FOREGROUND_GRACE_MS) {
+      return Math.min(left, FOREGROUND_GRACE_MS - (now - f.at));
+    }
+    return 0;
+  }
+
+  /** Pump again when the soonest held background job may start. */
+  private wakeIn(ms: number): void {
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeTimer = setTimeout(
+      () => {
+        this.wakeTimer = null;
+        this.pump();
+        this.notifyQueue();
+      },
+      Math.max(1, ms),
+    );
+    this.wakeTimer.unref?.();
+  }
+
   private pump(): void {
     while (this.running.size < Math.max(1, this.o.maxParallel())) {
-      const next = this.ordered().find((j) => this.eligible(j));
-      if (!next) return;
+      const now = this.now();
+      let soonest = Number.POSITIVE_INFINITY;
+      const next = this.ordered().find((j) => {
+        if (!this.eligible(j)) return false;
+        const hold = this.holdMs(j, now);
+        if (hold > 0) soonest = Math.min(soonest, hold);
+        return hold === 0;
+      });
+      if (!next) {
+        if (Number.isFinite(soonest)) this.wakeIn(soonest);
+        return;
+      }
       this.queue.splice(this.queue.indexOf(next), 1);
       this.running.set(next.id, next);
       this.resident = next.model;

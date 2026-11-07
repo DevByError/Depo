@@ -10,6 +10,7 @@ export * from "./qa";
 export * from "./review";
 export * from "./rpc";
 export * from "./search";
+export * from "./speed";
 export * from "./steer";
 export * from "./team-replay";
 

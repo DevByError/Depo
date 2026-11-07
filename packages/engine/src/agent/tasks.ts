@@ -19,6 +19,7 @@ import "../tools/design-tools";
 import "../tools/qa-tools";
 import { Blackboard } from "../agents/blackboard";
 import type { EtaService } from "../agents/eta";
+import { firstStepRole } from "../agents/first-step";
 import { agentTag, manifestOf } from "../agents/manifests";
 import { agentStatuses, TeamRunner } from "../agents/team";
 import { buildTimeline, loadTeamEvents, loadTimelineEvents } from "../agents/timeline";
@@ -31,6 +32,7 @@ import { type Logger, withLogContext } from "../logger";
 import { AutoMemory } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
+import type { ModelWarmup } from "../models/speed";
 import { ReviewStore } from "../review/comments";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
@@ -69,6 +71,8 @@ export interface TaskManagerOptions {
   eta?: EtaService;
   /** Page checks in a headless browser (check_page). */
   qa?: ToolContext["qa"];
+  /** Loads the first step's model early, at background priority (models.preload). */
+  warmup?: Pick<ModelWarmup, "warm">;
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -512,6 +516,12 @@ export class TaskManager {
     }
     const { provider, model } = resolved;
     const contextLength = resolved.contextLength ?? DEFAULT_CONTEXT;
+    // Warm-up: load the first step's model while the private copy and the prompt are prepared.
+    void this.o.warmup?.warm(
+      firstStepRole(WorkModeSchema.parse(row.mode), row.prompt, this.o.manifest),
+      { projectId: project.id, taskId },
+      signal,
+    );
     this.o.db
       .update(tasks)
       .set({ model, updatedAt: new Date().toISOString() })
@@ -733,21 +743,25 @@ export class TaskManager {
     request = "",
   ): string {
     const budgets = promptBudgets(contextLength);
-    const parts = [codingSystemPrompt({ projectName, root, contextLength, request })];
+    const context: string[] = [];
     const memory = this.o.memory?.contextFor(projectId, budgets.memory).trim();
-    if (memory) parts.push(`# What you know about this project\n${memory}`);
+    if (memory) context.push(`# What you know about this project\n${memory}`);
     const map = this.o.indexer?.repoMap(projectId, budgets.repoMap).trim();
     if (map) {
-      parts.push(
+      context.push(
         `# Repo map (files and their main symbols; use repo_map, find_symbol and semantic_search for more)\n${map}`,
       );
     }
-    if (this.o.memory) {
-      parts.push(
-        "When you learn something lasting about this project (a convention, a decision, a user preference), save it with the remember tool.",
-      );
-    }
-    return parts.join("\n\n");
+    // Static parts first, then the project, memory and repo map, then the task's playbook topics,
+    // so runtimes can reuse the cached start of the prompt (see codingSystemPrompt).
+    return codingSystemPrompt({
+      projectName,
+      root,
+      contextLength,
+      request,
+      remember: !!this.o.memory,
+      context,
+    });
   }
 
   private knowledge(projectId: string): ToolContext["knowledge"] | undefined {
