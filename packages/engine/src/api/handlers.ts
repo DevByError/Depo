@@ -321,6 +321,7 @@ export const handlers: Handlers = {
   "preview.restart": async (p, ctx) => ({ preview: await ctx.previews.restart(p.id) }),
   "preview.list": (p, ctx) => ({ previews: ctx.previews.list(p.projectId) }),
   "preview.logs": (p, ctx) => ctx.previews.logs(p.id, p.since ?? 0),
+  "team.timeline": (p, ctx) => ctx.tasks.teamTimeline(p.taskId),
   "skills.list": (_p, ctx) => ({ skills: ctx.skills.list() }),
   "skills.get": (p, ctx) => {
     const i = ctx.skills.instructions(p.id);

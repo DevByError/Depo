@@ -28,6 +28,7 @@ export const AGENT_EVENT_TYPES = [
   "checkpoint_created",
   "queued",
   "memory_updated",
+  "decision",
 ] as const;
 
 export const SYSTEM_EVENT_TYPES = [

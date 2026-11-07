@@ -12,6 +12,9 @@ import {
   type AgentId,
   type AgentManifest,
   type AgentStatus,
+  type DecisionKind,
+  type EventStatus,
+  type JsonValue,
   type Plan,
   type PlanNode,
   PlanSchema,
@@ -35,6 +38,19 @@ import type { ProjectKnowledge, TeamHooks, ToolContext } from "../tools/index";
 import { ToolError } from "../tools/paths";
 import type { Workspace } from "../workspace/service";
 import { type Blackboard, cleanSection, mayWrite } from "./blackboard";
+import {
+  adrEntries,
+  clip,
+  decisionDetails,
+  firstSentences,
+  listWords,
+  MODE_LABEL,
+  plainText,
+  recommendationOf,
+  reviewCounts,
+  reviewText,
+  shortTitle,
+} from "./decisions";
 import { MANIFESTS, MODE_AGENTS, manifestOf, READ_ONLY_MODES } from "./manifests";
 
 const DEFAULT_CONTEXT = 16_384;
@@ -615,7 +631,7 @@ export class TeamRunner {
     const mgrEmit = baseEmit(mgrTag);
     const opts = this.h.options();
 
-    const plan = await this.makePlan(input, mgrEmit);
+    const { plan, standard } = await this.makePlan(input, mgrEmit);
     this.savePlan(taskId, projectId, plan);
     mgrEmit({
       type: "planning",
@@ -626,6 +642,7 @@ export class TeamRunner {
       details: { plan: true, nodes: plan.nodes.length },
       status: "succeeded",
     });
+    this.planDecision(input, plan, standard, mgrEmit);
     this.h.addMessage(taskId, { role: "assistant", content: planText(plan) }, mgrTag);
 
     if (opts.approvePlan && !READ_ONLY_MODES.includes(input.mode)) {
@@ -644,6 +661,16 @@ export class TeamRunner {
         signal,
       );
       if (signal.aborted) return { finalText: "", unfinished: 0, declined: false };
+      const n = plan.nodes.length;
+      decide(
+        mgrEmit,
+        "plan_approval",
+        ok
+          ? `Plan approved by you. ${n} task${n === 1 ? "" : "s"} start now.`
+          : "Plan declined by you. Nothing was built.",
+        { outcome: ok ? "approved" : "declined", by: "user" },
+        ok ? "succeeded" : "cancelled",
+      );
       if (!ok) {
         const finalText =
           "The plan was declined, so nothing was built. Tell me what to change and I will plan again.";
@@ -656,6 +683,7 @@ export class TeamRunner {
     await this.execute(input, plan, baseEmit);
     if (signal.aborted) return { finalText: "", unfinished: 0, declined: false };
 
+    this.releaseDecision(input, plan, mgrEmit);
     if (opts.exportDocs && !READ_ONLY_MODES.includes(input.mode)) this.exportDocs(input);
     const finalText = this.summary(input, plan);
     this.h.blackboard.write(projectId, "plan.json", JSON.stringify(plan), mgrTag, taskId);
@@ -669,14 +697,20 @@ export class TeamRunner {
     return this.h.models.resolve(role) ?? this.h.models.resolve("coder");
   }
 
-  private async makePlan(input: TeamInput, emit: Emit): Promise<Plan> {
+  /**
+   * The Manager's plan. `standard` says why the standard pipeline was used instead of a plan of
+   * the Manager's own (null when the Manager's draft was accepted).
+   */
+  private async makePlan(input: TeamInput, emit: Emit): Promise<{ plan: Plan; standard: string | null }> {
     const template = templateNodes(input.mode, input.text);
     let drafts: Draft[] = template;
     let summary = "";
     let questions: string[] = [];
+    let standard: string | null = "This mode has a single step, so there was nothing to plan.";
     // Single-step modes need no negotiation; the template is the plan.
     if (template.length > 1) {
       const r = this.resolve("reasoning");
+      standard = "No planning model is set up, so the Manager kept the standard steps.";
       if (r) {
         emit({ type: "planning", text: "Manager is planning the work", status: "started" });
         const allowed = MODE_AGENTS[input.mode].map((id) => `- ${id}: ${this.man(id).mission}`).join("\n");
@@ -709,8 +743,14 @@ export class TeamRunner {
           drafts = sanitizePlan(res, input.mode, template);
           summary = res.summary;
           questions = res.questions.slice(0, 5);
+          // sanitizePlan hands back the template itself when the draft cannot be used.
+          standard =
+            drafts === template
+              ? "The Manager's draft named unknown agents or had a loop, so it kept the standard steps."
+              : null;
         } catch (err) {
           if (input.signal.aborted) throw err;
+          standard = "The Manager's plan could not be read, so it kept the standard steps.";
           emit({
             type: "warning",
             text: "The Manager's plan could not be read, so the standard pipeline is used.",
@@ -740,7 +780,7 @@ export class TeamRunner {
         attempts: 0,
       };
     });
-    return PlanSchema.parse({
+    const plan = PlanSchema.parse({
       mode: input.mode,
       summary: summary || defaultSummary(nodes),
       nodes,
@@ -748,6 +788,100 @@ export class TeamRunner {
       version: 1,
       approved: false,
     });
+    return { plan, standard };
+  }
+
+  /** Decision: the plan the Manager chose (which agents, for what), or why it kept the standard steps. */
+  private planDecision(input: TeamInput, plan: Plan, standard: string | null, emit: Emit) {
+    const owners = [...new Set(plan.nodes.map((n) => n.owner))];
+    const names = owners.map((id) => this.man(id).name);
+    const n = plan.nodes.length;
+    const tasks = `${n} task${n === 1 ? "" : "s"}`;
+    const who = names.length <= 4 ? listWords(names) : `${names.length} agents`;
+    const items = owners.map(
+      (id) =>
+        `${this.man(id).name}: ${plan.nodes
+          .filter((x) => x.owner === id)
+          .map((x) => shortTitle(x.title, 90))
+          .join("; ")}`,
+    );
+    if (standard === null) {
+      const usual = [...new Set(templateNodes(input.mode, input.text).map((x) => x.owner))];
+      const leftOut = usual.filter((id) => !owners.includes(id)).map((id) => this.man(id).name);
+      const reason = [
+        plainText(plan.summary),
+        leftOut.length ? `Left out ${listWords(leftOut)}: not needed for this request.` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      decide(
+        emit,
+        "plan",
+        `Manager planned ${tasks} for ${who}`,
+        { outcome: "custom", reason, items, agents: owners, tasks: n },
+        "succeeded",
+      );
+    } else {
+      decide(
+        emit,
+        "plan",
+        `Manager chose the standard ${MODE_LABEL[input.mode]} steps: ${tasks} for ${who}`,
+        { outcome: "standard", reason: standard, items, agents: owners, tasks: n },
+        "succeeded",
+      );
+    }
+  }
+
+  /** Decision: the final release verdict (unfinished work, then the security and UX gate). */
+  private releaseDecision(input: TeamInput, plan: Plan, emit: Emit) {
+    const n = plan.nodes.length;
+    const done = plan.nodes.filter((x) => x.status === "done").length;
+    const gate = this.releaseGate(input.projectId);
+    const items = gate.map(
+      (g) => `${g.label}: ${g.overall}/100 (${g.grade})${g.blocks ? ", blocks the release" : ""}`,
+    );
+    const blockers = gate.filter((g) => g.blocks);
+    const unfinished = plan.nodes.filter((x) => x.status !== "done");
+    if (blockers.length > 0) {
+      decide(
+        emit,
+        "release",
+        `Manager: release blocked by ${listWords(blockers.map((b) => `${b.label} (${b.overall}/100)`))}`,
+        {
+          outcome: "blocked",
+          reason: "Fix the blocking findings before you ship. The changes are still there for you to review.",
+          items,
+        },
+        "failed",
+      );
+    } else if (unfinished.length > 0) {
+      decide(
+        emit,
+        "release",
+        `Manager: ${done} of ${n} tasks finished, so review the changes with care`,
+        {
+          outcome: "unfinished",
+          reason: `Not finished: ${unfinished.map((x) => shortTitle(x.title, 60)).join("; ")}.`,
+          items: [...unfinished.map((x) => `${shortTitle(x.title, 60)}: ${x.status}`), ...items],
+        },
+        "info",
+      );
+    } else {
+      const scores = gate.map((g) => `${g.label} ${g.overall}/100`);
+      decide(
+        emit,
+        "release",
+        `Manager: ready for your review (${[n === 1 ? "the task is done" : `all ${n} tasks done`, ...scores].join(", ")})`,
+        {
+          outcome: "ready",
+          reason: gate.length
+            ? "Every task is done and no score blocks the release."
+            : "Every task is done. No security or UX score was recorded for this run.",
+          items,
+        },
+        "succeeded",
+      );
+    }
   }
 
   private async callStructured<T>(
@@ -869,6 +1003,7 @@ export class TeamRunner {
     const ownerTag = this.tag(owner.id);
     const mgrTag = this.tag("manager");
     const emit = baseEmit(ownerTag);
+    const mgrEmit = baseEmit(mgrTag);
     node.status = "doing";
     node.startedAt = new Date().toISOString();
     save();
@@ -915,13 +1050,30 @@ export class TeamRunner {
         if (run.error) {
           node.status = "failed";
           node.note = run.error;
+          decide(
+            mgrEmit,
+            "escalate",
+            `Manager stopped ${shortTitle(node.title)}: ${owner.name} could not work on it`,
+            { outcome: "error", nodeId: node.id, reason: plainText(run.error), owner: owner.id },
+            "failed",
+          );
           break;
         }
         node.note = run.text.slice(0, 600);
         const reviewer = node.review ? this.pickReviewer(node, owner) : null;
+        this.handoffDecision(input, node, owner, run, reviewer && !run.hitLimit ? "submitted" : null, emit);
         if (!reviewer || run.hitLimit) {
           node.status = run.hitLimit ? "failed" : "done";
-          if (run.hitLimit) node.note = `${owner.name} ran out of steps before finishing.`;
+          if (run.hitLimit) {
+            node.note = `${owner.name} ran out of steps before finishing.`;
+            decide(
+              mgrEmit,
+              "escalate",
+              `Manager stopped ${shortTitle(node.title)}: ${owner.name} ran out of steps`,
+              { outcome: "step_limit", nodeId: node.id, reason: node.note, owner: owner.id },
+              "failed",
+            );
+          }
           break;
         }
         node.status = "review";
@@ -944,6 +1096,7 @@ export class TeamRunner {
             node.note = `${node.note ?? ""}\nReview notes: ${nice.map((f) => f.text).join("; ")}`.trim();
           break;
         }
+        const issues = reviewCounts(review, 5).top.filter((t) => t.startsWith("Blocking"));
         if (attempt >= loopLimit) {
           node.status = "failed";
           node.note =
@@ -951,6 +1104,21 @@ export class TeamRunner {
               0,
               800,
             );
+          decide(
+            mgrEmit,
+            "escalate",
+            `Manager stopped ${shortTitle(node.title)} after ${attempt} attempts and needs your call`,
+            {
+              outcome: "loop_limit",
+              nodeId: node.id,
+              reason: `${reviewer.name} still found ${blocking.length} blocking issue${blocking.length === 1 ? "" : "s"} after ${attempt} attempts by ${owner.name}. Send a follow-up with more detail, change the request, or approve only the parts that look right.`,
+              items: issues,
+              owner: owner.id,
+              reviewer: reviewer.id,
+              attempts: attempt,
+            },
+            "failed",
+          );
           this.h.blackboard.write(
             projectId,
             "decisions.md",
@@ -973,6 +1141,21 @@ export class TeamRunner {
         }
         feedback = `${reviewer.name} reviewed your work and found blocking problems. Fix them, run the checks again, then summarise what you changed:\n${blocking.map((f, i) => `${i + 1}. ${f.file ?? ""}${f.line ? `:${f.line}` : ""} ${f.text}`).join("\n")}`;
         node.status = "doing";
+        decide(
+          mgrEmit,
+          "send_back",
+          `Manager sent ${shortTitle(node.title)} back to ${owner.name} (attempt ${attempt + 1} of ${loopLimit})`,
+          {
+            outcome: "retry",
+            nodeId: node.id,
+            reason: `${reviewer.name} found ${blocking.length} blocking issue${blocking.length === 1 ? "" : "s"}. ${owner.name} fixes ${blocking.length === 1 ? "it" : "them"} and the work is reviewed again.`,
+            items: issues,
+            owner: owner.id,
+            reviewer: reviewer.id,
+            attempt: attempt + 1,
+          },
+          "running",
+        );
         emit({
           type: "retrying",
           text: `${reviewer.name} asked for changes (attempt ${attempt} of ${loopLimit})`,
@@ -985,6 +1168,13 @@ export class TeamRunner {
       node.note = err instanceof Error ? err.message : String(err);
       this.h.logger.error("team node failed", { node: node.id, err });
       emit({ type: "error", text: `${owner.name} failed: ${node.note}`, status: "failed" });
+      decide(
+        mgrEmit,
+        "escalate",
+        `Manager stopped ${shortTitle(node.title)}: ${owner.name} hit an error`,
+        { outcome: "error", nodeId: node.id, reason: plainText(node.note).slice(0, 600), owner: owner.id },
+        "failed",
+      );
     }
     node.finishedAt = new Date().toISOString();
     save();
@@ -1035,6 +1225,50 @@ export class TeamRunner {
     return id ? this.man(id) : null;
   }
 
+  /**
+   * Decision at handoff: what the owner produced, in its own words (first sentences of its final
+   * message) with the files it wrote; for Thinking, the option it recommends.
+   */
+  private handoffDecision(
+    input: TeamInput,
+    node: PlanNode,
+    owner: AgentManifest,
+    run: { text: string; changed: string[]; hitLimit: boolean },
+    next: "submitted" | null,
+    emit: Emit,
+  ) {
+    const said = run.text === "(no summary)" ? "" : firstSentences(run.text);
+    const files = run.changed.slice(0, 8);
+    if (!said && files.length === 0) return;
+    const outcome = run.hitLimit ? "incomplete" : (next ?? "done");
+    // The whole message, when it says more than the summary line.
+    const full = plainText(run.text);
+    const reason = said && full.length > said.length + 2 ? clip(full, 700) : undefined;
+    if (owner.id === "thinking") {
+      const opts = this.h.blackboard.read(input.projectId, "options.md");
+      const fresh = opts && (!node.startedAt || opts.updatedAt >= node.startedAt) ? opts.content : "";
+      const rec = recommendationOf(fresh) ?? recommendationOf(run.text);
+      if (rec) {
+        decide(emit, "recommendation", `Thinking recommends: ${rec}`, {
+          outcome,
+          nodeId: node.id,
+          reason: full ? clip(full, 700) : undefined,
+          ...(files.length ? { items: files } : {}),
+        });
+        return;
+      }
+    }
+    const wrote = files.length
+      ? `${files.length}${run.changed.length > files.length ? "+" : ""} file${files.length === 1 ? "" : "s"}`
+      : "";
+    decide(emit, "result", said ? `${owner.name}: ${said}` : `${owner.name} wrote ${wrote}`, {
+      outcome,
+      nodeId: node.id,
+      reason,
+      ...(files.length ? { items: files, files: run.changed.length } : {}),
+    });
+  }
+
   // ---- one agent working -------------------------------------------------------------------
 
   private toolContext(
@@ -1042,6 +1276,7 @@ export class TeamRunner {
     manifest: AgentManifest,
     emit: Emit,
     files: Set<string>,
+    nodeId?: string,
   ): ToolContext {
     const { taskId, projectId, ws, signal } = input;
     const tag = this.tag(manifest.id);
@@ -1063,6 +1298,15 @@ export class TeamRunner {
             `You may not write "${name}". Your sections: ${manifest.writes.join(", ")} (and decisions.md). Send a request to the owner instead.`,
           );
         }
+        // Decisions already on the board are not announced again when an agent rewrites the file.
+        const known =
+          name === "decisions.md"
+            ? new Set(
+                adrEntries(this.h.blackboard.read(projectId, name)?.content ?? "").map((a) =>
+                  a.title.toLowerCase(),
+                ),
+              )
+            : null;
         const e = this.h.blackboard.write(projectId, name, content, tag, taskId, mode);
         emit({
           type: "writing_file",
@@ -1070,6 +1314,17 @@ export class TeamRunner {
           details: { section: name, version: e.version },
           status: "succeeded",
         });
+        if (known) {
+          for (const adr of adrEntries(content)) {
+            if (known.has(adr.title.toLowerCase())) continue;
+            decide(emit, "adr", `${manifest.name} decided: ${adr.title}`, {
+              outcome: "recorded",
+              nodeId,
+              reason: adr.body || undefined,
+              section: name,
+            });
+          }
+        }
         return `Saved ${name} (v${e.version}).`;
       },
       send: (m) => {
@@ -1184,7 +1439,7 @@ export class TeamRunner {
     }
     const tag = this.tag(manifest.id);
     const files = new Set<string>();
-    const ctx = this.toolContext(input, manifest, emit, files);
+    const ctx = this.toolContext(input, manifest, emit, files, node.id);
     const extras = this.h.extras?.(manifest.id, input.projectId, {
       taskId: input.taskId,
       signal: input.signal,
@@ -1269,6 +1524,7 @@ export class TeamRunner {
     emit({
       type: "reviewing",
       text: `${reviewer.name} is reviewing ${owner.name}'s work: ${node.title}`,
+      details: { nodeId: node.id },
       status: "started",
     });
     const r = this.resolve(reviewer.role);
@@ -1279,7 +1535,7 @@ export class TeamRunner {
         ...reviewer,
         tools: reviewer.tools.filter((t) => !["write_file", "edit_file", "delete_file"].includes(t)),
       };
-      const ctx = this.toolContext(input, readOnly, emit, files);
+      const ctx = this.toolContext(input, readOnly, emit, files, node.id);
       const history: ChatMessage[] = [
         { role: "system", content: this.systemPrompt(input, readOnly, "") },
         {
@@ -1361,6 +1617,25 @@ export class TeamRunner {
       details: { nodeId: node.id, verdict: review.verdict },
       status: review.verdict === "approve" ? "succeeded" : "failed",
     });
+    const counts = reviewCounts(review);
+    const approved = review.verdict === "approve" || counts.blocking === 0;
+    decide(
+      emit,
+      "review",
+      reviewText(reviewer.name, node.title, review),
+      {
+        outcome: approved ? "approved" : "changes",
+        nodeId: node.id,
+        reason: counts.top.length ? counts.top.join("\n") : "No issues found.",
+        items: counts.top,
+        owner: owner.id,
+        blocking: counts.blocking,
+        shouldFix: counts.shouldFix,
+        niceToHave: counts.niceToHave,
+        confidence: review.confidence,
+      },
+      approved ? "succeeded" : "failed",
+    );
     return review;
   }
 
@@ -1476,7 +1751,17 @@ export class TeamRunner {
 
   /** The security and UX scores from the blackboard, with a clear line when one blocks the release. */
   private scoreLines(projectId: string): string[] {
-    const out: string[] = [];
+    return this.releaseGate(projectId).map(
+      (g) =>
+        `- ${g.label}: ${g.overall}/100 (${g.grade})${g.blocks ? " **blocks the release**: fix it before you ship" : ""}`,
+    );
+  }
+
+  /** The release gate: the security and UX scores on the blackboard. */
+  private releaseGate(
+    projectId: string,
+  ): { label: string; overall: number; grade: string; blocks: boolean }[] {
+    const out: { label: string; overall: number; grade: string; blocks: boolean }[] = [];
     for (const [section, label] of [
       ["scores/security.json", "Security"],
       ["scores/ux.json", "UX"],
@@ -1486,15 +1771,24 @@ export class TeamRunner {
       try {
         const j = JSON.parse(e.content) as { overall?: number; grade?: string; blocksRelease?: boolean };
         if (typeof j.overall !== "number") continue;
-        out.push(
-          `- ${label}: ${j.overall}/100 (${j.grade ?? "?"})${j.blocksRelease ? " **blocks the release**: fix it before you ship" : ""}`,
-        );
+        out.push({ label, overall: j.overall, grade: j.grade ?? "?", blocks: j.blocksRelease === true });
       } catch {
         // A damaged score file is ignored; the blackboard note explains the audit.
       }
     }
     return out;
   }
+}
+
+/** Record a decision an agent made, as a `decision` event with a plain-language line. */
+function decide(
+  emit: Emit,
+  kind: DecisionKind,
+  text: string,
+  extra: Record<string, JsonValue | undefined> = {},
+  status: EventStatus = "info",
+): void {
+  emit({ type: "decision", text, details: decisionDetails(kind, extra), status });
 }
 
 function statusMark(s: PlanNode["status"]): string {

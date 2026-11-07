@@ -16,6 +16,7 @@ import {
   Presentation,
   Puzzle,
   ShieldCheck,
+  UsersRound,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { AgentLabPanel } from "@/components/panels/AgentLabPanel";
@@ -35,6 +36,7 @@ import { PreviewPanel } from "@/components/panels/PreviewPanel";
 import { SecurityPanel } from "@/components/panels/SecurityPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { SlidesPanel } from "@/components/panels/SlidesPanel";
+import { TeamPanel } from "@/components/panels/TeamPanel";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
 
@@ -67,6 +69,7 @@ export const CENTER_TABS: TabDef[] = [
   { id: "blocks", label: "Blocks", icon: Blocks },
   { id: "security", label: "Security", icon: ShieldCheck },
   { id: "preview", label: "Preview", icon: MonitorPlay },
+  { id: "team", label: "Team", icon: UsersRound },
 ];
 
 /**
@@ -74,7 +77,7 @@ export const CENTER_TABS: TabDef[] = [
  * with labels. Tool screens (knowledge, design, models, settings-like screens) sit in the tool rail at the
  * window's left edge, as icons with tooltips. Both are tabs that control the same panel.
  */
-export const WORK_TAB_ORDER: CenterTab[] = ["overview", "chat", "plan", "files", "diff"];
+export const WORK_TAB_ORDER: CenterTab[] = ["overview", "chat", "team", "plan", "files", "diff", "preview"];
 export const TOOL_TAB_ORDER: CenterTab[] = [
   "memory",
   "knowledge",
@@ -217,6 +220,8 @@ export function CenterTabs() {
             <ModelsPanel />
           ) : current.id === "preview" ? (
             <PreviewPanel />
+          ) : current.id === "team" ? (
+            <TeamPanel />
           ) : (
             <PhaseNotice icon={current.icon} title={current.label} phase={current.phase ?? "a later phase"}>
               {current.blurb}

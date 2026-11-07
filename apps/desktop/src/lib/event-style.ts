@@ -30,6 +30,7 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Signpost,
   Terminal,
   TestTube2,
   Unplug,
@@ -79,6 +80,7 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   project_changed: { icon: FolderKanban, tone: "info", label: "Project" },
   preview_started: { icon: MonitorPlay, tone: "success", label: "Preview" },
   preview_stopped: { icon: MonitorOff, tone: "neutral", label: "Preview" },
+  decision: { icon: Signpost, tone: "accent", label: "Decision" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {
