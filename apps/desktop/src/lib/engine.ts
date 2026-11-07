@@ -6,6 +6,7 @@ import { isTauri, resolveEngineUrl } from "./connection";
 import { EngineClient } from "./engine-client";
 import { eventToNotice } from "./notify";
 import { queryClient } from "./query";
+import { invalidateForChecks } from "./terminal";
 
 /** The single engine connection for this window. */
 export const engine = new EngineClient({ resolveUrl: resolveEngineUrl });
@@ -44,6 +45,7 @@ export function startEngineConnection(): void {
       systemNotify(notice);
     }
     invalidateFor(e.type, e.status);
+    invalidateForChecks(e);
     // Task transcripts and approvals change with every finished agent step.
     if (e.taskId && !e.ephemeral) {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
