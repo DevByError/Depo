@@ -141,6 +141,9 @@ const sev = (s: string | number | undefined | null): Severity => {
 
 const rel = (root: string, f: string) => {
   const norm = f.replace(/\\/g, "/");
+  // Compare as text first, so Windows paths work the same on every platform (case-insensitive drive and folders).
+  const base = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (base && norm.toLowerCase().startsWith(`${base.toLowerCase()}/`)) return norm.slice(base.length + 1);
   const r = path.isAbsolute(f) ? path.relative(root, f).replace(/\\/g, "/") : norm.replace(/^\.\//, "");
   return r.startsWith("..") ? norm : r;
 };

@@ -61,7 +61,7 @@ export function KnowledgePanel() {
   });
 
   return (
-    <div className="h-full overflow-y-auto">
+    <section className="h-full overflow-y-auto" tabIndex={0} aria-label="Knowledge">
       <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-6">
         <header className="flex items-center gap-3">
           <BookOpen className="size-5 text-accent" aria-hidden />
@@ -296,6 +296,6 @@ export function KnowledgePanel() {
           )}
         </section>
       </div>
-    </div>
+    </section>
   );
 }

@@ -536,7 +536,7 @@ function Composer({ task }: { task: Task | undefined }) {
                 id="work-mode"
                 value={mode}
                 onChange={(e) => setMode(e.target.value as WorkMode)}
-                className="h-8 max-w-36 rounded-lg border border-border bg-panel px-2 text-xs text-muted outline-none focus:border-accent"
+                className="h-8 max-w-36 rounded-lg border border-border bg-panel px-2 text-xs text-fg outline-none focus:border-accent"
               >
                 {MODES.map((m) => (
                   <option key={m.id} value={m.id}>

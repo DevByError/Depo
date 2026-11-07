@@ -53,7 +53,7 @@ export function BlocksPanel() {
   );
 
   return (
-    <div className="h-full overflow-y-auto">
+    <section className="h-full overflow-y-auto" tabIndex={0} aria-label="Blocks">
       <div className="mx-auto flex max-w-4xl flex-col gap-4 px-6 py-6">
         <header className="flex items-center gap-3">
           <Blocks className="size-5 text-accent" aria-hidden />
@@ -145,6 +145,6 @@ export function BlocksPanel() {
           {shown.length === 0 && <li className="text-[13px] text-muted">No block matches.</li>}
         </ul>
       </div>
-    </div>
+    </section>
   );
 }

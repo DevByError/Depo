@@ -598,8 +598,17 @@ export class TaskManager {
       });
   }
 
+  /** Strictly increasing timestamps, so messages written in the same millisecond keep their order. */
+  private lastStamp = 0;
+  private stamp(): string {
+    let t = Date.now();
+    if (t <= this.lastStamp) t = this.lastStamp + 1;
+    this.lastStamp = t;
+    return new Date(t).toISOString();
+  }
+
   private addMessage(taskId: string, msg: ChatMessage, at?: string, agent?: string) {
-    const now = new Date().toISOString();
+    const now = this.stamp();
     this.o.db
       .insert(messages)
       .values({

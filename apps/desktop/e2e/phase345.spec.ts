@@ -24,7 +24,7 @@ for (const theme of ["dark", "light"] as const) {
     }, theme);
     for (const s of SCREENS) {
       await page.getByRole("tab", { name: s.tab, exact: true }).click();
-      await expect(page.getByRole("tabpanel")).toContainText(s.text);
+      await expect(page.getByRole("tabpanel", { name: s.tab, exact: true })).toContainText(s.text);
       expect(await seriousA11yViolations(page), s.tab).toEqual([]);
     }
   });

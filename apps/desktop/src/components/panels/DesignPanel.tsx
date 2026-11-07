@@ -50,7 +50,7 @@ export function DesignPanel() {
   const ux = scores.data?.ux;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <section className="h-full overflow-y-auto" tabIndex={0} aria-label="Design">
       <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-6">
         <header className="flex items-center gap-3">
           <Palette className="size-5 text-accent" aria-hidden />
@@ -143,6 +143,6 @@ export function DesignPanel() {
           </div>
         </section>
       </div>
-    </div>
+    </section>
   );
 }
