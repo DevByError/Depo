@@ -81,6 +81,7 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   preview_started: { icon: MonitorPlay, tone: "success", label: "Preview" },
   preview_stopped: { icon: MonitorOff, tone: "neutral", label: "Preview" },
   decision: { icon: Signpost, tone: "accent", label: "Decision" },
+  committed: { icon: GitCommit, tone: "success", label: "Commit" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {

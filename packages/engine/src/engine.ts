@@ -11,6 +11,7 @@ import { type OpenedDatabase, openDatabase } from "./db";
 import { projects as projectsTable, tasks as tasksTable } from "./db/schema";
 import { DesignService } from "./design/service";
 import { EventBus } from "./events/bus";
+import { GitService } from "./git/service";
 import { OsvService } from "./knowledge/osv";
 import { KnowledgeService } from "./knowledge/service";
 import {
@@ -30,6 +31,7 @@ import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { PreviewManager } from "./preview/manager";
 import { ProjectRegistry } from "./projects/registry";
 import { ModelScheduler } from "./scheduler/scheduler";
+import { SearchService } from "./search/service";
 import { SecurityService } from "./security/service";
 import { SettingsRepo } from "./settings";
 import { SkillService } from "./skills/service";
@@ -80,6 +82,8 @@ export interface Engine {
   readonly lab: AgentLab;
   readonly logs: LogService;
   readonly previews: PreviewManager;
+  readonly search: SearchService;
+  readonly git: GitService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -252,6 +256,30 @@ export function createEngine(opts: EngineOptions): Engine {
     ...opts.tasks,
   });
   const design = new DesignService(projects, (id) => tasks.workspaceRoot(id), bus);
+  const projectRoot = (id: string) =>
+    database.db
+      .select({ root: projectsTable.rootPath })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id))
+      .get()?.root ?? null;
+  /** Ctrl+K: files, symbols, contents, tasks, decisions, memory and logs in one query. */
+  const search = new SearchService({ db: database.db, indexer, memory, logs, logger, projectRoot });
+  /** Commits for applied change sets (on the owner's click, through the command policy) and history. */
+  const git = new GitService({
+    projects,
+    bus,
+    logger,
+    models,
+    scheduler,
+    task: (id) => {
+      const t = database.db.select().from(tasksTable).where(eq(tasksTable.id, id)).get();
+      return t ? { title: t.title, prompt: t.prompt, summary: t.summary, mode: t.mode } : null;
+    },
+    commandRules: (id) => {
+      const s = safeSettings(registry, id);
+      return s ? { allow: s.commandAllow, deny: s.commandDeny } : null;
+    },
+  });
   const startedAt = new Date();
 
   let server: ApiServer | null = null;
@@ -298,6 +326,8 @@ export function createEngine(opts: EngineOptions): Engine {
     lab,
     logs,
     previews,
+    search,
+    git,
     database,
     async start() {
       server = startApiServer({
@@ -326,6 +356,8 @@ export function createEngine(opts: EngineOptions): Engine {
           lab,
           logs,
           previews,
+          search,
+          git,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,

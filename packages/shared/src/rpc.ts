@@ -35,8 +35,10 @@ import {
   SkillCandidateSchema,
   SkillSchema,
 } from "./extensions";
+import { GitMethods } from "./git";
 import { LogMethods } from "./logs";
 import { PreviewMethods } from "./preview";
+import { SearchMethods } from "./search";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
 export const RpcIdSchema = z.union([z.string(), z.number().int()]);
@@ -1150,6 +1152,8 @@ export const ApiSchema = {
   ...TaskMethods,
   ...LogMethods,
   ...PreviewMethods,
+  ...SearchMethods,
+  ...GitMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

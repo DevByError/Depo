@@ -29,6 +29,7 @@ export const AGENT_EVENT_TYPES = [
   "queued",
   "memory_updated",
   "decision",
+  "committed",
 ] as const;
 
 export const SYSTEM_EVENT_TYPES = [
