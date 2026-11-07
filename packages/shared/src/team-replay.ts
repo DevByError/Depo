@@ -232,7 +232,7 @@ export function etaRangeText(r: { low: number; high: number }): string {
   const hi = highMs / MIN;
   const lo = lowMs / MIN;
   const roundMin = (m: number, up: boolean) => {
-    const step = (up ? m : Math.max(m, 1)) <= 10 ? 1 : 5;
+    const step = (up ? m : Math.max(m, 1)) <= 15 ? 1 : 5;
     const v = up ? Math.ceil(m / step) * step : Math.floor(m / step) * step;
     return Math.max(1, v);
   };
