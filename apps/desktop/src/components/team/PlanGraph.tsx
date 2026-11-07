@@ -12,6 +12,7 @@ import {
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { DAG_DEFAULTS, layoutDag } from "@/lib/dag-layout";
+import { type NodeEtaView, nodeEtaText } from "@/lib/team-eta";
 import { agentName, reviewState } from "@/lib/team-view";
 import { AgentAvatar } from "./AgentAvatar";
 
@@ -52,10 +53,13 @@ export const PlanGraph = memo(function PlanGraph({
   plan,
   highlight,
   reducedMotion,
+  etas = null,
 }: {
   plan: Plan;
   highlight: string | null;
   reducedMotion: boolean;
+  /** Time left per task on this PC (shown on cards that still have work to do). */
+  etas?: Map<string, NodeEtaView> | null;
 }) {
   const layout = useMemo(() => layoutDag(plan.nodes.map((n) => ({ id: n.id, deps: n.deps }))), [plan.nodes]);
   const byId = useMemo(() => new Map(plan.nodes.map((n) => [n.id, n])), [plan.nodes]);
@@ -194,6 +198,7 @@ export const PlanGraph = memo(function PlanGraph({
                   y={b.y}
                   highlighted={highlight === n.id}
                   after={n.deps.map((d) => byId.get(d)?.title ?? d)}
+                  eta={etas?.get(n.id) ?? null}
                 />
               );
             })}
@@ -227,14 +232,17 @@ function NodeCard({
   y,
   highlighted,
   after,
+  eta,
 }: {
   node: PlanNode;
   x: number;
   y: number;
   highlighted: boolean;
   after: string[];
+  eta: NodeEtaView | null;
 }) {
   const s = STATUS[node.status];
+  const showEta = eta && (node.status === "todo" || node.status === "doing" || node.status === "review");
   const Icon = s.icon;
   const owner = agentName(node.owner);
   const review = reviewState(node, agentName);
@@ -253,6 +261,14 @@ function NodeCard({
       <div className="flex items-center gap-1.5">
         <AgentAvatar id={node.owner} name={owner} size="xs" busy={node.status === "doing"} />
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{owner}</span>
+        {showEta && eta && (
+          <span
+            className={cn("shrink-0 text-[10px] tabular-nums", eta.over ? "text-warning" : "text-subtle")}
+            data-testid="node-eta"
+          >
+            {nodeEtaText(eta)}
+          </span>
+        )}
         <Icon className={cn("size-3.5 shrink-0", s.text, s.spin && "motion-safe:animate-spin")} aria-hidden />
       </div>
       <p className="mt-1 line-clamp-2 text-xs font-medium leading-snug text-fg">{node.title}</p>

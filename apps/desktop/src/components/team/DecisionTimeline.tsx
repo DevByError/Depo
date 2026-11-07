@@ -46,6 +46,8 @@ const TONE_CHIP: Record<Tone, string> = {
   info: "bg-info/12",
 };
 
+const NONE: TeamDecision[] = [];
+
 export function decisionIcon(d: Pick<TeamDecision, "kind" | "outcome">): LucideIcon {
   if (d.kind === "review" && d.outcome === "changes") return CircleAlert;
   return KIND_ICON[d.kind];
@@ -62,6 +64,7 @@ export function DecisionTimeline({
   onClearFilter,
   onNode,
   reducedMotion,
+  upcoming = NONE,
 }: {
   decisions: TeamDecision[];
   nodes: Map<string, PlanNode>;
@@ -69,8 +72,11 @@ export function DecisionTimeline({
   onClearFilter(): void;
   onNode(id: string): void;
   reducedMotion: boolean;
+  /** Replay: decisions made after the moment shown (they stay hidden until then). */
+  upcoming?: TeamDecision[];
 }) {
   const items = filter ? decisions.filter((d) => d.agent === filter) : decisions;
+  const later = filter ? upcoming.filter((d) => d.agent === filter).length : upcoming.length;
   const box = useRef<HTMLElement>(null);
   const stick = useRef(true);
   const count = useRef(items.length);
@@ -162,7 +168,9 @@ export function DecisionTimeline({
             <p className="py-8 text-center text-xs leading-relaxed text-muted">
               {filter
                 ? `${agentName(filter)} has not decided anything yet.`
-                : "Decisions appear here as the agents make them: the plan, reviews, handoffs and the final verdict."}
+                : later > 0
+                  ? "No decisions yet at this point of the run."
+                  : "Decisions appear here as the agents make them: the plan, reviews, handoffs and the final verdict."}
             </p>
           ) : (
             <ol className="flex flex-col">
@@ -176,6 +184,11 @@ export function DecisionTimeline({
                 />
               ))}
             </ol>
+          )}
+          {later > 0 && (
+            <p className="mt-1 border-t border-dashed border-border pt-2 text-center text-[11px] text-subtle">
+              {later} more decision{later === 1 ? "" : "s"} later in the run
+            </p>
           )}
         </section>
         {away && (
