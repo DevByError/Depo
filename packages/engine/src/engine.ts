@@ -414,7 +414,8 @@ export function createEngine(opts: EngineOptions): Engine {
       });
       indexer.stopAll();
       await tasks.cancelAll();
-      autoPreview.detach();
+      await qa.close();
+      await autoPreview.detach();
       await previews.stopAll();
       await mcp.stopAll();
       await server?.stop();

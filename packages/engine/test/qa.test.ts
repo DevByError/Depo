@@ -9,6 +9,7 @@ import { CdpConnection, sessionFor } from "../src/design/cdp";
 import { automatedFindings, HEURISTICS, scoreAudit } from "../src/design/ux";
 import { createEngine, type Engine } from "../src/engine";
 import { createLogger } from "../src/logger";
+import { AutoPreview } from "../src/preview/auto";
 import { QaService } from "../src/qa/service";
 import {
   checkDir,
@@ -353,6 +354,88 @@ describe("QaService", () => {
       hasBrowser: () => false,
     });
     await expect(svc.check({ projectId: "prj_1", taskId: null, by: "user" })).rejects.toThrow(/No browser/);
+  });
+
+  test("after close, no new check starts", async () => {
+    const t = tempDir("depo qa svc");
+    stops.push(t.cleanup);
+    let opened = 0;
+    const svc = new QaService({
+      bus: bus() as unknown as ConstructorParameters<typeof QaService>[0]["bus"],
+      logger: createLogger({ dir: path.join(t.dir, "logs"), level: "error" }),
+      dataDir: path.join(t.dir, "qa"),
+      workspaceRoot: () => t.dir,
+      taskProject: () => "prj_1",
+      previews: { list: () => [] },
+      open: async () => {
+        opened++;
+        throw new Error("not used");
+      },
+    });
+    await svc.close();
+    await expect(
+      svc.check({ projectId: "prj_1", taskId: null, by: "user", url: "http://127.0.0.1:9/" }),
+    ).rejects.toThrow(/closing/);
+    expect(opened).toBe(0);
+  });
+});
+
+describe("AutoPreview at shutdown", () => {
+  test("a start still detecting when the engine stops never starts the app", async () => {
+    const t = tempDir("depo auto");
+    stops.push(t.cleanup);
+    let release: () => void = () => {};
+    const detecting = new Promise<void>((r) => {
+      release = r;
+    });
+    const starts: string[] = [];
+    const auto = new AutoPreview({
+      bus: bus() as unknown as ConstructorParameters<typeof AutoPreview>[0]["bus"],
+      logger: createLogger({ dir: path.join(t.dir, "logs"), level: "error" }),
+      enabled: () => true,
+      changeSetStatus: () => null,
+      previews: {
+        detect: async () => {
+          await detecting;
+          return {
+            target: "workspace",
+            root: t.dir,
+            recipes: [
+              {
+                id: "static:.",
+                kind: "static",
+                label: "Static site",
+                command: "",
+                cwd: "",
+                env: {},
+                port: 5500,
+                readyPath: "/",
+                role: "app",
+                missing: null,
+              },
+            ],
+            suggested: 0,
+            override: "",
+            notes: [],
+          };
+        },
+        start: async (req) => {
+          starts.push(req.taskId ?? "");
+          throw new Error("must not start");
+        },
+        stop: async () => true,
+        list: () => [],
+        get: () => null,
+      },
+    });
+    auto.attach();
+    const pending = auto.onReview("prj_1", "tsk_1");
+    const closed = auto.detach();
+    release();
+    await closed;
+    expect(await pending).toEqual({ started: false, reason: "disabled" });
+    expect(starts).toEqual([]);
+    expect(await auto.onReview("prj_1", "tsk_2")).toEqual({ started: false, reason: "disabled" });
   });
 });
 

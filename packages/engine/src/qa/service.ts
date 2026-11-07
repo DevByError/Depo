@@ -78,6 +78,7 @@ const VISION_TIMEOUT_MS = 180_000;
 
 export class QaService implements QaHooks {
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly closing = new AbortController();
   private readonly log: Logger;
 
   constructor(private readonly o: QaServiceOptions) {
@@ -127,15 +128,25 @@ export class QaService implements QaHooks {
 
   /** Run a check (one at a time). */
   check(req: CheckRequest): Promise<PageCheck> {
+    if (this.closing.signal.aborted) return Promise.reject(new ToolError("Depo is closing."));
+    const signal = req.signal ? AbortSignal.any([req.signal, this.closing.signal]) : this.closing.signal;
+    const r = { ...req, signal };
     const run = this.queue.then(
-      () => this.runCheck(req),
-      () => this.runCheck(req),
+      () => this.runCheck(r),
+      () => this.runCheck(r),
     );
     this.queue = run.catch(() => {});
     return run;
   }
 
+  /** Engine shutdown: stop the running check (its browser closes) and wait for the queue. */
+  async close(): Promise<void> {
+    this.closing.abort();
+    await this.queue;
+  }
+
   private async runCheck(req: CheckRequest): Promise<PageCheck> {
+    if (req.signal?.aborted) throw new ToolError("The check was cancelled.");
     if (!(this.o.hasBrowser ?? (() => !!findBrowser()))() && !this.o.open)
       throw new ToolError(
         "No browser (Edge or Chrome) was found on this PC, so pages cannot be checked. Use http_check for the endpoints instead.",

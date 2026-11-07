@@ -5,7 +5,7 @@ import type { Logger } from "../logger";
 /**
  * The owner always gets a link: when a task (single or team) ends with changes ready for review
  * and Depo knows how to start the app, the task's private copy is started in the background
- * (setting `preview.autoStart`, on by default). Nothing is installed: a recipe that still needs
+ * (setting `preview.auto_start`, on by default). Nothing is installed: a recipe that still needs
  * packages is skipped until the owner installs them from the Preview tab. The preview stops when
  * the change set is applied or discarded, unless the owner pinned it.
  */
@@ -29,7 +29,7 @@ export interface AutoPreviewOptions {
   bus: EventBus;
   logger: Logger;
   previews: AutoPreviewHost;
-  /** `preview.autoStart`. */
+  /** `preview.auto_start`. */
   enabled(): boolean;
   /** The status of a change set (`applied`, `discarded`, `pending`, …), or null when unknown. */
   changeSetStatus(id: string): string | null;
@@ -48,6 +48,8 @@ export class AutoPreview {
   private readonly started = new Map<string, Set<string>>();
   private readonly busy = new Map<string, Promise<AutoStartResult>>();
   private unsubscribe: (() => void) | null = null;
+  /** Set while the engine shuts down: nothing new starts. */
+  private closed = false;
   private readonly log: Logger;
 
   constructor(private readonly o: AutoPreviewOptions) {
@@ -56,13 +58,17 @@ export class AutoPreview {
 
   /** Follow the event bus: review → start; applied or discarded → stop. */
   attach(): void {
+    this.closed = false;
     if (this.unsubscribe) return;
     this.unsubscribe = this.o.bus.subscribe((e) => this.onEvent(e));
   }
 
-  detach(): void {
+  /** Stop following the bus; resolves once starts already under way have finished (engine shutdown). */
+  async detach(): Promise<void> {
+    this.closed = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    await Promise.allSettled([...this.busy.values()]);
   }
 
   private onEvent(e: DepoEvent): void {
@@ -90,7 +96,7 @@ export class AutoPreview {
   }
 
   private async startFor(projectId: string, taskId: string): Promise<AutoStartResult> {
-    if (!this.o.enabled()) return { started: false, reason: "disabled" };
+    if (this.closed || !this.o.enabled()) return { started: false, reason: "disabled" };
     const live = this.o.previews
       .list(projectId)
       .filter((p) => p.taskId === taskId && (p.state === "running" || p.state === "starting"));
@@ -101,6 +107,7 @@ export class AutoPreview {
     } catch (err) {
       return { started: false, reason: "failed", detail: err instanceof Error ? err.message : String(err) };
     }
+    if (this.closed) return { started: false, reason: "disabled" };
     const recipe = detection.recipes[detection.suggested];
     if (!recipe) return { started: false, reason: "no_recipe" };
     const parts = recipe.kind === "both" ? (recipe.parts ?? []) : [recipe];
