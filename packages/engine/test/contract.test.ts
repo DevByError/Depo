@@ -146,5 +146,11 @@ test("the Phase 3 to 9 methods answer with exactly what their schemas promise", 
     note: "x",
   });
   expect("error" in bad).toBe(true);
+
+  // Team screen: a task without a team (no model here) still answers with an empty team view.
+  const task = (await ok("tasks.send", { projectId, text: "hello" })) as { id: string };
+  const timeline = await ok("team.timeline", { taskId: task.id });
+  expect(timeline).toMatchObject({ taskId: task.id, plan: null, agents: [], decisions: [] });
+  await fails("team.timeline", { taskId: "tsk_missing" }, "Unknown task");
   c.ws.close();
 }, 60_000);

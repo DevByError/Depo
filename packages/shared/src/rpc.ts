@@ -20,6 +20,7 @@ import {
   LabVersionSchema,
   ManifestPatchSchema,
   PlanSchema,
+  TeamTimelineSchema,
   WorkModeSchema,
 } from "./agents";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
@@ -479,6 +480,11 @@ const TaskMethods = {
       agents: z.array(AgentStatusSchema),
       messages: z.array(AgentMessageSchema),
     }),
+  },
+  /** The Team screen: plan, per-agent stats and every decision of a task. */
+  "team.timeline": {
+    params: z.object({ taskId: z.string() }).strict(),
+    result: TeamTimelineSchema.extend({ status: TaskStatusSchema }),
   },
   "diagrams.list": {
     params: z.object({ projectId: z.string(), taskId: z.string().optional() }).strict(),

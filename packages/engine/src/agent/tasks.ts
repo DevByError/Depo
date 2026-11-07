@@ -16,8 +16,9 @@ import { asc, desc, eq, inArray } from "drizzle-orm";
 import "../tools/block-tools";
 import "../tools/design-tools";
 import { Blackboard } from "../agents/blackboard";
-import { agentTag } from "../agents/manifests";
+import { agentTag, manifestOf } from "../agents/manifests";
 import { agentStatuses, TeamRunner } from "../agents/team";
+import { buildTimeline, loadTimelineEvents } from "../agents/timeline";
 import type { ApprovalCenter } from "../approvals";
 import type { CodeIndexer } from "../codeindex/indexer";
 import type { AppDb } from "../db";
@@ -142,6 +143,26 @@ export class TaskManager {
       agents: agentStatuses(plan?.success ? plan.data : null, waiting),
       messages: this.blackboard.messages(taskId),
     };
+  }
+
+  /** The Team screen: the plan, each agent's stats and every decision, from the plan and the audit log. */
+  teamTimeline(taskId: string) {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row) throw new Error(`Unknown task: ${taskId}`);
+    const state = this.teamState(taskId);
+    const waiting = new Set(state.agents.filter((a) => a.state === "waiting").map((a) => a.id as string));
+    const status = TaskSchema.shape.status.catch("done").parse(row.status);
+    const timeline = buildTimeline({
+      taskId,
+      mode: state.mode,
+      status,
+      plan: state.plan,
+      waiting,
+      ...loadTimelineEvents(this.o.db, row.projectId, taskId),
+      manifest: (id) => this.o.manifest?.(id) ?? manifestOf(id),
+      now: Date.now(),
+    });
+    return { ...timeline, status };
   }
 
   list(projectId: string): Task[] {

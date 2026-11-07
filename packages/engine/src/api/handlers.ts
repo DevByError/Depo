@@ -292,6 +292,7 @@ export const handlers: Handlers = {
     return ctx.lab.importBundle(parsed);
   },
   "team.get": (p, ctx) => ctx.tasks.teamState(p.taskId),
+  "team.timeline": (p, ctx) => ctx.tasks.teamTimeline(p.taskId),
   "skills.list": (_p, ctx) => ({ skills: ctx.skills.list() }),
   "skills.get": (p, ctx) => {
     const i = ctx.skills.instructions(p.id);

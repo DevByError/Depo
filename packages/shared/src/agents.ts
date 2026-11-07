@@ -250,3 +250,85 @@ export const LabAgentSchema = z.object({
   versions: z.number().int(),
   lastScore: z.number().nullable(),
 });
+
+// ---- Team view: what each agent decided ---------------------------------------------------
+
+/** What a `decision` event records (its `details.kind`). */
+export const DecisionKindSchema = z.enum([
+  /** Manager: the plan it chose, or the standard pipeline and why. */
+  "plan",
+  /** Manager: the user approved or declined the plan. */
+  "plan_approval",
+  /** Manager: a task goes back to its owner for another pass. */
+  "send_back",
+  /** Manager: the loop limit was reached, so the user decides. */
+  "escalate",
+  /** Manager: the final release verdict (security and UX gate, unfinished work). */
+  "release",
+  /** A reviewer: approved, or changes requested. */
+  "review",
+  /** An owner at handoff: what it produced. */
+  "result",
+  /** Any agent: an architecture decision written to decisions.md. */
+  "adr",
+  /** Thinking: the option it recommends. */
+  "recommendation",
+]);
+export type DecisionKind = z.infer<typeof DecisionKindSchema>;
+
+/** The `details` of a `decision` event. Extra keys (counts, owner, files) are allowed. */
+export const DecisionDetailsSchema = z
+  .object({
+    kind: DecisionKindSchema,
+    nodeId: z.string().optional(),
+    outcome: z.string().optional(),
+    reason: z.string().optional(),
+    items: z.array(z.string()).optional(),
+  })
+  .loose();
+export type DecisionDetails = z.infer<typeof DecisionDetailsSchema>;
+
+export const TeamDecisionSchema = z.object({
+  id: z.string(),
+  ts: z.string(),
+  /** Agent id ("backend"), or the event's agent when it is not a team agent. */
+  agent: z.string(),
+  /** `backend@1.0.0` */
+  tag: z.string(),
+  kind: DecisionKindSchema,
+  text: z.string(),
+  outcome: z.string().nullable(),
+  reason: z.string().nullable(),
+  nodeId: z.string().nullable(),
+  items: z.array(z.string()),
+});
+export type TeamDecision = z.infer<typeof TeamDecisionSchema>;
+
+export const TeamAgentStatSchema = z.object({
+  id: AgentIdSchema,
+  name: z.string(),
+  version: z.string(),
+  state: AgentStateSchema,
+  nodeId: z.string().nullable(),
+  /** The agent's latest recorded action (newest non-ephemeral event that is not a decision). */
+  action: z.string().nullable(),
+  actionAt: z.string().nullable(),
+  done: z.number().int(),
+  total: z.number().int(),
+  /** Reviews this agent finished for others. */
+  reviews: z.number().int(),
+  /** Time spent on its own tasks and on reviews. */
+  workMs: z.number().int().nonnegative(),
+  lastDecision: TeamDecisionSchema.nullable(),
+});
+export type TeamAgentStat = z.infer<typeof TeamAgentStatSchema>;
+
+/** The team view of one task: the plan, the agents taking part and every decision, oldest first. */
+export const TeamTimelineSchema = z.object({
+  taskId: z.string(),
+  mode: WorkModeSchema,
+  plan: PlanSchema.nullable(),
+  agents: z.array(TeamAgentStatSchema),
+  decisions: z.array(TeamDecisionSchema),
+});
+export type TeamTimeline = z.infer<typeof TeamTimelineSchema>;
