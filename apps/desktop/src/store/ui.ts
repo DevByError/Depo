@@ -32,7 +32,7 @@ interface Layout {
 }
 
 export type ProjectDialog =
-  | { kind: "new" }
+  | { kind: "new" /** A blueprint to preselect under "Start from". */; blueprint?: string }
   | { kind: "import" }
   | { kind: "rename"; projectId: string }
   | { kind: "remove"; projectId: string };

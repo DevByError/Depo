@@ -1,7 +1,13 @@
 import type { Project } from "@depo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FolderSearch, Loader2 } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
+import {
+  BLUEPRINT_PITCH,
+  StartFromPicker,
+  useBlueprints,
+  WhatYouGet,
+} from "@/components/blueprints/Blueprints";
 import { Button } from "@/components/ui/button";
 import { ErrorText, Field, inputClass, Modal } from "@/components/ui/modal";
 import { isTauri } from "@/lib/connection";
@@ -25,7 +31,11 @@ export function ProjectDialogs() {
   };
   return (
     <>
-      <NewProjectDialog open={dialog?.kind === "new"} onOpenChange={close} />
+      <NewProjectDialog
+        open={dialog?.kind === "new"}
+        blueprint={dialog?.kind === "new" ? dialog.blueprint : undefined}
+        onOpenChange={close}
+      />
       <ImportProjectDialog open={dialog?.kind === "import"} onOpenChange={close} />
       <RenameProjectDialog
         projectId={dialog?.kind === "rename" ? dialog.projectId : null}
@@ -98,22 +108,42 @@ function useDefaultParent(open: boolean, set: (v: string) => void) {
   }, [open, set]);
 }
 
-function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function NewProjectDialog({
+  open,
+  blueprint,
+  onOpenChange,
+}: {
+  open: boolean;
+  blueprint?: string | undefined;
+  onOpenChange: (o: boolean) => void;
+}) {
   const [name, setName] = useState("");
   const [parentDir, setParentDir] = useState("");
   const [description, setDescription] = useState("");
   const [stack, setStack] = useState("");
   const [initGit, setInitGit] = useState(true);
+  // "" is an empty folder; otherwise the id of the blueprint to start from.
+  const [start, setStart] = useState("");
+  const startLabel = useId();
   useDefaultParent(open, setParentDir);
+  useEffect(() => {
+    if (open) setStart(blueprint ?? "");
+  }, [open, blueprint]);
+  const blueprints = useBlueprints(open);
+  const chosen = blueprints.data?.blueprints.find((b) => b.id === start);
   const create = useMutation({
-    mutationFn: () =>
-      call("projects.create", {
+    mutationFn: async () => {
+      const common = {
         name: name.trim(),
         parentDir: parentDir.trim(),
         ...(description.trim() ? { description: description.trim() } : {}),
-        ...(stack.trim() ? { stack: stack.trim() } : {}),
         initGit,
-      }),
+      };
+      if (chosen)
+        return (await call("blueprints.create", { id: chosen.id, ...common }, { timeoutMs: 120_000 }))
+          .project;
+      return call("projects.create", { ...common, ...(stack.trim() ? { stack: stack.trim() } : {}) });
+    },
     onSuccess: async (p) => {
       rememberParentDir(parentDir.trim());
       await afterProjectAdded(p);
@@ -122,19 +152,22 @@ function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
       setName("");
       setDescription("");
       setStack("");
+      setStart("");
     },
   });
   const sep = parentDir.includes("/") && !parentDir.includes("\\") ? "/" : "\\";
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (name.trim() && parentDir.trim()) create.mutate();
+    const waiting = !!start && !chosen && blueprints.isPending;
+    if (name.trim() && parentDir.trim() && !waiting) create.mutate();
   };
   return (
     <Modal
       open={open}
       onOpenChange={onOpenChange}
       title="New project"
-      description="Depo makes a new folder with a README and an empty git repository, then opens it."
+      description="Depo makes a new folder, starts it the way you choose, then opens it."
+      className="w-[min(640px,calc(100vw-32px))]"
     >
       <form className="flex flex-col gap-3" onSubmit={submit}>
         <Field label="Name">
@@ -169,6 +202,27 @@ function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             title="Folder to create the project in"
           />
         </Field>
+        <div className="flex flex-col gap-1.5">
+          <span id={startLabel} className="text-xs font-medium text-fg">
+            Start from
+          </span>
+          <StartFromPicker
+            value={chosen ? start : ""}
+            onChange={setStart}
+            blueprints={blueprints.data?.blueprints ?? []}
+            labelledBy={startLabel}
+          />
+          {chosen && (
+            <div className="rounded-lg border border-border bg-bg p-2.5">
+              <p className="text-xs text-fg">{BLUEPRINT_PITCH}</p>
+              <WhatYouGet features={chosen.features} className="mt-2" />
+              <p className="mt-2 text-[11px] text-subtle">
+                Run it with <code className="font-mono">{chosen.runCommand}</code>, test it with{" "}
+                <code className="font-mono">{chosen.testCommand}</code>.
+              </p>
+            </div>
+          )}
+        </div>
         <Field label="What is it?" hint="Optional. Agents read this from the project memory.">
           <textarea
             value={description}
@@ -178,20 +232,34 @@ function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             className={`${inputClass} field-in-frame h-auto py-1.5`}
           />
         </Field>
-        <Field label="Stack" hint="Optional, for example: Python, FastAPI, PostgreSQL">
-          <input value={stack} onChange={(e) => setStack(e.target.value)} className={inputClass} />
-        </Field>
-        <label className="flex items-center gap-2 text-xs text-muted">
-          <input type="checkbox" checked={initGit} onChange={(e) => setInitGit(e.target.checked)} />
-          Start a git repository
-        </label>
+        {!chosen && (
+          <Field label="Stack" hint="Optional, for example: Python, FastAPI, PostgreSQL">
+            <input value={stack} onChange={(e) => setStack(e.target.value)} className={inputClass} />
+          </Field>
+        )}
+        <div className="flex flex-col gap-0.5">
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" checked={initGit} onChange={(e) => setInitGit(e.target.checked)} />
+            Start a git repository
+          </label>
+          {chosen && initGit && (
+            <p className="pl-5 text-[11px] text-subtle">
+              With your git name and email set, the blueprint goes in as the first commit.
+            </p>
+          )}
+        </div>
         <ErrorText error={create.error} />
         <div className="flex justify-end gap-2">
           <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
             type="submit"
             variant="primary"
-            disabled={create.isPending || !name.trim() || !parentDir.trim()}
+            disabled={
+              create.isPending ||
+              !name.trim() ||
+              !parentDir.trim() ||
+              (!!start && !chosen && blueprints.isPending)
+            }
           >
             {create.isPending && <Loader2 className="animate-spin" aria-hidden />}
             Create project
