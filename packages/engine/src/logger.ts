@@ -171,6 +171,8 @@ class LogSink {
   private seq = 0;
   private readonly seen = new Set<string>();
   private failures = 0;
+  /** After a failed rotation (a file held open elsewhere), keep appending for a while instead. */
+  private rotateBlockedUntil = 0;
 
   constructor(private readonly opts: LoggerOptions) {
     this.file = path.join(opts.dir, opts.fileName ?? "engine.log");
@@ -202,7 +204,8 @@ class LogSink {
     }
     this.seq++;
     this.ring.push({ seq: this.seq, record });
-    if (this.ring.length > this.ringSize) this.ring.splice(0, this.ring.length - this.ringSize);
+    // Trim in steps, not on every line, so a full ring costs nothing per write.
+    if (this.ring.length > this.ringSize * 1.25) this.ring.splice(0, this.ring.length - this.ringSize);
     this.seen.add(record.component);
     if (this.opts.stderr) process.stderr.write(line);
     this.buffer.push(line);
@@ -233,17 +236,23 @@ class LogSink {
         let chunk = "";
         let bytes = 0;
         let n = written;
+        const limit = Date.now() < this.rotateBlockedUntil ? Number.POSITIVE_INFINITY : this.maxBytes;
         while (n < lines.length) {
           const l = lines[n] as string;
           const b = Buffer.byteLength(l);
-          if (bytes > 0 && this.size + bytes + b > this.maxBytes) break;
+          if (bytes > 0 && this.size + bytes + b > limit) break;
           chunk += l;
           bytes += b;
           n++;
         }
-        if (this.size > 0 && this.size + bytes > this.maxBytes) {
-          this.rotate();
-          continue;
+        if (this.size > 0 && this.size + bytes > this.maxBytes && Date.now() >= this.rotateBlockedUntil) {
+          try {
+            this.rotate();
+            continue;
+          } catch {
+            // Losing lines is worse than a file over the limit: write here and retry later.
+            this.rotateBlockedUntil = Date.now() + 30_000;
+          }
         }
         appendFileSync(this.file, chunk, "utf8");
         this.size += bytes;

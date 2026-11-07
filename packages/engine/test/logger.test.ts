@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createLogger, getLogger, type LogRecord, setDefaultLogger, withLogContext } from "../src/logger";
 import { tempDir } from "./helpers";
@@ -45,6 +45,17 @@ test("writes JSON lines with redaction and rotates by size", () => {
   // The newest line is in engine.log, and the lines in it are in order.
   const current = readLines(log.file);
   expect(current.at(-1)?.i).toBe(39);
+});
+
+test("a rotation that fails (a file held open elsewhere) loses no lines", () => {
+  const t = tempDir();
+  cleanup = t.cleanup;
+  // engine.1.log cannot be replaced: it is a folder with something in it.
+  mkdirSync(path.join(t.dir, "engine.1.log", "busy"), { recursive: true });
+  const log = createLogger({ dir: t.dir, maxBytes: 200, maxFiles: 1, flushMs: 0 });
+  for (let i = 0; i < 20; i++) log.info("line that would rotate", { i });
+  log.flush();
+  expect(readLines(log.file).map((r) => r.i)).toEqual(Array.from({ length: 20 }, (_, i) => i));
 });
 
 test("respects the level and changes it at run time", () => {
