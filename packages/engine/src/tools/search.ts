@@ -130,7 +130,8 @@ export async function searchTool(
 }
 
 let rgPath: string | null | undefined;
-function findRg(): string | null {
+/** ripgrep's path (next to the engine, DEPO_RG_PATH, or on PATH), or null. Cached. */
+export function findRg(): string | null {
   if (rgPath !== undefined) return rgPath;
   const exe = process.platform === "win32" ? "rg.exe" : "rg";
   const candidates = [

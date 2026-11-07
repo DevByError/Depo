@@ -39,6 +39,7 @@ import {
 import { useFollowList } from "@/lib/use-follow-list";
 import { useTaskTitles } from "@/lib/use-task-titles";
 import { useEngine } from "@/store/engine";
+import { useNav } from "@/store/nav";
 import { useUi } from "@/store/ui";
 
 const PAGE = 500;
@@ -68,6 +69,13 @@ export function LogsPanel() {
   const [levels, setLevels] = useState<LogLevel[]>(["error", "warn", "info", "debug"]);
   const [component, setComponent] = useState<string | null>(null);
   const [text, setText] = useState("");
+  // A jump from search: filter to that text.
+  const request = useNav((s) => s.logsText);
+  useEffect(() => {
+    if (!request) return;
+    setText(request.text);
+    useNav.getState().clearLogsText();
+  }, [request]);
   const query = useDebounced(text, 250);
   const [live, setLive] = useState(true);
   const [view, setView] = useState<LogView>(EMPTY_VIEW);

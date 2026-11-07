@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { CommitChangesBar } from "@/components/git/CommitOffer";
 import {
   CommentCard,
   CommentEditor,
@@ -245,6 +246,7 @@ export function DiffReviewPanel() {
             )}
           </p>
         )}
+        {current && <CommitChangesBar projectId={projectId} changeSet={current} />}
         {(apply.isError || discard.isError) && (
           <p role="alert" className="border-b border-border px-4 py-1.5 text-xs text-danger">
             {String((apply.error ?? discard.error) as Error)}

@@ -224,7 +224,7 @@ function DecisionItem({
   const reason = d.reason && d.reason !== d.items.join("\n") ? d.reason : null;
   const hasWhy = !!reason || d.items.length > 0;
   return (
-    <li className="relative flex gap-3 pb-4 last:pb-1" data-kind={d.kind}>
+    <li className="relative flex gap-3 pb-4 last:pb-1" data-kind={d.kind} data-decision-id={d.id}>
       {!last && <span aria-hidden className="absolute top-7 bottom-0 left-3 w-px bg-border" />}
       <AgentAvatar id={d.agent} name={name} size="sm" className="relative mt-0.5" />
       <div className="min-w-0 flex-1">

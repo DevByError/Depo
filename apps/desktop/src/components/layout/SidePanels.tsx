@@ -3,12 +3,14 @@ import {
   Bug,
   FlaskConical,
   Gauge,
+  GitCommitHorizontal,
   PanelRightClose,
   ScrollText,
   SquareTerminal,
   Users,
   X,
 } from "lucide-react";
+import { HistoryPanel } from "@/components/git/HistoryPanel";
 import { ActivityFeed } from "@/components/panels/ActivityFeed";
 import { AgentBoard } from "@/components/panels/AgentBoard";
 import { EngineHealth } from "@/components/panels/EngineHealth";
@@ -86,6 +88,7 @@ export function BottomPanel() {
     { id: "problems", label: problemCount > 0 ? `Problems (${problemCount})` : "Problems", icon: Bug },
     { id: "tests", label: "Test results", icon: FlaskConical },
     { id: "logs", label: "Logs", icon: ScrollText },
+    { id: "history", label: "History", icon: GitCommitHorizontal },
   ];
   return (
     <section aria-label="Bottom panel" className="flex h-full flex-col bg-panel">
@@ -108,6 +111,7 @@ export function BottomPanel() {
         {tab === "engine" && <EngineHealth />}
         {tab === "problems" && <ProblemsPanel />}
         {tab === "logs" && <LogsPanel />}
+        {tab === "history" && <HistoryPanel />}
         {tab === "terminal" && (
           <PhaseNotice icon={SquareTerminal} title="Terminal" phase="Phase 1">
             A live terminal (xterm.js) for commands agents run in the shadow workspace, with the per-project

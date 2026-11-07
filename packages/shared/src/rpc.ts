@@ -35,9 +35,11 @@ import {
   SkillCandidateSchema,
   SkillSchema,
 } from "./extensions";
+import { GitMethods } from "./git";
 import { LogMethods } from "./logs";
 import { PreviewMethods } from "./preview";
 import { ReviewMethods } from "./review";
+import { SearchMethods } from "./search";
 import { SteerInfoSchema, SteerMethods } from "./steer";
 import { TeamReplayMethods } from "./team-replay";
 
@@ -1158,6 +1160,8 @@ export const ApiSchema = {
   ...TeamReplayMethods,
   ...SteerMethods,
   ...ReviewMethods,
+  ...SearchMethods,
+  ...GitMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

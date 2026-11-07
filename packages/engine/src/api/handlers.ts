@@ -14,6 +14,7 @@ import type { CodeIndexer } from "../codeindex/indexer";
 import { FONT_LIBRARY } from "../design/fonts";
 import type { DesignService } from "../design/service";
 import type { EventBus } from "../events/bus";
+import type { GitService } from "../git/service";
 import type { OsvService } from "../knowledge/osv";
 import type { KnowledgeService } from "../knowledge/service";
 import type { LogService } from "../logs/service";
@@ -24,6 +25,7 @@ import type { ModelManager } from "../models/manager";
 import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { ModelScheduler } from "../scheduler/scheduler";
+import type { SearchService } from "../search/service";
 import type { SecurityService } from "../security/service";
 import type { SettingsRepo } from "../settings";
 import type { SkillService } from "../skills/service";
@@ -52,6 +54,10 @@ export interface HandlerContext {
   /** Engine logs: search, live tail, diagnostics export, model timings. */
   logs: LogService;
   previews: PreviewManager;
+  /** Universal search (Ctrl+K). */
+  search?: SearchService;
+  /** Commits for applied change sets, history. */
+  git?: GitService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -95,6 +101,16 @@ function systemInfo(ctx: HandlerContext) {
 function needLogs(ctx: HandlerContext): LogService {
   if (!ctx.logs) throw new Error("Logs are not available in this engine.");
   return ctx.logs;
+}
+
+function needSearch(ctx: HandlerContext): SearchService {
+  if (!ctx.search) throw new Error("Search is not available in this engine.");
+  return ctx.search;
+}
+
+function needGit(ctx: HandlerContext): GitService {
+  if (!ctx.git) throw new Error("Git is not available in this engine.");
+  return ctx.git;
 }
 
 export type Handlers = {
@@ -481,4 +497,11 @@ export const handlers: Handlers = {
     calls: needLogs(ctx).stats.recent(p.limit),
     models: needLogs(ctx).stats.summary(),
   }),
+  "search.everything": (p, ctx) => needSearch(ctx).everything(p),
+  "git.status": (p, ctx) => needGit(ctx).status(p.projectId),
+  "git.draftCommit": (p, ctx) => needGit(ctx).draft(p.projectId, p.changeSetId, p.model),
+  "git.commit": (p, ctx) => needGit(ctx).commit(p),
+  "git.log": (p, ctx) => needGit(ctx).log(p.projectId, p.limit),
+  "git.show": (p, ctx) => needGit(ctx).show(p.projectId, p.hash),
+  "git.setIdentity": (p, ctx) => needGit(ctx).setIdentity(p.projectId, p.name, p.email),
 };

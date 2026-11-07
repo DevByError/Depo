@@ -57,6 +57,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 test("palette: opens, filters as you type, moves with the arrow keys and runs with Enter", async () => {
+  responses["search.everything"] = (p) => ({ query: (p as { query: string }).query, groups: [], tookMs: 1 });
   wrap(<CommandPalette />);
   act(() => useUi.getState().setPaletteOpen(true));
   const input = await screen.findByRole("combobox", { name: "Type a command" });
@@ -77,7 +78,7 @@ test("palette: opens, filters as you type, moves with the arrow keys and runs wi
   fireEvent.keyDown(input2, { key: "ArrowUp" });
   expect(screen.getAllByRole("option")[0]?.getAttribute("aria-selected")).toBe("true");
   fireEvent.change(input2, { target: { value: "qqqq" } });
-  expect(screen.getByText("Nothing matches.")).toBeTruthy();
+  expect(await screen.findByText("Nothing matches.")).toBeTruthy();
 });
 
 test("palette: actions work too (theme, settings)", async () => {

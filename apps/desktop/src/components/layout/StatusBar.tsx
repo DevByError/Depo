@@ -1,7 +1,8 @@
-import { PanelBottom, PanelLeft, PanelRight } from "lucide-react";
+import { GitBranch, PanelBottom, PanelLeft, PanelRight } from "lucide-react";
 import { ConnectionDot, connectionLabel } from "@/components/panels/ConnectionBadge";
 import { HeartbeatPulse } from "@/components/panels/HeartbeatPulse";
 import { cn } from "@/lib/cn";
+import { changesHint, useGitStatus } from "@/lib/git";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 import { NotificationBell } from "./NotificationBell";
@@ -34,6 +35,33 @@ function Toggle({
   );
 }
 
+/** Branch and uncommitted changes of the open project; opens the commit history. */
+function GitStatusItem() {
+  const projectId = useUi((s) => s.projectId);
+  const setBottomTab = useUi((s) => s.setBottomTab);
+  const status = useGitStatus(projectId);
+  const st = status.data;
+  if (!projectId || !st?.isRepo) return null;
+  const branch = st.branch ?? (st.detached ? "detached HEAD" : "no branch");
+  return (
+    <button
+      type="button"
+      onClick={() => setBottomTab("history")}
+      aria-label={`Branch ${branch}, ${changesHint(st.changes).toLowerCase()}. Show the commit history`}
+      title="Show the commit history"
+      className="inline-flex min-w-0 items-center gap-1 rounded px-1 py-px hover:bg-hover hover:text-fg"
+    >
+      <GitBranch className="size-3 shrink-0" aria-hidden />
+      <span className="max-w-40 truncate">{branch}</span>
+      {st.changes > 0 && (
+        <span className="shrink-0 tabular-nums text-warning" aria-hidden>
+          {st.changes} not committed
+        </span>
+      )}
+    </button>
+  );
+}
+
 export function StatusBar() {
   const status = useEngine((s) => s.status);
   const info = useEngine((s) => s.info);
@@ -49,6 +77,7 @@ export function StatusBar() {
       <HeartbeatPulse />
       {info && <span className="hidden sm:inline">v{info.engineVersion}</span>}
       <span className="hidden md:inline">{eventCount} events</span>
+      <GitStatusItem />
       <span className="ml-auto inline-flex items-center gap-0.5">
         <button
           type="button"
