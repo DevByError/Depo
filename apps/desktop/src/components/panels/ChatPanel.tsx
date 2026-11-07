@@ -1,20 +1,11 @@
-import type { ChatItem, DepoEvent, PendingApprovalDto, Task, TaskStatus } from "@depo/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  ArrowDown,
-  Check,
-  FileDiff,
-  FlaskConical,
-  HardDrive,
-  Plus,
-  ShieldAlert,
-  ShieldCheck,
-  X,
-} from "lucide-react";
+import type { ChatItem, DepoEvent, Task, TaskStatus } from "@depo/shared";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, ArrowDown, FileDiff, FlaskConical, HardDrive, Plus, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { ApprovalCard } from "@/components/chat/ApprovalCard";
 import { Composer } from "@/components/chat/Composer";
 import { PlanCard } from "@/components/chat/PlanCard";
+import { SteerNote } from "@/components/chat/SteerNote";
 import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -321,9 +312,13 @@ export interface Turn {
   note: ChatItem | null;
   /** The Manager's plan in a team run, shown as a card instead of a step. */
   plan: { item: ChatItem; plan: ParsedPlan } | null;
+  /** Notes the owner sent while this turn worked (queued, read, or not read). */
+  notes?: ChatItem[];
 }
 
 const isPlanAuthor = (agent: string | null) => !agent || agent.startsWith("manager@");
+/** A note sent while the task worked belongs to the turn it was sent in; one that became the next message starts a turn. */
+const isSteerNote = (m: ChatItem) => m.role === "user" && !!m.steer && m.steer.state !== "followup";
 
 /**
  * Groups a transcript into turns. While `working`, the latest turn has no answer yet: its newest
@@ -333,7 +328,11 @@ export function groupTurns(items: ChatItem[], opts: { working?: boolean } = {}):
   const turns: Turn[] = [];
   const empty = (user: ChatItem | null): Turn => ({ user, steps: [], answer: null, note: null, plan: null });
   for (const item of items) {
-    if (item.role === "user") turns.push(empty(item));
+    if (isSteerNote(item)) {
+      if (turns.length === 0) turns.push(empty(null));
+      const t = turns[turns.length - 1] as Turn;
+      t.notes = [...(t.notes ?? []), item];
+    } else if (item.role === "user") turns.push(empty(item));
     else {
       if (turns.length === 0) turns.push(empty(null));
       turns[turns.length - 1]?.steps.push(item);
@@ -379,13 +378,21 @@ function TurnView({
   const working = state === "working" || state === "waiting";
   const startedAt = turn.user?.createdAt ?? turn.steps[0]?.createdAt ?? null;
   const endedAt = (turn.note ?? turn.answer ?? turn.steps.at(-1))?.createdAt ?? null;
+  // Notes already read sit after the work; ones still waiting for the next step stay at the end.
+  const readNotes = (turn.notes ?? []).filter((n) => n.steer?.state !== "queued");
+  const queuedNotes = (turn.notes ?? []).filter((n) => n.steer?.state === "queued");
   return (
     <section aria-label={`Prompt: ${turn.user?.text.slice(0, 80) ?? "task"}`} className="flex flex-col gap-3">
       {turn.user && (
-        <div className="flex justify-end">
+        <div className="flex flex-col items-end gap-1">
           <div className="max-w-[85%] rounded-2xl rounded-br-md bg-hover px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap text-fg">
             {turn.user.text}
           </div>
+          {turn.user.steer?.state === "followup" && (
+            <span className="pr-1 text-[11px] text-subtle">
+              Sent while the task worked, so it continues with it
+            </span>
+          )}
         </div>
       )}
       {turn.plan && <PlanCard plan={turn.plan.plan} />}
@@ -399,6 +406,9 @@ function TurnView({
           live={live}
         />
       )}
+      {readNotes.map((n) => (
+        <SteerNote key={n.id} item={n} />
+      ))}
       {turn.answer && <Answer item={turn.answer} />}
       {turn.note && (
         <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[13px] text-fg">
@@ -415,6 +425,9 @@ function TurnView({
           />
         </div>
       )}
+      {queuedNotes.map((n) => (
+        <SteerNote key={n.id} item={n} />
+      ))}
     </section>
   );
 }
@@ -435,46 +448,6 @@ function Answer({ item }: { item: ChatItem }) {
     <div className="text-[13.5px] leading-relaxed text-fg">
       <Markdown text={item.text} />
     </div>
-  );
-}
-
-function ApprovalCard({ approval }: { approval: PendingApprovalDto }) {
-  const qc = useQueryClient();
-  const respond = useMutation({
-    mutationFn: (approve: boolean) => call("approvals.respond", { id: approval.id, approve }),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["approvals"] }),
-  });
-  const command = approval.details?.command;
-  const planText = approval.details?.plan;
-  return (
-    <section
-      aria-label="Approval needed"
-      className="rounded-lg border border-warning/50 bg-warning/10 px-4 py-3 text-[13px]"
-    >
-      <div className="flex items-center gap-2 font-medium text-fg">
-        <ShieldAlert className="size-4 text-warning" aria-hidden />
-        {approval.title}
-      </div>
-      <p className="mt-1 text-xs whitespace-pre-wrap text-muted">{approval.reason}</p>
-      {typeof planText === "string" && (
-        <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-bg px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap text-fg">
-          {planText}
-        </pre>
-      )}
-      {typeof command === "string" && (
-        <pre className="mt-2 overflow-x-auto rounded-md bg-bg px-2.5 py-1.5 font-mono text-xs text-fg">
-          {command}
-        </pre>
-      )}
-      <div className="mt-3 flex gap-2">
-        <Button variant="primary" size="sm" disabled={respond.isPending} onClick={() => respond.mutate(true)}>
-          <Check aria-hidden /> Allow
-        </Button>
-        <Button size="sm" disabled={respond.isPending} onClick={() => respond.mutate(false)}>
-          <X aria-hidden /> Decline
-        </Button>
-      </div>
-    </section>
   );
 }
 
@@ -510,7 +483,7 @@ function RunTime({ task, items }: { task: Task; items: ChatItem[] }) {
   }, [active]);
   // The latest run starts at the latest user message and ends with the last message after it
   // (the task's own update time also moves when changes are applied later).
-  const lastUser = [...items].reverse().find((m) => m.role === "user");
+  const lastUser = [...items].reverse().find((m) => m.role === "user" && !isSteerNote(m));
   const start = Date.parse(lastUser?.createdAt ?? task.createdAt);
   if (Number.isNaN(start)) return null;
   if (active) return <span className="tabular-nums">for {formatDuration(now - start)}</span>;

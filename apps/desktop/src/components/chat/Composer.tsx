@@ -1,8 +1,8 @@
-import type { Task, WorkMode } from "@depo/shared";
+import { STEER_MAX_CHARS, type Task, type WorkMode } from "@depo/shared";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronDown, Loader2, Square, User, Users } from "lucide-react";
-import { type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
@@ -118,7 +118,18 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const [text, setText] = useState("");
   const [mode, setMode] = useState<WorkMode>("single");
   const running = isRunning(task?.status);
+  // While the task works, the composer adds a note the agents read at their next step.
+  const steering = running && !!task;
+  const team = !!task && task.mode !== "single";
+  const [sentNote, setSentNote] = useState(false);
   const boxRef = useRef<HTMLTextAreaElement>(null);
+
+  // "Note sent" shows for a few seconds, then the usual hint comes back.
+  useEffect(() => {
+    if (!sentNote) return;
+    const t = setTimeout(() => setSentNote(false), 4000);
+    return () => clearTimeout(t);
+  }, [sentNote]);
 
   // Grow with the text, up to about 8 lines.
   // biome-ignore lint/correctness/useExhaustiveDependencies: measure again whenever the text changes
@@ -132,16 +143,24 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   }, [text]);
 
   const send = useMutation({
-    mutationFn: (body: string) =>
-      call("tasks.send", {
+    mutationFn: async (body: string): Promise<{ taskId: string; queued: boolean }> => {
+      // A working task gets a steering note (it becomes a follow-up if the task just finished).
+      if (task && steering) {
+        const r = await call("tasks.steer", { taskId: task.id, text: body });
+        return { taskId: r.taskId, queued: r.delivery === "queued" };
+      }
+      const t = await call("tasks.send", {
         projectId: projectId ?? "",
         text: body,
         ...(task ? { taskId: task.id } : {}),
         ...(!task && mode !== "single" ? { mode } : {}),
-      }),
-    onSuccess: (t) => {
+      });
+      return { taskId: t.id, queued: false };
+    },
+    onSuccess: (r) => {
       setText("");
-      setTaskId(t.id);
+      setTaskId(r.taskId);
+      setSentNote(r.queued);
       onSent?.();
       void qc.invalidateQueries({ queryKey: ["tasks"] });
     },
@@ -151,9 +170,11 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
     onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });
 
-  const canSend = connected && !!projectId && !running && text.trim().length > 0 && !send.isPending;
+  const body = text.trim();
+  const tooLong = steering && body.length > STEER_MAX_CHARS;
+  const canSend = connected && !!projectId && body.length > 0 && !tooLong && !send.isPending;
   const submit = () => {
-    if (canSend) send.mutate(text.trim());
+    if (canSend) send.mutate(body);
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -163,11 +184,17 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   };
   const note = !projectId
     ? "Open a project to start."
-    : running
-      ? "The agent is working. Stop it to send a new message."
-      : task
-        ? "A follow-up continues this task in the same private copy."
-        : "Depo works in a private copy. You approve every change.";
+    : tooLong
+      ? `Notes can be up to ${STEER_MAX_CHARS.toLocaleString()} characters. Shorten it, or send it once the work is done.`
+      : sentNote
+        ? "Note sent. It will be read at the next step."
+        : steering
+          ? team
+            ? "The team is working. Add a note and the Manager and the agents at work read it at their next step."
+            : "The agent is working. Add a note and it reads it at its next step."
+          : task
+            ? "A follow-up continues this task in the same private copy."
+            : "Depo works in a private copy. You approve every change.";
 
   return (
     <div className="border-t border-border bg-panel px-6 pt-3 pb-3">
@@ -191,14 +218,20 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
             onKeyDown={onKey}
             aria-describedby="composer-note composer-keys"
             placeholder={
-              task ? "Ask for a follow-up change…" : "Describe the change, e.g. Add a /health endpoint"
+              steering
+                ? team
+                  ? "Add a note for the team…"
+                  : "Add a note for the agent…"
+                : task
+                  ? "Ask for a follow-up change…"
+                  : "Describe the change, e.g. Add a /health endpoint"
             }
             className="field-in-frame w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-5 text-fg outline-none placeholder:text-subtle"
           />
           <div className="mt-1.5 flex items-center gap-2">
             {!task && <ModePicker mode={mode} onChange={setMode} />}
             <span className="flex-1" />
-            {running ? (
+            {running && (
               <button
                 type="button"
                 onClick={() => stop.mutate()}
@@ -212,27 +245,30 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
                 )}
                 Stop
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={submit}
-                disabled={!canSend}
-                aria-label="Send"
-                className="flex size-8 items-center justify-center rounded-lg bg-accent text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40"
-              >
-                {send.isPending ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : (
-                  <ArrowUp className="size-4" aria-hidden />
-                )}
-              </button>
             )}
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSend}
+              aria-label={steering ? "Send note" : "Send"}
+              title={steering ? "Send note (Enter)" : undefined}
+              className="flex size-8 items-center justify-center rounded-lg bg-accent text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {send.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <ArrowUp className="size-4" aria-hidden />
+              )}
+            </button>
           </div>
         </div>
         <div className="mt-1.5 flex items-start gap-3 px-1 text-[11px]">
           <p
             id="composer-note"
-            className={cn("min-w-0 flex-1", send.isError ? "text-danger" : "text-subtle")}
+            className={cn(
+              "min-w-0 flex-1",
+              send.isError || tooLong ? "text-danger" : sentNote ? "text-success" : "text-subtle",
+            )}
           >
             {send.isError ? (send.error as Error).message : note}
           </p>
@@ -240,6 +276,9 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
             <Kbd>Enter</Kbd> to send, <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> for a new line
           </p>
         </div>
+        <p className="sr-only" role="status" aria-live="polite">
+          {sentNote ? "Note sent. It will be read at the next step." : ""}
+        </p>
       </div>
     </div>
   );
