@@ -1,9 +1,20 @@
 import type { CodeArea, CodeMapEdge, CodeMapNode } from "@depo/shared";
 import { CircleDot, RefreshCcw } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AGENT_BG, AGENT_TEXT } from "@/lib/agent-color";
 import { cn } from "@/lib/cn";
-import { AREA_LABEL, AREA_TONE, layoutModules, moduleLabel, plural, tailLabel } from "@/lib/code-map";
+import {
+  AREA_LABEL,
+  AREA_TONE,
+  COMPACT_NODE,
+  GRAPH_NODE,
+  layoutModules,
+  moduleLabel,
+  plural,
+  tailLabel,
+} from "@/lib/code-map";
+
+const MIN_SCALE = 0.8;
 
 /** What a module's button says to a screen reader; it starts with the visible text. */
 export function moduleSummary(n: CodeMapNode): string {
@@ -28,15 +39,31 @@ export function ModuleGraph({
   edges,
   selected,
   onSelect,
-  maxHeight,
+  compact = false,
 }: {
   nodes: CodeMapNode[];
   edges: CodeMapEdge[];
   selected: string | null;
   onSelect(id: string | null): void;
-  maxHeight?: number;
+  /** Smaller boxes, shrunk a little to fit the width (the project home). */
+  compact?: boolean;
 }) {
-  const layout = useMemo(() => layoutModules(nodes, edges), [nodes, edges]);
+  const layout = useMemo(
+    () => layoutModules(nodes, edges, compact ? COMPACT_NODE : GRAPH_NODE),
+    [nodes, edges, compact],
+  );
+  const scroller = useRef<HTMLElement>(null);
+  const [room, setRoom] = useState(0);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!compact || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setRoom(el.clientWidth));
+    ro.observe(el);
+    setRoom(el.clientWidth);
+    return () => ro.disconnect();
+  }, [compact]);
+  // Shrink to fit, but never so far that the labels stop being readable; past that it scrolls.
+  const scale = compact && room > 0 ? Math.min(1, Math.max(MIN_SCALE, (room - 2) / layout.width)) : 1;
   const box = useMemo(() => new Map(layout.boxes.map((b) => [b.id, b])), [layout]);
   const areas = useMemo(() => [...new Set(nodes.map((n) => n.area))].sort() as CodeArea[], [nodes]);
   const hasCycle = layout.edges.some((e) => e.cycle);
@@ -50,91 +77,112 @@ export function ModuleGraph({
   return (
     <div className="flex flex-col gap-2">
       <section
+        ref={scroller}
         tabIndex={0}
         aria-label="Module graph. Scroll to see every module."
-        className="overflow-auto rounded-lg border border-border bg-bg"
+        className={cn(
+          "overflow-auto rounded-lg border border-border bg-bg",
+          compact ? "max-h-96" : "max-h-[70vh]",
+        )}
         style={{
-          maxHeight,
           backgroundImage: "radial-gradient(var(--border) 1px, transparent 1px)",
           backgroundSize: "16px 16px",
         }}
       >
-        <div className="relative" style={{ width: layout.width, height: layout.height }}>
-          <svg
-            aria-hidden
-            className="pointer-events-none absolute inset-0"
-            width={layout.width}
-            height={layout.height}
+        <div style={{ width: layout.width * scale, height: layout.height * scale }}>
+          <div
+            className="relative origin-top-left"
+            style={{
+              width: layout.width,
+              height: layout.height,
+              ...(scale < 1 ? { transform: `scale(${scale})` } : {}),
+            }}
           >
-            {ordered.map((e) => {
-              const on = linked(e);
-              const dim = selected !== null && !on;
-              return (
-                <g
-                  key={`${e.from}>${e.to}`}
-                  className={cn(
-                    e.cycle
-                      ? "fill-danger stroke-danger"
-                      : on
-                        ? "fill-accent stroke-accent"
-                        : "fill-border-strong stroke-border-strong",
-                    dim && "opacity-30",
-                  )}
-                >
-                  <path
-                    d={e.path}
-                    fill="none"
-                    strokeWidth={Math.min(3, 1 + Math.log2(e.weight) * 0.5) + (on ? 0.5 : 0)}
-                    strokeDasharray={e.cycle ? "5 4" : undefined}
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d={`M${e.x2 - 6} ${e.y2 - 3.5} L${e.x2} ${e.y2} L${e.x2 - 6} ${e.y2 + 3.5} Z`}
-                    stroke="none"
-                  />
-                </g>
-              );
-            })}
-          </svg>
-          <ol aria-label="Modules in the graph">
-            {nodes.map((n) => {
-              const b = box.get(n.id);
-              if (!b) return null;
-              const tone = AREA_TONE[n.area];
-              const isSel = selected === n.id;
-              return (
-                <li key={n.id} className="absolute" style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
-                  <button
-                    type="button"
-                    aria-pressed={isSel}
-                    aria-label={moduleSummary(n)}
-                    title={moduleLabel(n.id)}
-                    onClick={() => onSelect(isSel ? null : n.id)}
+            <svg
+              aria-hidden
+              className="pointer-events-none absolute inset-0"
+              width={layout.width}
+              height={layout.height}
+            >
+              {ordered.map((e) => {
+                const on = linked(e);
+                const dim = selected !== null && !on;
+                return (
+                  <g
+                    key={`${e.from}>${e.to}`}
                     className={cn(
-                      "flex size-full items-stretch overflow-hidden rounded-lg border bg-panel text-left transition-[border-color,box-shadow] duration-150 hover:border-border-strong",
-                      isSel
-                        ? "border-accent ring-2 ring-accent/30"
-                        : selected !== null && isNeighbour(n.id, selected, edges)
-                          ? "border-accent/50"
-                          : "border-border",
+                      e.cycle
+                        ? "fill-danger stroke-danger"
+                        : on
+                          ? "fill-accent stroke-accent"
+                          : "fill-border-strong stroke-border-strong",
+                      dim && "opacity-30",
                     )}
                   >
-                    <span className={cn("w-1 shrink-0", AGENT_BG[tone])} aria-hidden />
-                    <span className="flex min-w-0 flex-1 flex-col justify-center px-2 py-1">
-                      <span className="truncate text-xs font-medium text-fg">{tailLabel(n.id)}</span>
-                      <span className="flex items-center gap-1 truncate text-[11px] text-subtle">
-                        {plural(n.files, "file")}
-                        {n.inCycle && <RefreshCcw className="size-3 shrink-0 text-danger" aria-hidden />}
-                        {n.entry && (
-                          <CircleDot className={cn("size-3 shrink-0", AGENT_TEXT[tone])} aria-hidden />
+                    <path
+                      d={e.path}
+                      fill="none"
+                      strokeWidth={Math.min(3, 1 + Math.log2(e.weight) * 0.5) + (on ? 0.5 : 0)}
+                      strokeDasharray={e.cycle ? "5 4" : undefined}
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d={`M${e.x2 - 6} ${e.y2 - 3.5} L${e.x2} ${e.y2} L${e.x2 - 6} ${e.y2 + 3.5} Z`}
+                      stroke="none"
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+            <ol aria-label="Modules in the graph">
+              {nodes.map((n) => {
+                const b = box.get(n.id);
+                if (!b) return null;
+                const tone = AREA_TONE[n.area];
+                const isSel = selected === n.id;
+                return (
+                  <li
+                    key={n.id}
+                    className="absolute"
+                    style={{ left: b.x, top: b.y, width: b.w, height: b.h }}
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={isSel}
+                      aria-label={moduleSummary(n)}
+                      title={moduleLabel(n.id)}
+                      onClick={() => onSelect(isSel ? null : n.id)}
+                      className={cn(
+                        "flex size-full items-stretch overflow-hidden rounded-lg border bg-panel text-left transition-[border-color,box-shadow] duration-150 hover:border-border-strong",
+                        isSel
+                          ? "border-accent ring-2 ring-accent/30"
+                          : selected !== null && isNeighbour(n.id, selected, edges)
+                            ? "border-accent/50"
+                            : "border-border",
+                      )}
+                    >
+                      <span className={cn("w-1 shrink-0", AGENT_BG[tone])} aria-hidden />
+                      <span
+                        className={cn(
+                          "flex min-w-0 flex-1 flex-col justify-center leading-tight",
+                          compact ? "px-1.5" : "px-2 py-1",
                         )}
+                      >
+                        <span className="truncate text-xs font-medium text-fg">{tailLabel(n.id)}</span>
+                        <span className="flex items-center gap-1 truncate text-[11px] text-subtle">
+                          {plural(n.files, "file")}
+                          {n.inCycle && <RefreshCcw className="size-3 shrink-0 text-danger" aria-hidden />}
+                          {n.entry && (
+                            <CircleDot className={cn("size-3 shrink-0", AGENT_TEXT[tone])} aria-hidden />
+                          )}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
         </div>
       </section>
       <ul aria-label="Legend" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">

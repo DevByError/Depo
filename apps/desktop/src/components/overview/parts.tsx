@@ -52,7 +52,7 @@ export function CardLink({ children, onClick }: { children: ReactNode; onClick()
     <button
       type="button"
       onClick={onClick}
-      className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-accent hover:bg-hover"
+      className="min-h-6 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-accent hover:bg-hover"
     >
       {children}
     </button>

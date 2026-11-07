@@ -94,7 +94,7 @@ export function TasksCard({ overview }: { overview: Overview }) {
                   setTaskId(t.id);
                   setCenterTab(t.mode === "single" ? "chat" : "team");
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-hover"
+                className="flex min-h-6 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-hover"
               >
                 <span className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT[t.status])} aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-fg">{t.title}</span>
@@ -155,7 +155,7 @@ export function PreviewsCard({ projectId }: { projectId: string }) {
                     setError(null);
                     openExternal(p.url).catch((err: unknown) => setError(err));
                   }}
-                  className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px] text-accent hover:bg-hover"
+                  className="flex min-h-6 shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px] text-accent hover:bg-hover"
                   aria-label={`Open ${p.label} at ${p.url}`}
                 >
                   {p.url.replace(/^https?:\/\//, "")}
@@ -208,7 +208,7 @@ export function DecisionsCard({ projectId }: { projectId: string }) {
                   setTaskId(e.taskId);
                   setCenterTab("team");
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs enabled:hover:bg-hover"
+                className="flex min-h-6 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs enabled:hover:bg-hover"
               >
                 <AgentAvatar id={d.agent} name={agentName(d.tag)} size="xs" />
                 <span className={cn("shrink-0 text-[11px] font-medium", TONE_TEXT[decisionTone(d)])}>
@@ -254,7 +254,7 @@ export function MemoryCard({ overview }: { overview: Overview }) {
       action={<CardLink onClick={() => setCenterTab("memory")}>Open Memory</CardLink>}
     >
       <p className="text-xs text-fg">
-        {m.facts} item{m.facts === 1 ? "" : "s"} · {m.lessons} lesson{m.lessons === 1 ? "" : "s"} learned
+        {m.facts} fact{m.facts === 1 ? "" : "s"} · {m.lessons} lesson{m.lessons === 1 ? "" : "s"} learned
       </p>
       {top.length > 0 ? (
         <ul className="mt-2 flex flex-col gap-1.5">
@@ -289,7 +289,7 @@ export function RecentChangesCard({ overview }: { overview: Overview }) {
                   setChangeSetId(c.id);
                   setCenterTab("diff");
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-hover"
+                className="flex min-h-6 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-hover"
               >
                 <span className="min-w-0 flex-1 truncate text-fg">{c.title}</span>
                 <span className="shrink-0 text-subtle">

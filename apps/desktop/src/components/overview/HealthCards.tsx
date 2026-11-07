@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, FileCode2, FlaskConical, Palette, ShieldCheck, XCircle } from "lucide-react";
 import { AGENT_BG, type AgentTone } from "@/lib/agent-color";
 import { cn } from "@/lib/cn";
-import { compactNumber, languageShares, plural, testBars } from "@/lib/code-map";
+import { compactNumber, languageShares, percent, plural, testBars } from "@/lib/code-map";
 import { call } from "@/lib/engine";
 import { formatRelative } from "@/lib/format";
 import { useEngine } from "@/store/engine";
@@ -84,7 +84,7 @@ function SecurityCard({ projectId }: { projectId: string }) {
     <Card
       title="Security"
       icon={ShieldCheck}
-      action={<CardLink onClick={() => setCenterTab("security")}>Open</CardLink>}
+      action={<CardLink onClick={() => setCenterTab("security")}>Open Security</CardLink>}
     >
       {score ? (
         <Stat
@@ -123,7 +123,7 @@ function UxCard({ projectId }: { projectId: string }) {
     <Card
       title="UX score"
       icon={Palette}
-      action={<CardLink onClick={() => setCenterTab("design")}>Open</CardLink>}
+      action={<CardLink onClick={() => setCenterTab("design")}>Open Design</CardLink>}
     >
       {ux ? (
         <>
@@ -177,7 +177,7 @@ function CodeSizeCard({ projectId, overview }: { projectId: string; overview: Ov
                   )}
                   aria-hidden
                 />
-                {l.name} <span className="text-subtle tabular-nums">{Math.round(l.share * 100)}%</span>
+                {l.name} <span className="text-subtle tabular-nums">{percent(l.share)}</span>
               </li>
             ))}
           </ul>

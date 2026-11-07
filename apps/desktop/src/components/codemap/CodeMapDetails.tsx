@@ -1,17 +1,37 @@
-import type { CodeHotSpot, CodeMap } from "@depo/shared";
+import type { CodeArea, CodeHotSpot, CodeMap } from "@depo/shared";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, CircleDot, FolderOpen, Loader2, Package, RefreshCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { ErrorText } from "@/components/ui/modal";
-import { AGENT_SOFT } from "@/lib/agent-color";
+import { AGENT_BG } from "@/lib/agent-color";
 import { cn } from "@/lib/cn";
-import { AREA_LABEL, AREA_TONE, compactNumber, moduleLabel, plural, shortPath } from "@/lib/code-map";
+import { AREA_LABEL, AREA_TONE, compactNumber, moduleLabel, plural, splitPath } from "@/lib/code-map";
 import { call } from "@/lib/engine";
 import { openInFiles } from "@/lib/open-file";
 import { useEngine } from "@/store/engine";
 
 const LIST_MAX = 50;
+
+/** A path that leads with the file name, the folder after it in a dimmer colour. */
+export function PathText({ path }: { path: string }) {
+  const { name, dir } = splitPath(path);
+  return (
+    <span className="min-w-0 flex-1 truncate text-[11px]">
+      <span className="font-mono text-fg">{name}</span>
+      {dir && <span className="pl-1 text-subtle"> {dir}</span>}
+    </span>
+  );
+}
+
+function AreaTag({ area }: { area: CodeArea }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted">
+      <span className={cn("size-2 rounded-sm", AGENT_BG[AREA_TONE[area]])} aria-hidden />
+      {AREA_LABEL[area]}
+    </span>
+  );
+}
 
 /** The files of one module, busiest first, with the files elsewhere they work with. */
 export function ModuleFiles({
@@ -45,11 +65,7 @@ export function ModuleFiles({
         >
           {moduleLabel(module)}
         </h3>
-        {area && (
-          <span className={cn("rounded px-1.5 py-0.5 text-[11px]", AGENT_SOFT[AREA_TONE[area]])}>
-            {AREA_LABEL[area]}
-          </span>
-        )}
+        {area && <AreaTag area={area} />}
         <Button size="sm" variant="ghost" onClick={onClose}>
           Close
         </Button>
@@ -82,12 +98,7 @@ export function ModuleFiles({
               <ul className="flex flex-col">
                 {outside.map((n) => (
                   <li key={n.id}>
-                    <FileRow
-                      path={n.id}
-                      label={n.id}
-                      detail={moduleLabel(n.module ?? "")}
-                      onClick={() => onFile(n.id)}
-                    />
+                    <FileRow path={n.id} label={n.id} detail="" onClick={() => onFile(n.id)} />
                   </li>
                 ))}
               </ul>
@@ -119,9 +130,9 @@ function FileRow({
       type="button"
       onClick={onClick}
       title={path}
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-hover"
+      className="flex min-h-6 w-full items-center gap-2 rounded-md px-2 py-0.5 text-left text-xs hover:bg-hover"
     >
-      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">{shortPath(label, 56)}</span>
+      <PathText path={label} />
       {inCycle && (
         <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-danger">
           <RefreshCcw className="size-3" aria-hidden />
@@ -186,9 +197,7 @@ export function FileDetails({
       {f && (
         <>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
-            <span className={cn("rounded px-1.5 py-0.5", AGENT_SOFT[AREA_TONE[f.area]])}>
-              {AREA_LABEL[f.area]}
-            </span>
+            <AreaTag area={f.area} />
             <span>{facts.join(" · ")}</span>
             {f.entry && (
               <span className="flex items-center gap-1">
@@ -209,7 +218,7 @@ export function FileDetails({
                 <li key={`${i.line}:${i.spec}`} className="flex items-center gap-2 text-xs">
                   {i.target ? (
                     <LinkButton onClick={() => onFile(i.target ?? "")} title={i.target}>
-                      {shortPath(i.target, 48)}
+                      <PathText path={i.target} />
                     </LinkButton>
                   ) : i.library ? (
                     <span className="flex min-w-0 flex-1 items-center gap-1 px-2 py-0.5 text-muted">
@@ -233,7 +242,7 @@ export function FileDetails({
               {f.importedBy.slice(0, LIST_MAX).map((i) => (
                 <li key={`${i.path}:${i.line}`} className="flex items-center gap-2 text-xs">
                   <LinkButton onClick={() => onFile(i.path)} title={i.path}>
-                    {shortPath(i.path, 48)}
+                    <PathText path={i.path} />
                   </LinkButton>
                   <span className="shrink-0 text-[11px] text-subtle tabular-nums">line {i.line}</span>
                 </li>
@@ -296,7 +305,7 @@ function LinkButton({ children, onClick, title }: { children: ReactNode; onClick
       type="button"
       onClick={onClick}
       title={title}
-      className="min-w-0 flex-1 truncate rounded px-2 py-0.5 text-left font-mono text-[11px] text-fg hover:bg-hover"
+      className="flex min-h-6 min-w-0 flex-1 items-center rounded px-2 py-0.5 text-left hover:bg-hover"
     >
       {children}
     </button>
@@ -345,11 +354,9 @@ export function HotSpots({
                     type="button"
                     onClick={() => onFile(h.path)}
                     title={h.path}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left hover:bg-hover"
+                    className="flex min-h-6 w-full items-center gap-2 rounded-md px-2 py-0.5 text-left hover:bg-hover"
                   >
-                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">
-                      {shortPath(h.path, 40)}
-                    </span>
+                    <PathText path={h.path} />
                     <span className="shrink-0 text-[11px] text-subtle">{h.detail}</span>
                   </button>
                 </li>

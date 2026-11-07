@@ -108,6 +108,7 @@ export const CodeFileInfoSchema = z.object({
   path: z.string(),
   module: z.string(),
   area: CodeAreaSchema,
+  /** The language's name ("TypeScript", "Python"), when the index knows it. */
   lang: z.string().nullable(),
   lines: z.number().int(),
   branches: z.number().int(),

@@ -482,7 +482,7 @@ test("code map: hot spots open a file, and the full view lists entry points and 
   const hot = await screen.findByRole("region", { name: "Hot spots" });
   expect(within(hot).getByText("Most imported")).toBeTruthy();
   expect(within(hot).queryByText("Most complex")).toBeNull();
-  fireEvent.click(within(hot).getByRole("button", { name: /web\/src\/App\.tsx/ }));
+  fireEvent.click(within(hot).getByRole("button", { name: /^App\.tsx/ }));
   expect(await screen.findByRole("region", { name: "File web/src/App.tsx" })).toBeTruthy();
 
   const map = screen.getByRole("region", { name: "Code map" });

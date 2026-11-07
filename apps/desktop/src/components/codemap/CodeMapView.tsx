@@ -5,18 +5,10 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ErrorText } from "@/components/ui/modal";
 import { AGENT_BG } from "@/lib/agent-color";
 import { cn } from "@/lib/cn";
-import {
-  AREA_LABEL,
-  AREA_TONE,
-  busiestModules,
-  compactNumber,
-  moduleLabel,
-  plural,
-  shortPath,
-} from "@/lib/code-map";
+import { AREA_LABEL, AREA_TONE, compactNumber, homeModules, moduleLabel, plural } from "@/lib/code-map";
 import { call } from "@/lib/engine";
 import { useEngine } from "@/store/engine";
-import { FileDetails, HotSpots, ModuleFiles } from "./CodeMapDetails";
+import { FileDetails, HotSpots, ModuleFiles, PathText } from "./CodeMapDetails";
 import { ModuleGraph, moduleSummary } from "./ModuleGraph";
 
 type Shape = "graph" | "list";
@@ -74,7 +66,7 @@ export function CodeMapView({
 
   const m = map.data;
   const all = useMemo(() => (m ? m.nodes.filter((n) => !n.outside) : []), [m]);
-  const shown = useMemo(() => (compact ? busiestModules(all, COMPACT_MODULES) : all), [all, compact]);
+  const shown = useMemo(() => (compact ? homeModules(all, COMPACT_MODULES) : all), [all, compact]);
   const shownIds = useMemo(() => new Set(shown.map((n) => n.id)), [shown]);
   const edges = useMemo(
     () => (m ? m.edges.filter((e) => shownIds.has(e.from) && shownIds.has(e.to)) : []),
@@ -122,14 +114,15 @@ export function CodeMapView({
             edges={edges}
             selected={module}
             onSelect={pickModule}
-            {...(compact ? { maxHeight: 340 } : {})}
+            compact={compact}
           />
         ) : (
           <ModuleTable nodes={shown} selected={module} onSelect={pickModule} />
         )}
         {compact && all.length > shown.length && (
           <p className="text-[11px] text-subtle">
-            Showing the {shown.length} busiest of {all.length} modules.
+            Showing the {shown.length} busiest of {all.length} modules. The full map has them all, tests
+            included.
           </p>
         )}
         <div
@@ -283,7 +276,7 @@ function ModuleTable({
                     aria-label={moduleSummary(n)}
                     title={moduleLabel(n.id)}
                     onClick={() => onSelect(isSel ? null : n.id)}
-                    className="flex w-full max-w-md items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-hover"
+                    className="flex min-h-6 w-full max-w-md items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-hover"
                   >
                     <span className="min-w-0 truncate font-mono text-[11px] text-fg">
                       {moduleLabel(n.id)}
@@ -325,11 +318,9 @@ function EntriesAndCycles({ map, onFile }: { map: CodeMap; onFile(path: string):
                   type="button"
                   onClick={() => onFile(e.path)}
                   title={e.path}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left hover:bg-hover"
+                  className="flex min-h-6 w-full items-center gap-2 rounded-md px-2 py-0.5 text-left hover:bg-hover"
                 >
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">
-                    {shortPath(e.path, 40)}
-                  </span>
+                  <PathText path={e.path} />
                   <span className="shrink-0 text-[11px] text-subtle">{e.reason}</span>
                 </button>
               </li>
@@ -353,7 +344,7 @@ function EntriesAndCycles({ map, onFile }: { map: CodeMap; onFile(path: string):
                       type="button"
                       onClick={() => onFile(p)}
                       title={p}
-                      className="rounded px-1 font-mono text-fg hover:bg-hover"
+                      className="min-h-6 rounded px-1 font-mono text-fg hover:bg-hover"
                     >
                       {p.split("/").pop()}
                     </button>
