@@ -8,7 +8,16 @@ import { useReadiness } from "./use-readiness";
  * "Ready", "2 warnings" or "Not ready" in a header. Opens the readiness card below it; Escape or
  * a click elsewhere closes it, and focus goes back to the pill.
  */
-export function ReadinessPill({ taskId, className }: { taskId: string; className?: string }) {
+export function ReadinessPill({
+  taskId,
+  className,
+  align = "end",
+}: {
+  taskId: string;
+  className?: string;
+  /** Which edge of the pill the card lines up with: end for a pill on the right of a header. */
+  align?: "start" | "end";
+}) {
   const report = useReadiness(taskId);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -62,7 +71,10 @@ export function ReadinessPill({ taskId, className }: { taskId: string; className
       {open && (
         <div
           id={id}
-          className="absolute right-0 top-full z-30 mt-1 w-[min(28rem,calc(100vw-2rem))] rounded-lg shadow-lg"
+          className={cn(
+            "absolute top-full z-30 mt-1 w-[min(28rem,calc(100vw-2rem))] rounded-lg shadow-lg",
+            align === "end" ? "right-0" : "left-0",
+          )}
         >
           <ReadinessCard taskId={taskId} scrollable className="max-h-[70vh] overflow-y-auto" />
         </div>
