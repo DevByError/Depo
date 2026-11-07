@@ -59,7 +59,7 @@ function ModePicker({ mode, onChange }: { mode: WorkMode; onChange: (m: WorkMode
     <Menu.Root modal={false}>
       <Menu.Trigger
         aria-label={`Work mode: ${current?.label ?? ""}`}
-        className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted transition-colors hover:bg-hover hover:text-fg data-[state=open]:bg-hover data-[state=open]:text-fg"
+        className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-fg transition-colors hover:bg-hover data-[state=open]:bg-hover"
       >
         <Icon className="size-3.5" aria-hidden />
         {current?.label}
