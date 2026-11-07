@@ -844,7 +844,8 @@ describe("the report from stored evidence", () => {
       detail: "bun test in the private copy",
       running: false,
     });
-    expect(checks.code?.summary).toBe("Code checks are not available in this engine.");
+    // The engine wires the diagnostics service in; nothing has checked this copy yet.
+    expect(checks.code?.summary).toBe("Code checks have not run on this change.");
     expect(checks.comments?.state).toBe("pass");
     expect(checks.plan).toBeUndefined();
 

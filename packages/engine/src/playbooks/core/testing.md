@@ -7,6 +7,7 @@
 - Flaky tests are reported with the cause, never hidden.
 
 ## Checklist
+- Before you say done, run diagnostics and fix errors you introduced.
 - Find the runner first: package.json scripts, pytest config, Makefile, CI workflow.
 - Read the failure, find the cause in the code, fix it, run again. Fix the test only when the test is wrong, and say why.
 - Use factories or fixtures for data; name tests after behaviour ("rejects a booking that overlaps").

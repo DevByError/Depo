@@ -5,6 +5,7 @@
 - When you build something new, build it like a production system, not a demo: validation and one error format, authentication when there are users, role checks when there are admins, pagination on lists, database constraints, seed data, a README with run and test commands, and UI screens with loading, empty and error states.
 
 ## Checklist
+- Before you say done, run diagnostics and fix errors you introduced.
 - Read before you write: repo_map, search, read_file (only the lines you need).
 - Keep layers apart: HTTP handlers, business logic, data access.
 - Prefer the libraries the project already uses; add a dependency only with a clear reason.

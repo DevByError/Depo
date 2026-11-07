@@ -15,11 +15,13 @@ import { ActivityFeed } from "@/components/panels/ActivityFeed";
 import { AgentBoard } from "@/components/panels/AgentBoard";
 import { EngineHealth } from "@/components/panels/EngineHealth";
 import { LogsPanel } from "@/components/panels/LogsPanel";
-import { PhaseNotice } from "@/components/panels/PhaseNotice";
-import { ProblemsPanel } from "@/components/panels/ProblemsPanel";
+import { ProblemsPanel, useLatestDiagnostics } from "@/components/panels/ProblemsPanel";
+import { TerminalPanel } from "@/components/terminal/TerminalPanel";
+import { TestResultsPanel } from "@/components/terminal/TestResultsPanel";
 import { IconButton } from "@/components/ui/icon-button";
 import { cn } from "@/lib/cn";
 import { useEngine } from "@/store/engine";
+import { useBottomTarget } from "@/store/terminal";
 import { type BottomTab, type RightTab, useUi } from "@/store/ui";
 
 function PanelTab({
@@ -79,9 +81,18 @@ export function BottomPanel() {
   const tab = useUi((s) => s.bottomTab);
   const setTab = useUi((s) => s.setBottomTab);
   const toggle = useUi((s) => s.toggle);
-  const problemCount = useEngine(
-    (s) => s.events.filter((e) => e.type === "error" || e.type === "warning").length,
-  );
+  const projectId = useUi((s) => s.projectId);
+  const latest = useLatestDiagnostics(projectId, useBottomTarget(projectId));
+  const checked = latest.data?.result?.counts;
+  const problemCount =
+    useEngine(
+      (s) =>
+        s.events.filter(
+          (e) =>
+            (e.type === "error" || e.type === "warning") &&
+            (e.projectId === projectId || e.projectId === null),
+        ).length,
+    ) + (checked ? checked.error + checked.warning : 0);
   const tabs: { id: BottomTab; label: string; icon: typeof Activity }[] = [
     { id: "engine", label: "Engine", icon: Gauge },
     { id: "terminal", label: "Terminal", icon: SquareTerminal },
@@ -112,17 +123,8 @@ export function BottomPanel() {
         {tab === "problems" && <ProblemsPanel />}
         {tab === "logs" && <LogsPanel />}
         {tab === "history" && <HistoryPanel />}
-        {tab === "terminal" && (
-          <PhaseNotice icon={SquareTerminal} title="Terminal" phase="Phase 1">
-            A live terminal (xterm.js) for commands agents run in the shadow workspace, with the per-project
-            command policy.
-          </PhaseNotice>
-        )}
-        {tab === "tests" && (
-          <PhaseNotice icon={FlaskConical} title="Test results" phase="Phase 1">
-            Results from each build, test and fix loop, with trimmed logs for failures.
-          </PhaseNotice>
-        )}
+        {tab === "terminal" && <TerminalPanel />}
+        {tab === "tests" && <TestResultsPanel />}
       </div>
     </section>
   );

@@ -1,5 +1,6 @@
 export * from "./agents";
 export * from "./codemap";
+export * from "./diagnostics";
 export * from "./events";
 export * from "./extensions";
 export * from "./git";
@@ -14,5 +15,6 @@ export * from "./search";
 export * from "./speed";
 export * from "./steer";
 export * from "./team-replay";
+export * from "./terminal";
 
 export const DEPO_VERSION = "0.1.0";

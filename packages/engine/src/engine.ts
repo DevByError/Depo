@@ -11,6 +11,7 @@ import { CodeIndexer } from "./codeindex/indexer";
 import { type OpenedDatabase, openDatabase } from "./db";
 import { projects as projectsTable, tasks as tasksTable } from "./db/schema";
 import { DesignService } from "./design/service";
+import { DiagnosticsService } from "./diagnostics/service";
 import { EventBus } from "./events/bus";
 import { GitService } from "./git/service";
 import { OsvService } from "./knowledge/osv";
@@ -40,6 +41,7 @@ import { SearchService } from "./search/service";
 import { SecurityService } from "./security/service";
 import { SettingsRepo } from "./settings";
 import { SkillService } from "./skills/service";
+import { TerminalService } from "./terminal/service";
 import { TOOLS } from "./tools/index";
 import type { GithubEndpoints } from "./util/github";
 import { ProjectService } from "./workspace/service";
@@ -97,6 +99,10 @@ export interface Engine {
   readonly autoPreview: AutoPreview;
   /** The readiness report at review time (readiness.get / readiness.run, the readiness decision). */
   readonly readiness: ReadinessService;
+  /** The owner's Terminal and test runs. */
+  readonly terminal: TerminalService;
+  /** Installed compilers and linters; `latest(projectId, taskId)` feeds the readiness report. */
+  readonly diagnostics: DiagnosticsService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -285,6 +291,42 @@ export function createEngine(opts: EngineOptions): Engine {
     scheduler,
     ...opts.qa,
   });
+  const rootOfProject = (id: string) =>
+    database.db
+      .select({ root: projectsTable.rootPath })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, id))
+      .get()?.root ?? null;
+  const rulesOf = (id: string) => {
+    const s = safeSettings(registry, id);
+    return s ? { allow: s.commandAllow, deny: s.commandDeny } : null;
+  };
+  /** The owner's Terminal (Terminal tab) and the test runs it and agents leave (Test results tab). */
+  const terminal = new TerminalService({
+    bus,
+    logger,
+    sqlite: database.sqlite,
+    projectRoot: rootOfProject,
+    workspaceRoot: (id): string | null => tasks.workspaceRoot(id),
+    taskProject: (id) => taskRow(id)?.projectId ?? null,
+    taskTitle: (id) => taskRow(id)?.title ?? null,
+    commandRules: rulesOf,
+  });
+  projects.beforeWorkspaceRemoved((dir) => terminal.stopRoot(dir));
+  /** Installed compilers and linters, runtime problems (Problems tab, `diagnostics` tool, readiness). */
+  const diagnostics = new DiagnosticsService({
+    bus,
+    logger,
+    sqlite: database.sqlite,
+    cacheDir: path.join(dirs.root, "diagnostics"),
+    projectRoot: rootOfProject,
+    workspaceRoot: (id): string | null => tasks.workspaceRoot(id),
+    taskProject: (id) => taskRow(id)?.projectId ?? null,
+    taskTitle: (id) => taskRow(id)?.title ?? null,
+    commandRules: rulesOf,
+    previews,
+    qa,
+  });
   const autoPreview = new AutoPreview({
     bus,
     logger,
@@ -317,6 +359,7 @@ export function createEngine(opts: EngineOptions): Engine {
     eta,
     previews,
     qa,
+    diagnostics,
     extras,
     manifest: (id) => lab.active(id),
     db: database.db,
@@ -346,6 +389,8 @@ export function createEngine(opts: EngineOptions): Engine {
     qa,
     previews,
     autoPreview,
+    // Code checks: the latest compiler and linter run for the task's copy (Problems tab, diagnostics tool).
+    diagnostics: { latest: (projectId, taskId) => diagnostics.latest(projectId, taskId) },
     commandRules: (id) => {
       const s = safeSettings(registry, id);
       return s ? { allow: s.commandAllow, deny: s.commandDeny } : null;
@@ -432,6 +477,8 @@ export function createEngine(opts: EngineOptions): Engine {
     qa,
     autoPreview,
     readiness,
+    terminal,
+    diagnostics,
     database,
     async start() {
       server = startApiServer({
@@ -464,6 +511,8 @@ export function createEngine(opts: EngineOptions): Engine {
           git,
           qa,
           readiness,
+          terminal,
+          diagnostics,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
@@ -512,6 +561,7 @@ export function createEngine(opts: EngineOptions): Engine {
       await models.releaseModels().catch(() => {});
       await readiness.close();
       await qa.close();
+      await terminal.stopAll();
       await autoPreview.detach();
       await previews.stopAll();
       await mcp.stopAll();

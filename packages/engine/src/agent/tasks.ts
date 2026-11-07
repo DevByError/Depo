@@ -76,6 +76,8 @@ export interface TaskManagerOptions {
   warmup?: Pick<ModelWarmup, "warm">;
   /** The readiness report: a decision at review, a note for reviewers, the verdict at release. */
   readiness?: ReadinessHooks;
+  /** The project's installed compilers and linters (diagnostics). */
+  diagnostics?: ToolContext["diagnostics"];
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -148,6 +150,7 @@ export class TaskManager {
       ...(o.eta ? { eta: o.eta } : {}),
       ...(o.qa ? { qa: o.qa } : {}),
       ...(o.readiness ? { readiness: o.readiness } : {}),
+      ...(o.diagnostics ? { diagnostics: o.diagnostics } : {}),
     });
   }
 
@@ -588,6 +591,7 @@ export class TaskManager {
       ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
       ...(this.o.previews ? { previews: this.o.previews } : {}),
       ...(this.o.qa ? { qa: this.o.qa } : {}),
+      ...(this.o.diagnostics ? { diagnostics: this.o.diagnostics } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);

@@ -2,6 +2,7 @@ import type { DepoEvent, HeartbeatDetails } from "@depo/shared";
 import { HeartbeatDetailsSchema } from "@depo/shared";
 import { create } from "zustand";
 import type { ConnectionStatus } from "@/lib/engine-client";
+import { useTerminal } from "./terminal";
 
 export const MAX_EVENTS = 5000;
 export const MAX_HEARTBEATS = 60;
@@ -83,6 +84,11 @@ export const useEngine = create<EngineState>((set) => ({
     }),
   receive: (event) =>
     set((s) => {
+      // Terminal output goes to the Terminal tab (its own store), not the activity feed.
+      if (event.type === "terminal_output") {
+        useTerminal.getState().receive(event);
+        return {};
+      }
       if (event.type === "heartbeat") {
         const parsed = HeartbeatDetailsSchema.safeParse(event.details);
         if (!parsed.success) return {};

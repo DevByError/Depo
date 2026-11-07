@@ -13,6 +13,7 @@ import { BLOCKS } from "../blocks";
 import type { CodeIndexer } from "../codeindex/indexer";
 import { FONT_LIBRARY } from "../design/fonts";
 import type { DesignService } from "../design/service";
+import type { DiagnosticsService } from "../diagnostics/service";
 import type { EventBus } from "../events/bus";
 import type { GitService } from "../git/service";
 import type { OsvService } from "../knowledge/osv";
@@ -32,10 +33,12 @@ import type { SearchService } from "../search/service";
 import type { SecurityService } from "../security/service";
 import type { SettingsRepo } from "../settings";
 import type { SkillService } from "../skills/service";
+import type { TerminalService } from "../terminal/service";
 import { checkForUpdate } from "../util/update";
 import type { ProjectService } from "../workspace/service";
 import { readinessHandlers } from "./readiness-handlers";
 import { steerReviewHandlers } from "./review-handlers";
+import { terminalHandlers } from "./terminal-handlers";
 
 export interface HandlerContext {
   bus: EventBus;
@@ -66,6 +69,10 @@ export interface HandlerContext {
   qa?: QaService;
   /** The readiness report at review time. */
   readiness?: ReadinessService;
+  /** The owner's Terminal and test runs. */
+  terminal?: TerminalService;
+  /** Installed compilers and linters, runtime problems (Problems tab, diagnostics tool). */
+  diagnostics?: DiagnosticsService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -301,6 +308,7 @@ export const handlers: Handlers = {
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
   ...steerReviewHandlers,
   ...readinessHandlers,
+  ...terminalHandlers,
   "agents.list": (_p, ctx) => ({ agents: MANIFESTS.map((m) => ctx.lab.active(m.id)) }),
   "app.checkUpdate": async (_p, ctx) => {
     const repo = ctx.settings.get("update.repo");

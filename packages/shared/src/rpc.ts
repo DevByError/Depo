@@ -24,6 +24,7 @@ import {
   WorkModeSchema,
 } from "./agents";
 import { CodeMapMethods } from "./codemap";
+import { DiagnosticsMethods } from "./diagnostics";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
 import {
   KnowledgeCatalogEntrySchema,
@@ -45,6 +46,7 @@ import { ReviewMethods } from "./review";
 import { SearchMethods } from "./search";
 import { SteerInfoSchema, SteerMethods } from "./steer";
 import { TeamReplayMethods } from "./team-replay";
+import { TerminalMethods } from "./terminal";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
 export const RpcIdSchema = z.union([z.string(), z.number().int()]);
@@ -1173,6 +1175,8 @@ export const ApiSchema = {
   ...QaMethods,
   ...CodeMapMethods,
   ...ReadinessMethods,
+  ...TerminalMethods,
+  ...DiagnosticsMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

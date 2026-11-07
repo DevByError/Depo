@@ -8,6 +8,7 @@
 - Tests cover the screen states and the main form; the build, lint and type checks pass.
 
 ## Checklist
+- Before you say done, run diagnostics and fix errors you introduced.
 - Data fetching with a cache (TanStack Query, server components or SWR), with cancellation and invalidation after mutations.
 - Auth: prefer HttpOnly cookies set by the API; guard routes; hide or disable actions the user may not take (the server still enforces).
 - Code-split routes, lazy-load heavy parts, give images width and height.

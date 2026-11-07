@@ -98,6 +98,8 @@ export interface TeamHost {
   qa?: ToolContext["qa"];
   /** The readiness report: the verdict so far for reviewers, and the verdict at release. */
   readiness?: Pick<ReadinessHooks, "reviewBrief" | "releaseLine"> | undefined;
+  /** The project's installed compilers and linters (diagnostics). */
+  diagnostics?: ToolContext["diagnostics"];
 }
 
 export interface AgentExtras {
@@ -1536,6 +1538,7 @@ export class TeamRunner {
       vision: (prompt, images) => this.askVision(input, prompt, images),
       ...(this.h.previews ? { previews: this.h.previews } : {}),
       ...(this.h.qa ? { qa: this.h.qa } : {}),
+      ...(this.h.diagnostics ? { diagnostics: this.h.diagnostics } : {}),
     };
   }
 
