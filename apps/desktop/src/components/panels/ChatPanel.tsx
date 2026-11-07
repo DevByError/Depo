@@ -240,11 +240,14 @@ function useLive(taskId: string): { stream: string | null; step: LiveStep | null
       }
       if (step && stream !== null) break;
     }
+    // "Waiting for qwen3-coder:30b to answer (step 4)" reads as plain "Thinking" in the chat.
+    const waiting =
+      step?.type === "planning" && step.ephemeral && /^Waiting for .+ to answer/.test(step.text);
     const live: LiveStep | null =
       streamAt > stepAt
         ? { text: "Writing a reply", agent: events[streamAt]?.agent ?? null }
         : step
-          ? { text: step.text, agent: step.agent }
+          ? { text: waiting ? "Thinking" : step.text, agent: step.agent }
           : null;
     return { stream, step: live };
   }, [events, taskId]);

@@ -55,7 +55,8 @@ function ModePicker({ mode, onChange }: { mode: WorkMode; onChange: (m: WorkMode
   const current = MODES.find((m) => m.id === mode) ?? MODES[0];
   const Icon = mode === "single" ? User : Users;
   return (
-    <Menu.Root>
+    // Not modal: the rest of the window stays readable to screen readers while the small menu is open.
+    <Menu.Root modal={false}>
       <Menu.Trigger
         aria-label={`Work mode: ${current?.label ?? ""}`}
         className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted transition-colors hover:bg-hover hover:text-fg data-[state=open]:bg-hover data-[state=open]:text-fg"
