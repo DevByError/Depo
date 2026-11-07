@@ -19,7 +19,7 @@ export type CenterTab =
   | "blocks"
   | "preview"
   | "team";
-export type BottomTab = "terminal" | "problems" | "tests" | "engine" | "logs";
+export type BottomTab = "terminal" | "problems" | "tests" | "engine" | "logs" | "history";
 export type RightTab = "activity" | "agents";
 
 interface Layout {

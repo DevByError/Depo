@@ -1,15 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, File, Folder, FolderTree } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import { useEngine } from "@/store/engine";
+import { useNav } from "@/store/nav";
 import { useUi } from "@/store/ui";
 
 /** Read-only project browser. Agents work on a copy; this always shows the real files. */
 export function FilesPanel() {
   const projectId = useUi((s) => s.projectId);
   const [selected, setSelected] = useState<string | null>(null);
+  const [goto, setGoto] = useState<{ line: number; seq: number } | null>(null);
+  // A jump from search: open that file at that line.
+  const request = useNav((s) => s.file);
+  useEffect(() => {
+    if (!request) return;
+    setSelected(request.path);
+    setGoto(request.line ? { line: request.line, seq: request.seq } : null);
+    useNav.getState().clearFile();
+  }, [request]);
   if (!projectId) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">
@@ -26,7 +36,16 @@ export function FilesPanel() {
   return (
     <div className="flex h-full min-h-0">
       <nav className="w-64 shrink-0 overflow-y-auto border-r border-border py-1" aria-label="Project files">
-        <Dir projectId={projectId} path="." depth={0} selected={selected} onSelect={setSelected} />
+        <Dir
+          projectId={projectId}
+          path="."
+          depth={0}
+          selected={selected}
+          onSelect={(p) => {
+            setSelected(p);
+            setGoto(null);
+          }}
+        />
       </nav>
       <section
         className="min-w-0 flex-1 overflow-auto"
@@ -34,7 +53,7 @@ export function FilesPanel() {
         aria-label={selected ? `File ${selected}` : "File preview"}
       >
         {selected ? (
-          <Viewer projectId={projectId} path={selected} />
+          <Viewer projectId={projectId} path={selected} goto={goto} />
         ) : (
           <p className="p-4 text-xs text-muted">Choose a file to preview it.</p>
         )}
@@ -126,11 +145,25 @@ function Dir({
   );
 }
 
-function Viewer({ projectId, path }: { projectId: string; path: string }) {
+function Viewer({
+  projectId,
+  path,
+  goto,
+}: {
+  projectId: string;
+  path: string;
+  goto: { line: number; seq: number } | null;
+}) {
   const q = useQuery({
     queryKey: ["files", projectId, "read", path],
     queryFn: () => call("files.read", { projectId, path }),
   });
+  const body = useRef<HTMLTableSectionElement>(null);
+  const loaded = !!q.data;
+  useEffect(() => {
+    if (!goto || !loaded) return;
+    body.current?.querySelector(`[data-line="${goto.line}"]`)?.scrollIntoView?.({ block: "center" });
+  }, [goto, loaded]);
   if (q.isLoading) return <p className="p-4 text-xs text-muted">Loading…</p>;
   if (q.isError) return <p className="p-4 text-xs text-danger">{String(q.error)}</p>;
   const f = q.data;
@@ -143,10 +176,10 @@ function Viewer({ projectId, path }: { projectId: string; path: string }) {
     <div className="p-3">
       <div className="mb-2 font-mono text-xs text-fg">{f.path}</div>
       <table className="w-full border-collapse font-mono text-[12px] leading-[1.55]">
-        <tbody>
+        <tbody ref={body}>
           {lines.map((l, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
-            <tr key={i}>
+            <tr key={i} data-line={i + 1} className={goto?.line === i + 1 ? "bg-accent-soft" : undefined}>
               <td className="w-10 select-none pr-3 text-right align-top text-[11px] text-subtle">{i + 1}</td>
               <td className="whitespace-pre-wrap break-all text-fg">{l || " "}</td>
             </tr>

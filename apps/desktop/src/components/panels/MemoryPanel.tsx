@@ -9,6 +9,7 @@ import { call } from "@/lib/engine";
 import { formatRelative } from "@/lib/format";
 import { queryClient } from "@/lib/query";
 import { useEngine } from "@/store/engine";
+import { useNav } from "@/store/nav";
 import { useUi } from "@/store/ui";
 
 type Scope = "project" | "global";
@@ -29,6 +30,13 @@ export function MemoryPanel() {
   const enabled = useEngine((s) => s.status === "open");
   const projectId = useUi((s) => s.projectId);
   const [scope, setScope] = useState<Scope>(projectId ? "project" : "global");
+  // A jump from search: show the memory the item lives in (the item itself is revealed by id).
+  const request = useNav((s) => s.memory);
+  useEffect(() => {
+    if (!request) return;
+    setScope(request.global ? "global" : "project");
+    useNav.getState().clearMemory();
+  }, [request]);
   const target = scope === "project" ? projectId : null;
   const memory = useQuery({
     queryKey: ["memory", target],
@@ -226,7 +234,7 @@ function FactRow({ fact }: { fact: MemoryFact }) {
     onSuccess: () => invalidate(fact.projectId),
   });
   return (
-    <li className="flex items-start gap-2 px-3 py-2 text-xs">
+    <li data-memory-id={fact.id} className="flex items-start gap-2 px-3 py-2 text-xs">
       <span className="mt-0.5 w-20 shrink-0 text-[11px] text-subtle">{KIND_LABEL[fact.kind]}</span>
       {editing ? (
         <form

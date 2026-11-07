@@ -110,6 +110,10 @@ function invalidateFor(type: string, status: string): void {
   if (type === "preview_started" || type === "preview_stopped") {
     void queryClient.invalidateQueries({ queryKey: ["previews"] });
   }
+  if (type === "applied_changes" || type === "checkpoint_created" || type === "committed") {
+    void queryClient.invalidateQueries({ queryKey: ["git", "status"] });
+    void queryClient.invalidateQueries({ queryKey: ["git", "log"] });
+  }
 }
 
 async function onConnected() {
