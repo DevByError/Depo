@@ -217,6 +217,26 @@ function memoryReply(): Response {
   );
 }
 
+/** The commit message a local model drafts for applied changes (git.draftCommit). */
+export const FAKE_COMMIT = {
+  type: "feat",
+  scope: "api",
+  summary: "add a health check endpoint",
+  body: "- add GET /health that answers ok\n- cover it with a test",
+};
+
+function jsonReply(value: unknown): Response {
+  return new Response(
+    new ReadableStream({
+      start(ctl) {
+        ctl.enqueue(line({ message: { role: "assistant", content: JSON.stringify(value) } }));
+        ctl.enqueue(line({ done: true, prompt_eval_count: 300, eval_count: 60, eval_duration: 5e8 }));
+        ctl.close();
+      },
+    }),
+  );
+}
+
 export interface FakeOllamaOptions {
   /** Delay before each scripted agent step, so concurrent tasks overlap in tests. */
   stepDelayMs?: number;
@@ -286,6 +306,8 @@ export function startFakeOllama(
           // Depo's automatic memory asks for durable items as JSON after a task.
           const sys = body.messages.find((m) => m.role === "system")?.content ?? "";
           if (sys.includes("Depo's durable memory")) return memoryReply();
+          // Commit messages for applied changes.
+          if (sys.includes("git commit messages")) return jsonReply(FAKE_COMMIT);
           // Benchmarks and plain chats: a short streamed answer.
           const words = "def merge_intervals(intervals):\n    return sorted(intervals)\n".split(/(?<= )/);
           return new Response(

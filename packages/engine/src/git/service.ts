@@ -335,7 +335,8 @@ export class GitService {
       command,
       cwd: root,
       timeoutMs,
-      env: { LC_ALL: "C", GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true" },
+      // Literal pathspecs: a file named `a[1].txt` must never match `a1.txt` as a glob.
+      env: { LC_ALL: "C", GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", GIT_LITERAL_PATHSPECS: "1" },
       maxOutputBytes: 40_000,
     });
     this.logger.info("git command", {

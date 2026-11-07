@@ -117,7 +117,11 @@ const POLITE =
 
 /** One imperative line from a request: "Please add a /health endpoint." → "add a /health endpoint". */
 export function summaryFrom(text: string, max: number): string {
-  let s = (text.split(/\r?\n/).find((l) => l.trim()) ?? "").trim();
+  let s = (
+    cleanMessage(text)
+      .split("\n")
+      .find((l) => l.trim()) ?? ""
+  ).trim();
   // First sentence only.
   const stop = s.search(/[.!?](\s|$)/);
   if (stop > 0) s = s.slice(0, stop);
