@@ -307,7 +307,7 @@ export function summarize(
   const parts: string[] = [];
   const names = views.map((v) => v.width);
   parts.push(
-    `Checked ${shortUrl(url, url) || "/"} at ${names.length === 3 ? "phone, tablet and desktop widths" : names.join(" and ")}.`,
+    `Checked ${shortUrl(url, url) || "/"} at ${names.length === 3 ? "phone, tablet and desktop" : names.join(" and ")} width${names.length === 1 ? "" : "s"}.`,
   );
   const broken = views.filter((v) => v.error);
   for (const v of broken) parts.push(`${v.width[0]?.toUpperCase()}${v.width.slice(1)}: ${v.error}`);

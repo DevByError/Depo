@@ -1,3 +1,4 @@
+import type { PageCheck } from "@depo/shared";
 import { z } from "zod";
 
 /** Nielsen's ten usability heuristics, the yardstick of the UX audit. */
@@ -49,7 +50,55 @@ export function canonicalHeuristic(name: string): string | null {
   );
 }
 
-export function scoreAudit(a: UxAudit): UxResult {
+/** What the latest page checks found that a UX audit should weigh: per page, the serious problems. */
+export interface AutomatedFindings {
+  lines: string[];
+  critical: number;
+  serious: number;
+  consoleErrors: number;
+  pages: number;
+}
+
+/** Summarise page checks (newest first) for the audit: the newest check per URL, critical and serious axe issues, console errors. */
+export function automatedFindings(checks: PageCheck[]): AutomatedFindings {
+  const seen = new Set<string>();
+  const out: AutomatedFindings = { lines: [], critical: 0, serious: 0, consoleErrors: 0, pages: 0 };
+  for (const c of checks) {
+    if (seen.has(c.url)) continue;
+    seen.add(c.url);
+    out.pages++;
+    let page = c.url;
+    try {
+      page = new URL(c.url).pathname || "/";
+    } catch {
+      // keep the full address
+    }
+    const worst = new Map<string, { impact: string; help: string; count: number }>();
+    let errors = 0;
+    for (const v of c.views) {
+      errors = Math.max(errors, v.consoleErrorCount);
+      for (const a of v.a11y.violations)
+        if (a.impact === "critical" || a.impact === "serious")
+          worst.set(a.id, {
+            impact: a.impact,
+            help: a.help,
+            count: Math.max(a.count, worst.get(a.id)?.count ?? 0),
+          });
+    }
+    out.consoleErrors += errors;
+    for (const [id, w] of worst) {
+      if (w.impact === "critical") out.critical++;
+      else out.serious++;
+      if (out.lines.length < 12)
+        out.lines.push(`${page}: ${w.impact} ${id} (${w.count} elements): ${w.help}`);
+    }
+    if (errors && out.lines.length < 12)
+      out.lines.push(`${page}: ${errors} console error${errors === 1 ? "" : "s"}`);
+  }
+  return out;
+}
+
+export function scoreAudit(a: UxAudit, automated?: AutomatedFindings): UxResult {
   const seen = new Set<string>();
   const rows = a.scores.map((s) => {
     const h = canonicalHeuristic(s.heuristic) ?? s.heuristic;
@@ -78,12 +127,31 @@ export function scoreAudit(a: UxAudit): UxResult {
         `| ${i + 1} | ${r.heuristic} | ${r.score}/5 | ${r.evidence.replace(/\|/g, "/")} | ${r.fix.replace(/\|/g, "/")} |`,
     ),
     ...(reasons.length ? ["", "## Why the release is blocked", ...reasons.map((r) => `- ${r}`)] : []),
+    ...(automated?.pages
+      ? [
+          "",
+          "## Automated page checks (axe-core, console)",
+          automated.lines.length
+            ? automated.lines.map((l) => `- ${l.replace(/\|/g, "/")}`).join("\n")
+            : `- ${automated.pages} page${automated.pages === 1 ? "" : "s"} checked: no critical or serious accessibility issues and no console errors.`,
+        ]
+      : []),
   ].join("\n");
   const json = JSON.stringify({
     overall,
     grade,
     blocksRelease: reasons.length > 0,
     scores: rows.map((r) => ({ heuristic: r.heuristic, score: r.score })),
+    ...(automated?.pages
+      ? {
+          automated: {
+            pages: automated.pages,
+            critical: automated.critical,
+            serious: automated.serious,
+            consoleErrors: automated.consoleErrors,
+          },
+        }
+      : {}),
     at: new Date().toISOString(),
   });
   return { overall, grade, blocksRelease: reasons.length > 0, reasons, markdown, json };

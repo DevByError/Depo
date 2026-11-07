@@ -11,6 +11,7 @@
 - Map the API error format once in the client, so every screen gets field errors and messages the same way.
 - Keep base URLs, ports and model names in config, never in code.
 - Record contract decisions (casing, pagination shape, date format, error format) in decisions.md.
+- Prove the wiring in the browser: start_preview, then check_page on a page that loads API data at three widths; failed requests and console errors mean the contract is broken.
 
 ## Avoid
 - Types copied by hand that drift from the API.

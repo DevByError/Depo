@@ -5,7 +5,7 @@ import { findBrowser, safeUrl, screenshot } from "../design/browser";
 import { buildDeck, DeckSpecSchema } from "../design/deck";
 import { type FONT_LIBRARY, searchFonts, suggestPairing, typeScale } from "../design/fonts";
 import { checkMermaid } from "../design/mermaid";
-import { scoreAudit, UxAuditSchema } from "../design/ux";
+import { automatedFindings, scoreAudit, UxAuditSchema } from "../design/ux";
 import { type AgentTool, registerTools, type ToolContext, tool } from "./index";
 import { resolveInside, ToolError } from "./paths";
 
@@ -237,8 +237,10 @@ const tools: AgentTool<z.ZodType>[] = [
       if (!ctx.team)
         throw new ToolError("The blackboard is only available when you work as part of the team.");
       let result: ReturnType<typeof scoreAudit>;
+      // What check_page found in this task (serious accessibility issues, console errors) goes into the audit.
+      const automated = automatedFindings(ctx.qa?.latestForAgent(ctx, 10) ?? []);
       try {
-        result = scoreAudit(a);
+        result = scoreAudit(a, automated);
       } catch (err) {
         throw new ToolError(err instanceof Error ? err.message : String(err));
       }
@@ -258,7 +260,11 @@ const tools: AgentTool<z.ZodType>[] = [
       note(ctx, "reviewing", `UX audit: ${result.overall}/100 (${result.grade})`, {
         overall: result.overall,
       });
-      return `UX audit saved: ${result.overall}/100, grade ${result.grade}. ${result.blocksRelease ? `RELEASE BLOCKED: ${result.reasons.join(" ")}` : "Release is not blocked."}`;
+      const auto =
+        automated.critical + automated.serious + automated.consoleErrors > 0
+          ? ` Automated page checks found ${automated.critical} critical and ${automated.serious} serious accessibility issues and ${automated.consoleErrors} console errors (listed in the audit); send them to the owner of the screens.`
+          : "";
+      return `UX audit saved: ${result.overall}/100, grade ${result.grade}. ${result.blocksRelease ? `RELEASE BLOCKED: ${result.reasons.join(" ")}` : "Release is not blocked."}${auto}`;
     },
   }),
 ];

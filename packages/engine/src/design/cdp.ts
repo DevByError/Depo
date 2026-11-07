@@ -818,15 +818,18 @@ export async function launchBrowser(
   const close = async () => {
     if (closed) return;
     closed = true;
+    let polite = false;
     if (conn && !conn.closed) {
       try {
         await conn.send("Browser.close", {}, { timeoutMs: 2000 });
+        polite = true;
       } catch {
-        // kill below
+        // not answering: kill below
       }
     }
     conn?.close();
-    await Promise.race([proc.exited, Bun.sleep(2500)]);
+    // A browser that agreed to close gets a moment to save and exit; the tree is killed either way.
+    if (polite) await Promise.race([proc.exited, Bun.sleep(2500)]);
     killTree();
     await Promise.race([proc.exited, Bun.sleep(2000)]);
     job?.close();

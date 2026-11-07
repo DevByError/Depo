@@ -309,7 +309,7 @@ export class QaService implements QaHooks {
             ac.signal,
           )
         : run());
-      return res.text.trim().slice(0, 4000) || null;
+      return typeof res.text === "string" ? res.text.trim().slice(0, 4000) || null : null;
     } catch (err) {
       this.log.info("vision review skipped", { error: err instanceof Error ? err.message : String(err) });
       return null;

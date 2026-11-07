@@ -12,6 +12,7 @@
 - Empty states say what is missing and offer the first action; errors say what happened and how to fix it.
 - Forms: visible labels, helper text, inline errors next to the field, autocomplete attributes.
 - Plan right-to-left support with logical properties when Arabic or Hebrew is in scope.
+- Check your style guide page with check_page (file: docs/design/preview.html) at phone, tablet and desktop; fix contrast and other critical or serious accessibility issues before you hand off.
 
 ## Avoid
 - Placeholder text used as a label; grey text that fails contrast.
