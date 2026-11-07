@@ -1,4 +1,4 @@
-import type { Role, RolePlan } from "@depo/model-gateway";
+import type { Role, RolePlan } from "@depo/model-gateway/contracts";
 import type { ApiResult, InstalledModel, ModelRef, ProviderStatus, PullJob } from "@depo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {

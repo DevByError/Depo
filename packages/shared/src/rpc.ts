@@ -5,7 +5,7 @@ import {
   ModelCatalogSchema,
   QualityModeSchema,
   RoleSchema,
-} from "@depo/model-gateway";
+} from "@depo/model-gateway/contracts";
 import { z } from "zod";
 import {
   AgentIdSchema,
