@@ -1,6 +1,6 @@
 // Generated list of the react-web-app blueprint's template files (files/react-web-app), embedded as text so
 // `bun build --compile` ships them inside the engine. Every .tpl file there must be listed here;
-// blueprints.test.ts checks it.
+// blueprints.test.ts checks it. Regenerate with: bun scripts/gen-blueprint-templates.ts
 import envExample from "./files/react-web-app/.env.example.tpl" with { type: "text" };
 import gitattributes from "./files/react-web-app/.gitattributes.tpl" with { type: "text" };
 import gitignore from "./files/react-web-app/.gitignore.tpl" with { type: "text" };

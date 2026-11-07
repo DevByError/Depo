@@ -1,6 +1,6 @@
 // Generated list of the fastapi-service blueprint's template files (files/fastapi-service), embedded as text so
 // `bun build --compile` ships them inside the engine. Every .tpl file there must be listed here;
-// blueprints.test.ts checks it.
+// blueprints.test.ts checks it. Regenerate with: bun scripts/gen-blueprint-templates.ts
 import dockerignore from "./files/fastapi-service/.dockerignore.tpl" with { type: "text" };
 import envExample from "./files/fastapi-service/.env.example.tpl" with { type: "text" };
 import gitattributes from "./files/fastapi-service/.gitattributes.tpl" with { type: "text" };

@@ -1,6 +1,6 @@
 // Generated list of the fullstack blueprint's template files (files/fullstack), embedded as text so
 // `bun build --compile` ships them inside the engine. Every .tpl file there must be listed here;
-// blueprints.test.ts checks it.
+// blueprints.test.ts checks it. Regenerate with: bun scripts/gen-blueprint-templates.ts
 import gitattributes from "./files/fullstack/.gitattributes.tpl" with { type: "text" };
 import gitignore from "./files/fullstack/.gitignore.tpl" with { type: "text" };
 import readmeMd from "./files/fullstack/README.md.tpl" with { type: "text" };
