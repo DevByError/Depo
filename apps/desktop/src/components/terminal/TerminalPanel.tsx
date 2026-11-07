@@ -316,7 +316,9 @@ function TerminalView({ projectId }: { projectId: string }) {
                 setHistIndex(-1);
               }}
               onKeyDown={onKey}
-              placeholder={connected ? "Type a command, then press Enter" : "Waiting for the engine…"}
+              placeholder={
+                connected ? "Type a command and press Enter. Up for earlier ones." : "Waiting for the engine…"
+              }
               disabled={!connected}
               spellCheck={false}
               autoComplete="off"
@@ -334,7 +336,7 @@ function TerminalView({ projectId }: { projectId: string }) {
             </Button>
           </div>
           <p id={hintId} className="truncate px-1 text-[11px] text-subtle">
-            {NO_INPUT_HINT} Up and Down go through earlier commands.
+            {NO_INPUT_HINT}
           </p>
         </form>
       </div>

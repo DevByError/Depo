@@ -35,8 +35,9 @@ export function TestResultsPanel() {
       </p>
     );
   }
-  const list = runs.data?.runs ?? [];
-  if (runs.isSuccess && list.length === 0) {
+  if (!runs.data) return <Empty>{connected ? "Loading test runs…" : "Waiting for the engine…"}</Empty>;
+  const list = runs.data.runs;
+  if (list.length === 0) {
     return (
       <Empty>
         No test runs yet. Tests that agents run, and test commands you run in the Terminal, show up here.
