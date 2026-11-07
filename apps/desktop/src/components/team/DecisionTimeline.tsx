@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
   CircleCheck,
+  ClipboardCheck,
   CornerUpLeft,
   FileCheck2,
   Lightbulb,
@@ -35,6 +36,7 @@ const KIND_ICON: Record<DecisionKind, LucideIcon> = {
   result: FileCheck2,
   adr: Scale,
   recommendation: Lightbulb,
+  readiness: ClipboardCheck,
 };
 
 const TONE_CHIP: Record<Tone, string> = {

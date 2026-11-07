@@ -33,6 +33,7 @@ import { AutoPreview } from "./preview/auto";
 import { PreviewManager } from "./preview/manager";
 import { ProjectRegistry } from "./projects/registry";
 import { QaService, type QaServiceOptions } from "./qa/service";
+import { type ReadinessHooks, ReadinessService } from "./readiness/service";
 import { ModelScheduler } from "./scheduler/scheduler";
 import { SearchService } from "./search/service";
 import { SecurityService } from "./security/service";
@@ -93,6 +94,8 @@ export interface Engine {
   readonly qa: QaService;
   /** Starts a task's private copy when its changes are ready for review. */
   readonly autoPreview: AutoPreview;
+  /** The readiness report at review time (readiness.get / readiness.run, the readiness decision). */
+  readonly readiness: ReadinessService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -295,7 +298,14 @@ export function createEngine(opts: EngineOptions): Engine {
     },
   });
   autoPreview.attach();
+  // Late-bound: the readiness service reads the task manager's comments and copies.
+  const readinessHooks: ReadinessHooks = {
+    atReview: (o) => readiness.atReview(o),
+    reviewBrief: (id) => readiness.reviewBrief(id),
+    releaseLine: (id, plan) => readiness.releaseLine(id, plan),
+  };
   const tasks: TaskManager = new TaskManager({
+    readiness: readinessHooks,
     eta,
     previews,
     qa,
@@ -313,6 +323,25 @@ export function createEngine(opts: EngineOptions): Engine {
     settings,
     projectSettings: (id) => registry.getSettings(id),
     ...opts.tasks,
+  });
+  /** One honest verdict at review: tests, checks, scores, page checks, plan, reviews, comments, diff. */
+  const readiness: ReadinessService = new ReadinessService({
+    db: database.db,
+    bus,
+    logger,
+    approvals,
+    workspaceRoot: (id) => tasks.workspaceRoot(id),
+    changeSet: (id) => projects.getChangeSet(id),
+    comments: (id) => tasks.reviews.list(id),
+    memory: (id) => memory.list(id),
+    security,
+    qa,
+    previews,
+    autoPreview,
+    commandRules: (id) => {
+      const s = safeSettings(registry, id);
+      return s ? { allow: s.commandAllow, deny: s.commandDeny } : null;
+    },
   });
   const design = new DesignService(
     projects,
@@ -394,6 +423,7 @@ export function createEngine(opts: EngineOptions): Engine {
     git,
     qa,
     autoPreview,
+    readiness,
     database,
     async start() {
       server = startApiServer({
@@ -425,6 +455,7 @@ export function createEngine(opts: EngineOptions): Engine {
           search,
           git,
           qa,
+          readiness,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
@@ -469,6 +500,7 @@ export function createEngine(opts: EngineOptions): Engine {
       });
       indexer.stopAll();
       await tasks.cancelAll();
+      await readiness.close();
       await qa.close();
       await autoPreview.detach();
       await previews.stopAll();

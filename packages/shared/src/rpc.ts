@@ -40,6 +40,7 @@ import { GitMethods } from "./git";
 import { LogMethods } from "./logs";
 import { PreviewMethods } from "./preview";
 import { QaMethods } from "./qa";
+import { ReadinessMethods } from "./readiness";
 import { ReviewMethods } from "./review";
 import { SearchMethods } from "./search";
 import { SteerInfoSchema, SteerMethods } from "./steer";
@@ -1171,6 +1172,7 @@ export const ApiSchema = {
   ...GitMethods,
   ...QaMethods,
   ...CodeMapMethods,
+  ...ReadinessMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;
