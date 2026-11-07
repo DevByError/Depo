@@ -1,7 +1,7 @@
 import type { ChatItem, DepoEvent, Task, TaskStatus } from "@depo/shared";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, FileDiff, FlaskConical, HardDrive, Plus, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ApprovalCard } from "@/components/chat/ApprovalCard";
 import { Composer } from "@/components/chat/Composer";
 import { PlanCard } from "@/components/chat/PlanCard";
