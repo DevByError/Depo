@@ -21,6 +21,7 @@ import {
   Link2,
   ListTree,
   type LucideIcon,
+  MessageSquarePlus,
   MonitorOff,
   MonitorPlay,
   Package,
@@ -81,6 +82,7 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   preview_started: { icon: MonitorPlay, tone: "success", label: "Preview" },
   preview_stopped: { icon: MonitorOff, tone: "neutral", label: "Preview" },
   decision: { icon: Signpost, tone: "accent", label: "Decision" },
+  owner_note: { icon: MessageSquarePlus, tone: "info", label: "Your note" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {

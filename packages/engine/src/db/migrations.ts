@@ -359,6 +359,34 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 8,
+    name: "review_comments",
+    sql: `
+      CREATE TABLE IF NOT EXISTS review_comments (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        task_id TEXT,
+        change_set_id TEXT NOT NULL REFERENCES change_sets(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        side TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        end_side TEXT NOT NULL,
+        end_line INTEGER NOT NULL,
+        quote TEXT NOT NULL,
+        body TEXT NOT NULL,
+        status TEXT NOT NULL,
+        addressed_by TEXT,
+        addressed_in TEXT,
+        sent_at TEXT,
+        ref INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS review_comments_change_set ON review_comments (change_set_id, created_at);
+      CREATE INDEX IF NOT EXISTS review_comments_task ON review_comments (task_id, status);
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

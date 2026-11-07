@@ -160,7 +160,7 @@ export function decisionTone(d: Pick<TeamDecision, "kind" | "outcome">): Tone {
 export function decisionLabel(d: Pick<TeamDecision, "kind" | "outcome">): string {
   switch (d.kind) {
     case "plan":
-      return d.outcome === "standard" ? "Standard plan" : "Plan";
+      return d.outcome === "standard" ? "Standard plan" : d.outcome === "replanned" ? "Plan changed" : "Plan";
     case "plan_approval":
       return d.outcome === "declined" ? "Plan declined" : "Plan approved";
     case "send_back":

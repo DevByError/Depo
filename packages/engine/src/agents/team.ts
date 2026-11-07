@@ -27,6 +27,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { type Emit, runAgentLoop } from "../agent/loop";
 import { detectProject, topLevelListing, venvEnv } from "../agent/prompt";
+import type { SteerInbox } from "../agent/steer";
 import type { ApprovalCenter } from "../approvals";
 import type { AppDb } from "../db";
 import { tasks } from "../db/schema";
@@ -54,6 +55,7 @@ import {
   shortTitle,
 } from "./decisions";
 import { MANIFESTS, MODE_AGENTS, manifestOf, READ_ONLY_MODES } from "./manifests";
+import { applyNoteChange, NoteChangeSchema, noteSystemPrompt, noteUserPrompt } from "./steering";
 
 const DEFAULT_CONTEXT = 16_384;
 const DIGEST_BUDGET = 4500;
@@ -108,6 +110,8 @@ export interface TeamInput {
   mode: Exclude<WorkMode, "single">;
   ws: Workspace;
   signal: AbortSignal;
+  /** Notes the owner sends while the team works (the Manager and the agents at work read them). */
+  notes?: SteerInbox | undefined;
 }
 
 export interface TeamResult {
@@ -613,6 +617,9 @@ export function agentStatuses(plan: Plan | null, waitingAgents: Set<string> = ne
 // ---- the runner --------------------------------------------------------------------------
 
 export class TeamRunner {
+  /** Steering readers, one per agent conversation (kept across fix attempts of a task). */
+  private readonly readers = new WeakMap<ChatMessage[], () => ChatMessage[]>();
+
   constructor(private readonly h: TeamHost) {}
 
   /** The manifest an agent works from now: the promoted Agent Lab version, or the built-in one. */
@@ -968,6 +975,13 @@ export class TeamRunner {
     const save = () => this.savePlanQuiet(taskId, plan);
 
     while (!signal.aborted) {
+      // The owner's notes first: the Manager may add or drop tasks before more of them start.
+      if (input.notes) {
+        await this.handleNotes(input, plan, baseEmit(this.tag("manager")), save);
+        byId.clear();
+        for (const n of plan.nodes) byId.set(n.id, n);
+      }
+      if (signal.aborted) break;
       // Nodes whose dependencies failed can never run.
       for (const n of plan.nodes) {
         if (n.status !== "todo") continue;
@@ -996,10 +1010,95 @@ export class TeamRunner {
         running.set(n.id, p);
       }
       if (running.size === 0) break;
-      await Promise.race(running.values());
+      // Wake up when a task finishes or the owner sends a note.
+      await Promise.race([...running.values(), ...(input.notes ? [input.notes.next()] : [])]);
     }
     await Promise.allSettled(running.values());
     void projectId;
+  }
+
+  /**
+   * Steering in a team run: the Manager reads each new note, passes it on to the agents at work
+   * through the blackboard (they also read it at their next step), and may change the plan for it.
+   * A plan change is recorded as a decision.
+   */
+  private async handleNotes(input: TeamInput, plan: Plan, mgrEmit: Emit, save: () => void): Promise<void> {
+    const notes = input.notes;
+    if (!notes) return;
+    const mgrTag = this.tag("manager");
+    for (const note of notes.unreadBy(mgrTag)) {
+      if (input.signal.aborted) return;
+      notes.markRead(note.id, mgrTag);
+      const active = plan.nodes.filter((n) => n.status === "doing" || n.status === "review");
+      for (const to of new Set(active.map((n) => this.tag(n.owner)))) {
+        this.h.blackboard.addMessage({
+          taskId: input.taskId,
+          from: mgrTag,
+          to,
+          type: "request",
+          summary: `Note from the owner: ${note.text}`.slice(0, 2000),
+          artifacts: [],
+          criteria: [],
+          confidence: 1,
+        });
+      }
+      const r = this.resolve("reasoning");
+      if (!r) continue;
+      let change: z.infer<typeof NoteChangeSchema>;
+      try {
+        change = await this.callStructured(
+          r.provider,
+          r.model,
+          r.contextLength ?? DEFAULT_CONTEXT,
+          noteSystemPrompt(this.man("manager").prompt, input.mode),
+          noteUserPrompt(plan, note.text),
+          NoteChangeSchema,
+          input,
+        );
+      } catch (err) {
+        if (input.signal.aborted) return;
+        this.h.logger.warn("manager could not read its answer to a note", { err });
+        continue;
+      }
+      const opts = this.h.options();
+      const { added, dropped } = applyNoteChange(
+        plan,
+        change,
+        input.mode,
+        (owner) =>
+          !NO_REVIEW.includes(owner) &&
+          opts.reviews !== "off" &&
+          !READ_ONLY_MODES.includes(input.mode) &&
+          (opts.reviews === "all" || KEY_OWNERS.includes(owner)),
+      );
+      if (added.length === 0 && dropped.length === 0) continue;
+      save();
+      this.savePlan(input.taskId, input.projectId, plan);
+      const parts = [
+        added.length
+          ? `added ${listWords(added.map((n) => `${this.man(n.owner).name}: ${shortTitle(n.title, 60)}`))}`
+          : "",
+        dropped.length ? `dropped ${listWords(dropped.map((n) => shortTitle(n.title, 60)))}` : "",
+      ].filter(Boolean);
+      decide(
+        mgrEmit,
+        "plan",
+        `Manager changed the plan after your note: ${parts.join("; ")}`,
+        {
+          outcome: "replanned",
+          cause: "owner_note",
+          noteId: note.id,
+          reason: plainText(change.reason) || `Your note: ${shortTitle(note.text, 160)}`,
+          items: [
+            ...added.map((n) => `Added for ${this.man(n.owner).name}: ${shortTitle(n.title, 90)}`),
+            ...dropped.map((n) => `Dropped: ${shortTitle(n.title, 90)}`),
+          ],
+          added: added.map((n) => n.id),
+          dropped: dropped.map((n) => n.id),
+        },
+        "succeeded",
+      );
+    }
   }
 
   private savePlanQuiet(taskId: string, plan: Plan) {
@@ -1497,6 +1596,16 @@ export class TeamRunner {
         .slice(-6)
         .map((m) => `- ${m.from} (${m.type}): ${m.summary.slice(0, 300)}`);
       const digest = this.h.blackboard.digest(input.projectId, DIGEST_BUDGET);
+      // Notes the owner sent so far go into the first prompt; later ones arrive between steps.
+      const notes = input.notes?.all() ?? [];
+      if (input.notes)
+        this.readers.set(
+          history,
+          input.notes.reader(
+            tag,
+            notes.map((n) => n.id),
+          ),
+        );
       history.push({
         role: "system",
         content: this.systemPrompt(input, manifest, extras?.prompt ?? ""),
@@ -1512,6 +1621,9 @@ export class TeamRunner {
             : "",
           deps.length ? `Finished before you:\n${deps.join("\n")}` : "",
           inbox.length ? `Messages for you:\n${inbox.join("\n")}` : "",
+          notes.length
+            ? `Notes from the owner while the team works (they win over the request where they differ):\n${notes.map((n) => `- ${n.text}`).join("\n")}`
+            : "",
           digest
             ? `Blackboard (shared notes; use bb_read for full text):\n${digest}`
             : "The blackboard is empty so far.",
@@ -1539,6 +1651,7 @@ export class TeamRunner {
       emit,
       persist: (m) => this.h.addMessage(input.taskId, m, tag),
       lessons: this.h.lessons(input.projectId),
+      inbox: this.readers.get(history),
     });
     if (!result.finalText && !result.aborted && !result.hitLimit) {
       return {
@@ -1577,6 +1690,12 @@ export class TeamRunner {
         tools: reviewer.tools.filter((t) => !["write_file", "edit_file", "delete_file"].includes(t)),
       };
       const ctx = this.toolContext(input, readOnly, emit, files, node.id);
+      // The reviewer checks the work against the owner's notes too.
+      const notes = input.notes?.all() ?? [];
+      const inbox = input.notes?.reader(
+        tag,
+        notes.map((n) => n.id),
+      );
       const history: ChatMessage[] = [
         { role: "system", content: this.systemPrompt(input, readOnly, "") },
         {
@@ -1593,6 +1712,9 @@ export class TeamRunner {
             `Their summary: ${run.text.slice(0, 1500)}`,
             definitionOfDone(owner.id)
               ? `${owner.name}'s definition of done (check the work against it):\n${definitionOfDone(owner.id)}`
+              : "",
+            notes.length
+              ? `Notes from the owner while the team works (check the work follows them):\n${notes.map((n) => `- ${n.text}`).join("\n")}`
               : "",
             "Read the changed files (and run the tests if that helps), then reply with the review JSON only.",
           ]
@@ -1619,6 +1741,7 @@ export class TeamRunner {
           retryDelayMs: this.h.retryDelayMs,
           emit,
           persist: (m) => this.h.addMessage(input.taskId, m, tag),
+          inbox,
         });
         review = await this.parseReview(loop.finalText, r, input);
       } catch (err) {

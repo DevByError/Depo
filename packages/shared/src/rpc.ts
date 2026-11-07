@@ -37,6 +37,8 @@ import {
 } from "./extensions";
 import { LogMethods } from "./logs";
 import { PreviewMethods } from "./preview";
+import { ReviewMethods } from "./review";
+import { SteerInfoSchema, SteerMethods } from "./steer";
 import { TeamReplayMethods } from "./team-replay";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
@@ -323,6 +325,8 @@ export const ChatItemSchema = z.object({
    * can say "Ran python -m pytest -q" or show an edit as a diff. Untrusted data: display it as text.
    */
   args: z.record(z.string(), JsonValueSchema).optional(),
+  /** User items only: a note sent while the task worked (steering), and who has read it. */
+  steer: SteerInfoSchema.optional(),
 });
 export type ChatItem = z.infer<typeof ChatItemSchema>;
 
@@ -1152,6 +1156,8 @@ export const ApiSchema = {
   ...LogMethods,
   ...PreviewMethods,
   ...TeamReplayMethods,
+  ...SteerMethods,
+  ...ReviewMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

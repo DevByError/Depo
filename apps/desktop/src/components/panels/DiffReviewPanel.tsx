@@ -1,4 +1,4 @@
-import type { ChangeSet, Checkpoint, FileChange, Hunk } from "@depo/shared";
+import type { ChangeSet, Checkpoint, FileChange, Hunk, ReviewComment } from "@depo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -8,11 +8,24 @@ import {
   FilePlus,
   FileText,
   History,
+  MessageSquare,
+  MessageSquarePlus,
   MonitorPlay,
   RotateCcw,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CommentCard,
+  CommentEditor,
+  commentsKey,
+  hunkRows,
+  keyText,
+  ReviewBar,
+  type Row,
+  rowKey,
+  rowsLabel,
+} from "@/components/review/ReviewComments";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
@@ -97,6 +110,12 @@ export function DiffReviewPanel() {
       void qc.invalidateQueries({ queryKey: ["memory"] });
     },
   });
+  // Line comments of the shown change set (kept by the engine, so they survive a reload).
+  const comments = useQuery({
+    queryKey: commentsKey(current?.id ?? ""),
+    queryFn: () => call("review.comments.list", { changeSetId: current?.id ?? "" }),
+    enabled: enabled && !!current,
+  });
 
   if (!projectId) {
     return (
@@ -109,6 +128,10 @@ export function DiffReviewPanel() {
   const file = current?.files.find((f) => f.path === openFile) ?? null;
   const reviewable = current && (current.status === "pending" || current.status === "partially_applied");
   const selectedCount = selection.size;
+  const allComments = comments.data?.comments ?? [];
+  // Comments shown on this version's lines (ones a newer version addressed are listed in the bar).
+  const here = allComments.filter((c) => c.changeSetId === current?.id);
+  const canComment = !!reviewable && !!current?.taskId;
 
   return (
     <div className="flex h-full min-h-0">
@@ -207,6 +230,9 @@ export function DiffReviewPanel() {
             </Button>
           </form>
         )}
+        {current?.taskId && (canComment || allComments.length > 0) && (
+          <ReviewBar cs={current} comments={allComments} canRequest={canComment} />
+        )}
         {apply.data && (
           <p role="status" className="border-b border-border bg-raised/40 px-4 py-1.5 text-xs text-muted">
             Applied {apply.data.applied.length} file{apply.data.applied.length === 1 ? "" : "s"}. A checkpoint
@@ -245,6 +271,7 @@ export function DiffReviewPanel() {
                   partial={
                     (selection.get(f.path)?.size ?? -1) >= 0 && selection.get(f.path)?.size !== f.hunks.length
                   }
+                  comments={here.filter((c) => c.path === f.path && c.status === "open").length}
                   onOpen={() => setOpenFile(f.path)}
                   onToggle={(on) => {
                     const next = new Map(selection);
@@ -260,9 +287,13 @@ export function DiffReviewPanel() {
               tabIndex={0}
               aria-label={file ? `Diff of ${file.path}` : "Diff"}
             >
-              {file && (
+              {file && current && (
                 <FileDiffView
+                  key={`${current.id}:${file.path}`}
                   f={file}
+                  changeSetId={current.id}
+                  comments={here.filter((c) => c.path === file.path)}
+                  canComment={canComment && !file.binary}
                   selectable={!!reviewable && file.status === "pending" && !file.binary}
                   selected={selection.has(file.path) ? (selection.get(file.path) ?? null) : new Set()}
                   onChange={(hunks) => {
@@ -307,6 +338,7 @@ function FileRow({
   reviewable,
   checked,
   partial,
+  comments,
   onOpen,
   onToggle,
 }: {
@@ -315,6 +347,8 @@ function FileRow({
   reviewable: boolean;
   checked: boolean;
   partial: boolean;
+  /** Open review comments on this file. */
+  comments: number;
   onOpen: () => void;
   onToggle: (on: boolean) => void;
 }) {
@@ -363,6 +397,13 @@ function FileRow({
             aria-label="Changed in your project since"
           />
         )}
+        {comments > 0 && (
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-accent tabular-nums">
+            <MessageSquare className="size-3" aria-hidden />
+            {comments}
+            <span className="sr-only"> open comment{comments === 1 ? "" : "s"}</span>
+          </span>
+        )}
         <span className="shrink-0 text-[10px] tabular-nums">
           <span className="text-success">+{f.additions}</span>{" "}
           <span className="text-danger">−{f.deletions}</span>
@@ -372,21 +413,123 @@ function FileRow({
   );
 }
 
+/** The rows a comment is being written for: one change (hunk), from anchor to focus, either order. */
+interface LineSelection {
+  hunk: number;
+  anchor: number;
+  focus: number;
+}
+
 function FileDiffView({
   f,
+  changeSetId,
+  comments,
+  canComment,
   selectable,
   selected,
   onChange,
 }: {
   f: FileChange;
+  changeSetId: string;
+  /** Comments shown on this file's lines. */
+  comments: ReviewComment[];
+  /** Lines can get new comments (the change set waits for review and has a task). */
+  canComment: boolean;
   selectable: boolean;
   /** null = all hunks */
   selected: Set<number> | null;
   onChange: (hunks: Set<number> | null) => void;
 }) {
+  const qc = useQueryClient();
   const isOn = (i: number) => selected === null || selected.has(i);
+  const rowsByHunk = useMemo(() => f.hunks.map(hunkRows), [f.hunks]);
+  const [sel, setSel] = useState<LineSelection | null>(null);
+  const [composing, setComposing] = useState(false);
+  // The row that takes Tab in each change; arrow keys move it (one tab stop per change).
+  const [cursor, setCursor] = useState<{ hunk: number; row: number }>({ hunk: 0, row: 0 });
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Each comment sits under the row it ends on; one whose row is not in this diff is listed on top.
+  const placed = useMemo(() => {
+    const keys = new Set(
+      rowsByHunk.flatMap((rows) =>
+        rows.map((r) => {
+          const k = rowKey(r);
+          return keyText(k.side, k.line);
+        }),
+      ),
+    );
+    const at = new Map<string, ReviewComment[]>();
+    const loose: ReviewComment[] = [];
+    for (const c of comments) {
+      const k = keyText(c.endSide, c.endLine);
+      if (keys.has(k)) at.set(k, [...(at.get(k) ?? []), c]);
+      else loose.push(c);
+    }
+    return { at, loose };
+  }, [comments, rowsByHunk]);
+
+  const range = sel ? { a: Math.min(sel.anchor, sel.focus), b: Math.max(sel.anchor, sel.focus) } : null;
+  const add = useMutation({
+    mutationFn: (body: string) => {
+      const rows = sel ? rowsByHunk[sel.hunk] : undefined;
+      const first = range && rows?.[range.a];
+      const last = range && rows?.[range.b];
+      if (!first || !last || !range) throw new Error("Choose a line first.");
+      return call("review.comments.add", {
+        changeSetId,
+        path: f.path,
+        start: rowKey(first),
+        ...(range.b !== range.a ? { end: rowKey(last) } : {}),
+        body,
+      });
+    },
+    onSuccess: () => {
+      setComposing(false);
+      setSel(null);
+      void qc.invalidateQueries({ queryKey: commentsKey(changeSetId) });
+    },
+  });
+
+  const focusRow = (hunk: number, row: number) =>
+    boxRef.current?.querySelector<HTMLButtonElement>(`[data-row="${hunk}:${row}"]`)?.focus();
+
+  /** Click (or Enter) on a line; Shift extends the selection to a range in the same change. */
+  const pick = (hunk: number, row: number, extend: boolean) => {
+    setCursor({ hunk, row });
+    add.reset();
+    if (extend && sel && sel.hunk === hunk) {
+      setSel({ ...sel, focus: row });
+      setComposing(true);
+    } else if (sel && sel.hunk === hunk && sel.focus === row && sel.anchor !== sel.focus && !composing) {
+      // Enter after Shift+arrows: comment on the range chosen with the keyboard.
+      setComposing(true);
+    } else {
+      setSel({ hunk, anchor: row, focus: row });
+      setComposing(true);
+    }
+  };
+  /** Arrow keys move between lines; with Shift they grow the selection. */
+  const move = (hunk: number, row: number, by: number, extend: boolean) => {
+    const rows = rowsByHunk[hunk] ?? [];
+    const next = Math.max(0, Math.min(rows.length - 1, row + by));
+    setCursor({ hunk, row: next });
+    if (extend) {
+      setSel((s) => (s && s.hunk === hunk ? { ...s, focus: next } : { hunk, anchor: row, focus: next }));
+      setComposing(false);
+    }
+    focusRow(hunk, next);
+  };
+  const cancel = () => {
+    const at = sel ? { hunk: sel.hunk, row: Math.max(sel.anchor, sel.focus) } : cursor;
+    setComposing(false);
+    setSel(null);
+    add.reset();
+    requestAnimationFrame(() => focusRow(at.hunk, at.row));
+  };
+
   return (
-    <div className="p-3">
+    <div className="p-3" ref={boxRef}>
       <div className="mb-2 flex items-center gap-2">
         <code className="font-mono text-xs text-fg">{f.path}</code>
         <span className="text-[11px] text-subtle">{KIND_LABEL[f.kind]}</span>
@@ -397,6 +540,13 @@ function FileDiffView({
           This file changed in your project after the agent started. It is not applied automatically; the diff
           shows the agent's version against your current file.
         </p>
+      )}
+      {placed.loose.length > 0 && (
+        <div className="mb-2 flex flex-col gap-1.5">
+          {placed.loose.map((c) => (
+            <CommentCard key={c.id} c={c} changeSetId={changeSetId} editable={canComment} showPlace />
+          ))}
+        </div>
       )}
       {f.binary ? (
         <p className="text-xs text-muted">
@@ -409,6 +559,7 @@ function FileDiffView({
           <HunkView
             key={`${h.oldStart}-${h.newStart}`}
             h={h}
+            rows={rowsByHunk[i] ?? []}
             index={i}
             selectable={selectable}
             on={isOn(i)}
@@ -419,6 +570,30 @@ function FileDiffView({
               else cur.delete(i);
               onChange(cur.size === f.hunks.length ? null : cur);
             }}
+            canComment={canComment}
+            changeSetId={changeSetId}
+            commentsAt={placed.at}
+            range={sel?.hunk === i ? range : null}
+            composing={composing && sel?.hunk === i}
+            tabRow={cursor.hunk === i ? cursor.row : 0}
+            onPick={(row, extend) => pick(i, row, extend)}
+            onMove={(row, by, extend) => move(i, row, by, extend)}
+            onClear={cancel}
+            editor={
+              range && sel?.hunk === i ? (
+                <CommentEditor
+                  label={`Comment on ${rowsLabel(
+                    (rowsByHunk[i] ?? [])[range.a] as Row,
+                    (rowsByHunk[i] ?? [])[range.b] as Row,
+                  )}`}
+                  submitLabel="Add comment"
+                  busy={add.isPending}
+                  error={add.isError ? (add.error as Error).message : null}
+                  onSubmit={(body) => add.mutate(body)}
+                  onCancel={cancel}
+                />
+              ) : null
+            }
           />
         ))
       )}
@@ -428,35 +603,40 @@ function FileDiffView({
 
 function HunkView({
   h,
+  rows,
   index,
   selectable,
   on,
   onToggle,
+  canComment,
+  changeSetId,
+  commentsAt,
+  range,
+  composing,
+  tabRow,
+  onPick,
+  onMove,
+  onClear,
+  editor,
 }: {
   h: Hunk;
+  rows: Row[];
   index: number;
   selectable: boolean;
   on: boolean;
   onToggle: (on: boolean) => void;
+  canComment: boolean;
+  changeSetId: string;
+  commentsAt: Map<string, ReviewComment[]>;
+  /** Selected rows of this change (row indexes), if any. */
+  range: { a: number; b: number } | null;
+  composing: boolean;
+  tabRow: number;
+  onPick: (row: number, extend: boolean) => void;
+  onMove: (row: number, by: number, extend: boolean) => void;
+  onClear: () => void;
+  editor: ReactNode;
 }) {
-  const rows = useMemo(() => {
-    let o = h.oldStart;
-    let n = h.newStart;
-    return h.lines
-      .filter((l) => !l.startsWith("\\"))
-      .map((l) => {
-        const t = l[0];
-        const row = {
-          t,
-          text: l.slice(1).replace(/\r$/, ""),
-          o: t === "+" ? null : o,
-          n: t === "-" ? null : n,
-        };
-        if (t !== "+") o++;
-        if (t !== "-") n++;
-        return row;
-      });
-  }, [h]);
   return (
     <div
       className={cn(
@@ -477,33 +657,89 @@ function HunkView({
       </div>
       <table className="w-full border-collapse font-mono text-[12px] leading-[1.55]">
         <tbody>
-          {rows.map((r, k) => (
-            <tr
+          {rows.map((r, k) => {
+            const key = rowKey(r);
+            const here = commentsAt.get(keyText(key.side, key.line)) ?? [];
+            const picked = range !== null && k >= range.a && k <= range.b;
+            return (
               // biome-ignore lint/suspicious/noArrayIndexKey: diff rows have no stable identity
-              key={k}
-              className={r.t === "+" ? "bg-success/12" : r.t === "-" ? "bg-danger/12" : undefined}
-            >
-              <td className="w-10 select-none px-1.5 text-right align-top text-[11px] text-subtle">
-                {r.o ?? ""}
-              </td>
-              <td className="w-10 select-none px-1.5 text-right align-top text-[11px] text-subtle">
-                {r.n ?? ""}
-              </td>
-              <td
-                className={cn(
-                  "w-4 select-none text-center align-top",
-                  r.t === "+" ? "text-success" : r.t === "-" ? "text-danger" : "text-subtle",
+              <Fragment key={k}>
+                <tr
+                  className={cn(
+                    r.t === "+" ? "bg-success/12" : r.t === "-" ? "bg-danger/12" : undefined,
+                    picked && "bg-accent-soft shadow-[inset_2px_0_0_var(--accent)]",
+                  )}
+                >
+                  <td className="w-20 p-0 align-top">
+                    {canComment ? (
+                      <button
+                        type="button"
+                        data-row={`${index}:${k}`}
+                        tabIndex={k === tabRow ? 0 : -1}
+                        aria-label={`Comment on ${rowsLabel(r, r)}`}
+                        onClick={(e) => onPick(k, e.shiftKey)}
+                        onKeyDown={(e) => {
+                          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                            e.preventDefault();
+                            onMove(k, e.key === "ArrowDown" ? 1 : -1, e.shiftKey);
+                          } else if (e.key === "Escape" && range) {
+                            e.preventDefault();
+                            onClear();
+                          }
+                        }}
+                        className="group relative flex w-full select-none items-start text-[11px] text-subtle hover:text-fg"
+                      >
+                        <MessageSquarePlus
+                          className="absolute top-[3px] left-0.5 size-3 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
+                          aria-hidden
+                        />
+                        <span className="w-10 px-1.5 text-right">{r.o ?? ""}</span>
+                        <span className="w-10 px-1.5 text-right">{r.n ?? ""}</span>
+                      </button>
+                    ) : (
+                      <div className="flex select-none text-[11px] text-subtle">
+                        <span className="w-10 px-1.5 text-right">{r.o ?? ""}</span>
+                        <span className="w-10 px-1.5 text-right">{r.n ?? ""}</span>
+                      </div>
+                    )}
+                  </td>
+                  <td
+                    className={cn(
+                      "w-4 select-none text-center align-top",
+                      r.t === "+" ? "text-success" : r.t === "-" ? "text-danger" : "text-subtle",
+                    )}
+                    aria-hidden
+                  >
+                    {r.t === " " ? "" : r.t === "-" ? "−" : r.t}
+                  </td>
+                  <td className="whitespace-pre-wrap break-all pr-3 align-top text-fg">
+                    <span className="sr-only">
+                      {r.t === "+" ? "added: " : r.t === "-" ? "removed: " : ""}
+                    </span>
+                    {r.text || " "}
+                  </td>
+                </tr>
+                {here.length > 0 && (
+                  <tr>
+                    <td colSpan={3} className="border-y border-border bg-bg px-3 py-2">
+                      <div className="flex flex-col gap-1.5">
+                        {here.map((c) => (
+                          <CommentCard key={c.id} c={c} changeSetId={changeSetId} editable={canComment} />
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
                 )}
-                aria-hidden
-              >
-                {r.t === " " ? "" : r.t === "-" ? "−" : r.t}
-              </td>
-              <td className="whitespace-pre-wrap break-all pr-3 align-top text-fg">
-                <span className="sr-only">{r.t === "+" ? "added: " : r.t === "-" ? "removed: " : ""}</span>
-                {r.text || " "}
-              </td>
-            </tr>
-          ))}
+                {composing && range && k === range.b && (
+                  <tr>
+                    <td colSpan={3} className="border-y border-border bg-bg px-3 py-2">
+                      {editor}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
