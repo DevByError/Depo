@@ -2,6 +2,7 @@ import { formatBytes, formatDuration } from "@/lib/format";
 import { useEngine } from "@/store/engine";
 import { connectionLabel } from "./ConnectionBadge";
 import { HeartbeatPulse } from "./HeartbeatPulse";
+import { ModelPerformance } from "./ModelPerformance";
 
 function Sparkline({ values }: { values: number[] }) {
   if (values.length < 2) return <div className="h-8" />;
@@ -86,6 +87,7 @@ export function EngineHealth() {
           </dd>
         </dl>
       )}
+      <ModelPerformance />
     </section>
   );
 }

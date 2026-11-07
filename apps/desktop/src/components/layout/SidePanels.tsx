@@ -1,7 +1,18 @@
-import { Activity, Bug, FlaskConical, Gauge, PanelRightClose, SquareTerminal, Users, X } from "lucide-react";
+import {
+  Activity,
+  Bug,
+  FlaskConical,
+  Gauge,
+  PanelRightClose,
+  ScrollText,
+  SquareTerminal,
+  Users,
+  X,
+} from "lucide-react";
 import { ActivityFeed } from "@/components/panels/ActivityFeed";
 import { AgentBoard } from "@/components/panels/AgentBoard";
 import { EngineHealth } from "@/components/panels/EngineHealth";
+import { LogsPanel } from "@/components/panels/LogsPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { ProblemsPanel } from "@/components/panels/ProblemsPanel";
 import { IconButton } from "@/components/ui/icon-button";
@@ -74,6 +85,7 @@ export function BottomPanel() {
     { id: "terminal", label: "Terminal", icon: SquareTerminal },
     { id: "problems", label: problemCount > 0 ? `Problems (${problemCount})` : "Problems", icon: Bug },
     { id: "tests", label: "Test results", icon: FlaskConical },
+    { id: "logs", label: "Logs", icon: ScrollText },
   ];
   return (
     <section aria-label="Bottom panel" className="flex h-full flex-col bg-panel">
@@ -95,6 +107,7 @@ export function BottomPanel() {
       <div role="tabpanel" className="min-h-0 flex-1">
         {tab === "engine" && <EngineHealth />}
         {tab === "problems" && <ProblemsPanel />}
+        {tab === "logs" && <LogsPanel />}
         {tab === "terminal" && (
           <PhaseNotice icon={SquareTerminal} title="Terminal" phase="Phase 1">
             A live terminal (xterm.js) for commands agents run in the shadow workspace, with the per-project
