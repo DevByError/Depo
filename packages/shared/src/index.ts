@@ -1,4 +1,5 @@
 export * from "./agents";
+export * from "./blueprints";
 export * from "./codemap";
 export * from "./events";
 export * from "./extensions";

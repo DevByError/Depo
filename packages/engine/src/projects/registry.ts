@@ -46,22 +46,37 @@ export class ProjectRegistry {
     description?: string;
     stack?: string;
     initGit?: boolean;
+    /**
+     * Fills the new folder instead of the README and `git init` (blueprints). When it fails, the
+     * folder is removed again if Depo made it.
+     */
+    populate?: (dest: string) => Promise<void> | void;
   }): Promise<Project> {
     const parent = existingDir(p.parentDir, "Parent folder");
     const dest = path.join(parent, p.name.trim());
-    if (fs.existsSync(dest) && fs.readdirSync(dest).length > 0) {
+    const existed = fs.existsSync(dest);
+    if (existed && fs.readdirSync(dest).length > 0) {
       throw new Error(`${dest} already exists and is not empty. Pick another name, or import it instead.`);
     }
     fs.mkdirSync(dest, { recursive: true });
     const description = p.description?.trim() ?? "";
-    fs.writeFileSync(
-      path.join(dest, "README.md"),
-      `# ${p.name.trim()}\n${description ? `\n${description}\n` : ""}`,
-      { flag: "wx" },
-    );
-    if (p.initGit !== false) {
-      const r = await this.git(["init", "-q"], dest, 30_000);
-      if (r.code !== 0) this.log.warn("git init failed", { output: r.output });
+    if (p.populate) {
+      try {
+        await p.populate(dest);
+      } catch (err) {
+        if (!existed) fs.rmSync(dest, { recursive: true, force: true });
+        throw err;
+      }
+    } else {
+      fs.writeFileSync(
+        path.join(dest, "README.md"),
+        `# ${p.name.trim()}\n${description ? `\n${description}\n` : ""}`,
+        { flag: "wx" },
+      );
+      if (p.initGit !== false) {
+        const r = await this.git(["init", "-q"], dest, 30_000);
+        if (r.code !== 0) this.log.warn("git init failed", { output: r.output });
+      }
     }
     const project = await this.o.projects.open(dest, {
       origin: "created",

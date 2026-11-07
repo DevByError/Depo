@@ -1,32 +1,10 @@
 import type { Block } from "./types";
 
-export const AUTH_PY: Block = {
-  id: "auth-py",
-  name: "Login and sessions (Python)",
-  description:
-    "Password hashing with scrypt and signed expiring tokens using only the Python standard library. Plug it into FastAPI, Flask or Django.",
-  stack: "py",
-  tags: ["auth", "login", "security", "sessions", "python", "fastapi"],
-  test: "python -m unittest discover -s tests -p test_auth.py",
-  notes: [
-    "Store password_hash in the users table; never store the password.",
-    "Read the secret from an environment variable (at least 32 characters).",
-    "In FastAPI, write a dependency that calls verify_token(header_value, SECRET) and raises 401 when it returns None.",
-    "Add the rbac-py block to decide what each role may do.",
-  ],
-  files: [
-    { path: "app/__init__.py", content: "" },
-    {
-      path: "app/auth.py",
-      content: String.raw`"""Passwords and signed tokens with the standard library only."""
-import base64
-import hashlib
-import hmac
-import json
-import os
-import time
-
-MIN_PASSWORD_LENGTH = 8
+/**
+ * Password hashing with scrypt (standard library only). Shared with the FastAPI blueprint, which
+ * uses it as is, so there is one version of this code.
+ */
+export const PY_PASSWORDS = String.raw`MIN_PASSWORD_LENGTH = 8
 _N, _R, _P = 16384, 8, 1
 
 
@@ -48,9 +26,10 @@ def verify_password(password: str, stored: str) -> bool:
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(actual, expected)
+`;
 
-
-def _b64(data: bytes) -> str:
+/** Signed, expiring tokens (HMAC-SHA256) with the standard library only. */
+const PY_TOKENS = String.raw`def _b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
@@ -88,7 +67,37 @@ def verify_token(token: str | None, secret: str, now: float | None = None) -> di
     if not isinstance(payload, dict) or "sub" not in payload or int(payload.get("exp", 0)) <= int(time.time() if now is None else now):
         return None
     return payload
-`,
+`;
+
+export const AUTH_PY: Block = {
+  id: "auth-py",
+  name: "Login and sessions (Python)",
+  description:
+    "Password hashing with scrypt and signed expiring tokens using only the Python standard library. Plug it into FastAPI, Flask or Django.",
+  stack: "py",
+  tags: ["auth", "login", "security", "sessions", "python", "fastapi"],
+  test: "python -m unittest discover -s tests -p test_auth.py",
+  notes: [
+    "Store password_hash in the users table; never store the password.",
+    "Read the secret from an environment variable (at least 32 characters).",
+    "In FastAPI, write a dependency that calls verify_token(header_value, SECRET) and raises 401 when it returns None.",
+    "Add the rbac-py block to decide what each role may do.",
+  ],
+  files: [
+    { path: "app/__init__.py", content: "" },
+    {
+      path: "app/auth.py",
+      content: `"""Passwords and signed tokens with the standard library only."""
+import base64
+import hashlib
+import hmac
+import json
+import os
+import time
+
+${PY_PASSWORDS}
+
+${PY_TOKENS}`,
     },
     {
       path: "tests/test_auth.py",

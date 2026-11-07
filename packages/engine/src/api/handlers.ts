@@ -32,6 +32,7 @@ import type { SettingsRepo } from "../settings";
 import type { SkillService } from "../skills/service";
 import { checkForUpdate } from "../util/update";
 import type { ProjectService } from "../workspace/service";
+import { blueprintHandlers } from "./blueprint-handlers";
 import { steerReviewHandlers } from "./review-handlers";
 
 export interface HandlerContext {
@@ -533,4 +534,5 @@ export const handlers: Handlers = {
     }),
   "codemap.file": (p, ctx) => ctx.indexer.map.file(p.projectId, p.path),
   "codemap.repo": (p, ctx) => ctx.indexer.map.repo(p.projectId),
+  ...blueprintHandlers,
 };
