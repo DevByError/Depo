@@ -336,6 +336,39 @@ describe("diff comments", () => {
   });
 });
 
+describe("apply and undo", () => {
+  it("Undo sits next to the apply message and puts the files back", async () => {
+    const cs = changeSet(null);
+    responses["changes.list"] = () => ({ changeSets: [cs] });
+    responses["changes.apply"] = () => ({
+      changeSet: { ...cs, status: "applied" },
+      checkpointId: "cp_1",
+      applied: ["app/main.py"],
+      conflicts: [],
+    });
+    responses["checkpoints.restore"] = () => ({
+      restored: ["app/main.py"],
+      conflicts: [],
+      checkpoint: {
+        id: "cp_1",
+        projectId: "prj_1",
+        changeSetId: "cs_1",
+        label: "Before applying: Read the name",
+        files: [{ path: "app/main.py", existed: true, appliedHash: null }],
+        status: "restored",
+        createdAt: now,
+      },
+    });
+    wrap(<DiffReviewPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Apply 1 file/ }));
+    const notice = await screen.findByText(/A checkpoint was saved, so you can undo it/);
+    const status = notice.closest("[role=status]") as HTMLElement;
+    fireEvent.click(within(status).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(lastCall("checkpoints.restore")).toEqual({ id: "cp_1", force: false }));
+    expect(await within(status).findByText(/Undone/)).toBeTruthy();
+  });
+});
+
 describe("comment helpers", () => {
   it("label rows and places in plain words", () => {
     const rows = hunkRows({

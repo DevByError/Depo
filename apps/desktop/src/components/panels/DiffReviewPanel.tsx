@@ -247,16 +247,11 @@ export function DiffReviewPanel() {
           <ReviewBar cs={current} comments={allComments} canRequest={canComment} />
         )}
         {apply.data && (
-          <p role="status" className="border-b border-border bg-raised/40 px-4 py-1.5 text-xs text-muted">
-            Applied {apply.data.applied.length} file{apply.data.applied.length === 1 ? "" : "s"}. A checkpoint
-            was saved, so you can undo it from Undo history.
-            {apply.data.conflicts.length > 0 && (
-              <span className="text-warning">
-                {" "}
-                Skipped (changed since): {apply.data.conflicts.join(", ")}
-              </span>
-            )}
-          </p>
+          <ApplyNotice
+            key={apply.data.checkpointId ?? "none"}
+            result={apply.data}
+            onConflict={() => setShowHistory(true)}
+          />
         )}
         {current && <CommitChangesBar projectId={projectId} changeSet={current} />}
         {(apply.isError || discard.isError) && (
@@ -757,6 +752,60 @@ function HunkView({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** "Applied 2 files" with an Undo right there; Undo history keeps every older checkpoint. */
+function ApplyNotice({
+  result,
+  onConflict,
+}: {
+  result: { applied: string[]; conflicts: string[]; checkpointId: string | null };
+  onConflict(): void;
+}) {
+  const qc = useQueryClient();
+  const undo = useMutation({
+    mutationFn: (id: string) => call("checkpoints.restore", { id, force: false }),
+    onSuccess: (r) => {
+      if (r.conflicts.length > 0) onConflict();
+      void qc.invalidateQueries({ queryKey: ["checkpoints"] });
+      void qc.invalidateQueries({ queryKey: ["changes"] });
+    },
+  });
+  const n = result.applied.length;
+  const undone = undo.data && undo.data.conflicts.length === 0;
+  return (
+    <p
+      role="status"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-raised/40 px-4 py-1.5 text-xs text-muted"
+    >
+      {undone ? (
+        <span>Undone. Your files are back as they were before this apply.</span>
+      ) : undo.data ? (
+        <span className="text-warning">
+          You edited {undo.data.conflicts.join(", ")} after this apply, so nothing was undone. Undo history
+          lets you choose.
+        </span>
+      ) : (
+        <span>
+          Applied {n} file{n === 1 ? "" : "s"}. A checkpoint was saved, so you can undo it.
+          {result.conflicts.length > 0 && (
+            <span className="text-warning"> Skipped (changed since): {result.conflicts.join(", ")}</span>
+          )}
+        </span>
+      )}
+      {result.checkpointId && !undo.data && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={undo.isPending}
+          onClick={() => result.checkpointId && undo.mutate(result.checkpointId)}
+        >
+          <RotateCcw /> Undo
+        </Button>
+      )}
+      {undo.isError && <span className="text-danger">{String(undo.error)}</span>}
+    </p>
   );
 }
 

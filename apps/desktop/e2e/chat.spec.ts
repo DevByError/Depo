@@ -49,7 +49,7 @@ test('Phase 1 acceptance: "add a /health endpoint to this FastAPI project"', asy
   await expect.poll(() => readFileSync(mainPy, "utf8")).toContain('@app.get("/health")');
 
   // And undo puts the project back.
-  await page.getByRole("button", { name: "Undo" }).first().click();
+  await page.getByRole("button", { name: "Undo", exact: true }).first().click();
   await expect.poll(() => readFileSync(mainPy, "utf8")).toBe(original);
 });
 
