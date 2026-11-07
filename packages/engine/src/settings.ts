@@ -26,6 +26,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "notify.enabled": true,
   /** Set once the welcome tour was shown. */
   "ui.onboarded": false,
+  /** After each finished task, remember durable facts about the project by itself (stack, commands, decisions). */
+  "memory.auto": true,
 };
 
 export class SettingsRepo {

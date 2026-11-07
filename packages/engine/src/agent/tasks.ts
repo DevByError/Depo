@@ -24,6 +24,7 @@ import type { AppDb } from "../db";
 import { messages, projects, tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
 import type { Logger } from "../logger";
+import { AutoMemory } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelScheduler } from "../scheduler/scheduler";
@@ -78,10 +79,22 @@ export class TaskManager {
   private readonly log: Logger;
   readonly blackboard: Blackboard;
   private readonly team: TeamRunner;
+  /** Remembers what finished tasks taught (memory.auto); null without a memory store. */
+  readonly autoMemory: AutoMemory | null;
 
   constructor(private readonly o: TaskManagerOptions) {
     this.log = o.logger.child({ component: "tasks" });
     this.blackboard = new Blackboard(o.db);
+    this.autoMemory = o.memory
+      ? new AutoMemory({
+          db: o.db,
+          logger: this.log,
+          memory: o.memory,
+          models: o.models,
+          scheduler: o.scheduler,
+          enabled: () => o.settings?.get("memory.auto") !== false,
+        })
+      : null;
     this.team = new TeamRunner({
       db: o.db,
       bus: o.bus,
@@ -337,6 +350,7 @@ export class TaskManager {
   async cancelAll(): Promise<void> {
     for (const ctl of this.running.values()) ctl.abort();
     await Promise.allSettled([...this.done.values()]);
+    await this.autoMemory?.stop();
   }
 
   // ---- the loop --------------------------------------------------------------------------
@@ -388,16 +402,11 @@ export class TaskManager {
     const settings = this.o.projectSettings?.(project.id);
     this.o.indexer?.ensure(project.id);
     const history = this.loadHistory(taskId);
+    const request = requestText(row.prompt, history);
     // The system prompt is rebuilt on every run so it carries the latest memory and repo map.
     const sys: ChatMessage = {
       role: "system",
-      content: this.systemPrompt(
-        project.id,
-        project.name,
-        ws.root,
-        contextLength,
-        requestText(row.prompt, history),
-      ),
+      content: this.systemPrompt(project.id, project.name, ws.root, contextLength, request),
     };
     if (history[0]?.role !== "system") {
       history.unshift(sys);
@@ -457,7 +466,15 @@ export class TaskManager {
       .set({ summary: finalText.slice(0, 4000), updatedAt: new Date().toISOString() })
       .where(eq(tasks.id, taskId))
       .run();
-    this.finishChanges(project.id, taskId, ws, row.title, emit, (cs) => (cs ? "review" : "done"));
+    const cs = this.finishChanges(project.id, taskId, ws, row.title, emit, (c) => (c ? "review" : "done"));
+    this.autoMemory?.afterTask({
+      projectId: project.id,
+      taskId,
+      request,
+      finalText,
+      root: ws.root,
+      files: cs?.files ?? [],
+    });
   }
 
   /** Team modes: the Manager plans, the agents work through the task graph, reviewers sign off. */
@@ -501,7 +518,16 @@ export class TaskManager {
       emit({ type: "handoff", text: "Plan declined: nothing was built", status: "cancelled" });
       return;
     }
-    this.finishChanges(project.id, taskId, ws, row.title, emit, (cs) => (cs ? "review" : "done"));
+    const cs = this.finishChanges(project.id, taskId, ws, row.title, emit, (c) => (c ? "review" : "done"));
+    this.autoMemory?.afterTask({
+      projectId: project.id,
+      taskId,
+      request: lastUser?.text ?? row.prompt,
+      finalText: res.finalText,
+      notes: this.blackboard.read(project.id, "decisions.md")?.content ?? "",
+      root: ws.root,
+      files: cs?.files ?? [],
+    });
   }
 
   private finishChanges(

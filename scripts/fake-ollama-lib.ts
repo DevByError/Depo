@@ -189,6 +189,34 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
   return new Response(body);
 }
 
+/**
+ * The memory summary after a task: two useful items, plus two with secrets that Depo must drop
+ * (a "password is" sentence and an API key the redactor knows).
+ */
+export const FAKE_MEMORY_ITEMS = [
+  {
+    kind: "convention",
+    text: "Each route in app/main.py has a matching pytest test in tests/test_main.py.",
+  },
+  { kind: "decision", text: 'Health checks answer GET /health with {"status": "ok"}.' },
+  { kind: "fact", text: "The demo admin password is hunter2-very-secret" },
+  { kind: "fact", text: "Tests call the API with key sk-abcdefghijklmnopqrstuvwxyz123456 when needed." },
+];
+
+function memoryReply(): Response {
+  return new Response(
+    new ReadableStream({
+      start(ctl) {
+        ctl.enqueue(
+          line({ message: { role: "assistant", content: JSON.stringify({ items: FAKE_MEMORY_ITEMS }) } }),
+        );
+        ctl.enqueue(line({ done: true, prompt_eval_count: 400, eval_count: 80, eval_duration: 5e8 }));
+        ctl.close();
+      },
+    }),
+  );
+}
+
 export interface FakeOllamaOptions {
   /** Delay before each scripted agent step, so concurrent tasks overlap in tests. */
   stepDelayMs?: number;
@@ -255,6 +283,9 @@ export function startFakeOllama(
         case "/api/chat": {
           const body = (await req.json()) as { messages: WireMessage[]; tools?: unknown[] };
           if (body.tools?.length) return scriptedChat(body.messages, opts.stepDelayMs ?? 0);
+          // Depo's automatic memory asks for durable items as JSON after a task.
+          const sys = body.messages.find((m) => m.role === "system")?.content ?? "";
+          if (sys.includes("Depo's durable memory")) return memoryReply();
           // Benchmarks and plain chats: a short streamed answer.
           const words = "def merge_intervals(intervals):\n    return sorted(intervals)\n".split(/(?<= )/);
           return new Response(
