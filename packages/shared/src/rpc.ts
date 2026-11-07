@@ -34,6 +34,7 @@ import {
   SkillCandidateSchema,
   SkillSchema,
 } from "./extensions";
+import { PreviewMethods } from "./preview";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
 export const RpcIdSchema = z.union([z.string(), z.number().int()]);
@@ -160,6 +161,8 @@ export const ProjectSettingsSchema = z.object({
   commandDeny: z.array(CommandPatternSchema).max(50).default([]),
   /** Most model steps a task may take before it stops and hands over. */
   maxSteps: z.number().int().min(5).max(200).default(40),
+  /** The owner's own start command for previews ("" = let Depo detect it). `{port}` is the chosen port. */
+  previewCommand: z.string().max(2000).default(""),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 
@@ -1128,6 +1131,7 @@ export const ApiSchema = {
   ...ApprovalMethods,
   ...ProjectMethods,
   ...TaskMethods,
+  ...PreviewMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

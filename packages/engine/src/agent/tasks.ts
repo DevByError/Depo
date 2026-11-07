@@ -29,6 +29,7 @@ import type { ModelManager } from "../models/manager";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
 import { TOOLS, type ToolContext } from "../tools/index";
+import type { PreviewHooks } from "../tools/preview-tools";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
@@ -55,6 +56,8 @@ export interface TaskManagerOptions {
   extras?: NonNullable<ConstructorParameters<typeof TeamRunner>[0]["extras"]>;
   /** Active agent manifests from the Agent Lab (Phase 7). */
   manifest?: ConstructorParameters<typeof TeamRunner>[0]["manifest"];
+  /** Previews of the app agents build (start_preview, http_check, stop_preview). */
+  previews?: PreviewHooks;
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -94,6 +97,7 @@ export class TaskManager {
       repoMap: (id) => o.indexer?.repoMap(id, REPO_MAP_BUDGET).trim() ?? "",
       ...(o.extras ? { extras: o.extras } : {}),
       manifest: o.manifest,
+      ...(o.previews ? { previews: o.previews } : {}),
     });
   }
 
@@ -404,6 +408,7 @@ export class TaskManager {
       ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
       readPaths: new Set<string>(),
       ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
+      ...(this.o.previews ? { previews: this.o.previews } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const result = await runAgentLoop({

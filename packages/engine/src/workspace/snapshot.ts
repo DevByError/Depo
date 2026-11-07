@@ -112,7 +112,95 @@ export function removeShadow(dest: string): void {
       // not there
     }
   }
+  // Links in sub-projects (frontend/node_modules …), made when a preview runs a monorepo copy.
+  unlinkNested(dest, 0);
   fs.rmSync(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
+function isLink(p: string): boolean {
+  try {
+    const st = fs.lstatSync(p);
+    return st.isSymbolicLink() || (process.platform === "win32" && st.isDirectory() && isJunction(p));
+  } catch {
+    return false;
+  }
+}
+
+function unlinkNested(dir: string, level: number): void {
+  if (level > 4) return;
+  let items: fs.Dirent[];
+  try {
+    items = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const it of items) {
+    const full = path.join(dir, it.name);
+    if (LINKED_DIRS.has(it.name) && isLink(full)) {
+      try {
+        fs.unlinkSync(full);
+      } catch {
+        // rmSync below removes the link itself, never its target
+      }
+      continue;
+    }
+    if (
+      it.isDirectory() &&
+      !it.isSymbolicLink() &&
+      !DEFAULT_IGNORES.has(it.name) &&
+      !LINKED_DIRS.has(it.name)
+    )
+      unlinkNested(full, level + 1);
+  }
+}
+
+/**
+ * Link dependency folders of sub-projects (for example `frontend/node_modules` or
+ * `backend/.venv`) from the real project into a shadow copy, so an app in a monorepo copy can
+ * start without installing everything again. Top-level links are made by `createShadow`.
+ * Returns the links made.
+ */
+export function linkNestedDependencies(projectRoot: string, shadowRoot: string): string[] {
+  const made: string[] = [];
+  const subs: string[] = [];
+  let items: fs.Dirent[] = [];
+  try {
+    items = fs.readdirSync(shadowRoot, { withFileTypes: true });
+  } catch {
+    return made;
+  }
+  for (const it of items) {
+    if (
+      !it.isDirectory() ||
+      it.name.startsWith(".") ||
+      DEFAULT_IGNORES.has(it.name) ||
+      LINKED_DIRS.has(it.name)
+    )
+      continue;
+    subs.push(it.name);
+    if (["apps", "packages", "services"].includes(it.name)) {
+      try {
+        for (const s of fs.readdirSync(path.join(shadowRoot, it.name), { withFileTypes: true }))
+          if (s.isDirectory() && !s.name.startsWith(".")) subs.push(path.join(it.name, s.name));
+      } catch {
+        // unreadable
+      }
+    }
+  }
+  for (const rel of subs) {
+    for (const name of LINKED_DIRS) {
+      const src = path.join(projectRoot, rel, name);
+      const dst = path.join(shadowRoot, rel, name);
+      try {
+        if (fs.existsSync(dst) || isLink(dst) || !fs.statSync(src).isDirectory()) continue;
+        fs.symlinkSync(src, dst, process.platform === "win32" ? "junction" : "dir");
+        made.push(path.join(rel, name));
+      } catch {
+        // not there, or links are not allowed: the preview offers an install instead
+      }
+    }
+  }
+  return made;
 }
 
 function isJunction(p: string): boolean {

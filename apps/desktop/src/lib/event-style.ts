@@ -21,6 +21,8 @@ import {
   Link2,
   ListTree,
   type LucideIcon,
+  MonitorOff,
+  MonitorPlay,
   Package,
   PlugZap,
   Power,
@@ -75,6 +77,8 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   memory_updated: { icon: BookMarked, tone: "accent", label: "Memory" },
   indexing: { icon: ListTree, tone: "neutral", label: "Index" },
   project_changed: { icon: FolderKanban, tone: "info", label: "Project" },
+  preview_started: { icon: MonitorPlay, tone: "success", label: "Preview" },
+  preview_stopped: { icon: MonitorOff, tone: "neutral", label: "Preview" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {

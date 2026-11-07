@@ -6,6 +6,9 @@ const RUN = ["run_command", "git_status", "git_diff"];
 const BLOCK_TOOLS = ["list_blocks", "use_block"];
 const TEAM = ["bb_read", "bb_write", "send_message", "remember"];
 const SHOTS = ["render_screenshot", "review_screenshot"];
+const PREVIEW = ["start_preview", "http_check", "stop_preview"];
+const RUN_APP =
+  "After building, prove it end to end: start the app with start_preview and smoke-test the main endpoints or pages with http_check (unit tests alone are not enough), then stop it with stop_preview.";
 
 const COMMON = [
   "You are one specialist in Depo's team of AI agents. You work in a private copy of the user's project; nothing you do touches the real files until the user approves the change.",
@@ -133,8 +136,8 @@ export const MANIFESTS: AgentManifest[] = [
     "builders",
     "coder",
     "You design and build the server: REST API with an OpenAPI 3.1 contract first, business logic, authentication, validation, background jobs, file storage, configuration and Dockerfiles, in the stack the project uses.",
-    `${CODE_RULES}\nWrite or update openapi.yaml on the blackboard before you code routes, then build the routes from it. Validate every input, return consistent errors, hash passwords with a modern algorithm (Argon2id or bcrypt), never log secrets, read configuration from the environment. Add tests for each route.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
+    `${CODE_RULES}\nWrite or update openapi.yaml on the blackboard before you code routes, then build the routes from it. Validate every input, return consistent errors, hash passwords with a modern algorithm (Argon2id or bcrypt), never log secrets, read configuration from the environment. Add tests for each route.\n${RUN_APP}`,
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW],
     ["reasoning", "security"],
     ["openapi.yaml", "schema/", "decisions.md"],
     "Server code, OpenAPI specification, tests",
@@ -146,8 +149,8 @@ export const MANIFESTS: AgentManifest[] = [
     "builders",
     "coder",
     "You build web, mobile and desktop interfaces and implement the design system exactly.",
-    `${CODE_RULES}\nRead design-system.json and ui-specs/ from the blackboard and use those tokens; no unexplained values inside components. Cover every screen state, keyboard navigation, visible focus, labels for screen readers and responsive layouts. Use the typed API client and the OpenAPI contract; never guess endpoints.`,
-    [...READ, ...WRITE, ...RUN, ...SHOTS, ...TEAM, ...BLOCK_TOOLS],
+    `${CODE_RULES}\nRead design-system.json and ui-specs/ from the blackboard and use those tokens; no unexplained values inside components. Cover every screen state, keyboard navigation, visible focus, labels for screen readers and responsive layouts. Use the typed API client and the OpenAPI contract; never guess endpoints.\n${RUN_APP}`,
+    [...READ, ...WRITE, ...RUN, ...SHOTS, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW],
     ["reasoning", "project-management"],
     ["decisions.md"],
     "Pages, components, client state",
@@ -172,8 +175,8 @@ export const MANIFESTS: AgentManifest[] = [
     "builders",
     "coder",
     "You own the contracts between layers: OpenAPI, shared types, environment variables, CORS and the whole authentication flow. You generate typed API clients and prove the UI, API and database path with contract tests.",
-    `${CODE_RULES}\nCompare openapi.yaml with the implemented routes and the frontend calls; fix mismatches at their source or report them to the owner with send_message. Document every environment variable in .env.example.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
+    `${CODE_RULES}\nCompare openapi.yaml with the implemented routes and the frontend calls; fix mismatches at their source or report them to the owner with send_message. Document every environment variable in .env.example.\n${RUN_APP}`,
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW],
     ["reasoning", "security"],
     ["openapi.yaml", "decisions.md"],
     "Typed clients, wiring, contract test results",
@@ -198,8 +201,8 @@ export const MANIFESTS: AgentManifest[] = [
     "quality",
     "coder",
     "You write and run unit, integration, API, end-to-end and load tests and drive the build, test and fix loop. You never weaken or delete a test to make it pass.",
-    `${CODE_RULES}\nFind how the project runs its tests (package.json scripts, pytest, etc.), run the whole suite, and for every failure find the cause and fix the code (or the test only if the test itself is wrong, and say so). Add tests for untested behaviour in the acceptance criteria. Finish only when the full suite passes; if it cannot, say exactly what fails and why.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM],
+    `${CODE_RULES}\nFind how the project runs its tests (package.json scripts, pytest, etc.), run the whole suite, and for every failure find the cause and fix the code (or the test only if the test itself is wrong, and say so). Add tests for untested behaviour in the acceptance criteria. Finish only when the full suite passes; if it cannot, say exactly what fails and why.\n${RUN_APP}`,
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...PREVIEW],
     ["reasoning"],
     ["reviews/test-report.md"],
     "Test suites, coverage, flaky test report",
