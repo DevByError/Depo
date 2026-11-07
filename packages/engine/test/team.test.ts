@@ -39,7 +39,6 @@ function teamModel(opts: { rejectBackend?: number | "always"; log?: string[] } =
   const reply = (req: ChatRequest): Reply => {
     const sys = req.messages.find((m) => m.role === "system")?.content ?? "";
     const users = req.messages.filter((m) => m.role === "user");
-    const firstUser = users[0]?.content ?? "";
     const lastUser = users.at(-1)?.content ?? "";
     // Manager planning (structured output).
     if (req.jsonSchema && sys.includes("Plan the work as a task graph")) {
@@ -155,7 +154,7 @@ function teamModel(opts: { rejectBackend?: number | "always"; log?: string[] } =
               calls: [
                 call("write_file", {
                   path: "src/app.ts",
-                  content: "export const hash = (p: string) => `h:${p.length}`;\n",
+                  content: 'export const hash = (p: string) => "h:" + p.length;\n',
                 }),
               ],
             }

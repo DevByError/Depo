@@ -20,6 +20,7 @@ import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import { EVENT_STYLE, TONE_TEXT } from "@/lib/event-style";
 import { formatBytes, formatClock, formatDuration } from "@/lib/format";
+import { agentName } from "@/lib/step-summary";
 import { useFollowList } from "@/lib/use-follow-list";
 import { useTaskTitles } from "@/lib/use-task-titles";
 import { useEngine } from "@/store/engine";
@@ -517,5 +518,5 @@ export function agentLabel(agent: string): string {
   if (agent === "user") return "You";
   const [name, version] = agent.split("@");
   if (!name || !version) return agent;
-  return `${name.charAt(0).toUpperCase()}${name.slice(1)} Agent (${version})`;
+  return agentName(name);
 }

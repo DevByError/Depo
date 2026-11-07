@@ -99,7 +99,7 @@ export interface LiveStep {
   agent: string | null;
 }
 
-/** Counts tool steps and failed ones for the work line. */
+/** Counts tool steps (or, with none, every listed line) and failed ones for the work line. */
 export function workCounts(steps: ChatItem[]): { steps: number; failed: number } {
   let n = 0;
   let failed = 0;
@@ -108,6 +108,8 @@ export function workCounts(steps: ChatItem[]): { steps: number; failed: number }
     n++;
     if (summarizeStep(s).failed) failed++;
   }
+  // A team run's lines are mostly handoffs, reviews and notes rather than tool calls: count those.
+  if (n === 0) n = steps.length;
   return { steps: n, failed };
 }
 

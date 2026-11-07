@@ -1,4 +1,5 @@
 import type { ChatItem, JsonValue } from "@depo/shared";
+import { agentKey } from "./agent-color";
 import { formatBytes } from "./format";
 
 /**
@@ -197,6 +198,7 @@ const AGENT_NAMES: Record<string, string> = {
   security: "Security",
   enhancement: "Enhancement",
   "devops-docs": "DevOps & Docs",
+  "devops-documentation": "DevOps & Docs",
   coder: "Coder",
 };
 
@@ -205,6 +207,9 @@ export function agentName(tag: string | null | undefined): string {
   if (!tag) return "";
   const id = tag.split("@")[0]?.trim() ?? "";
   if (AGENT_NAMES[id]) return AGENT_NAMES[id];
+  // Display names ("DevOps and Documentation", "Coder Agent") map to the same short names.
+  const key = agentKey(id);
+  if (AGENT_NAMES[key]) return AGENT_NAMES[key];
   return id
     .split(/[-_\s]+/)
     .filter(Boolean)

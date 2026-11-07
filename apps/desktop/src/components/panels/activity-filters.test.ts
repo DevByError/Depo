@@ -82,6 +82,7 @@ describe("task groups", () => {
   it("labels agents", () => {
     expect(agentLabel("engine")).toBe("Engine");
     expect(agentLabel("user")).toBe("You");
-    expect(agentLabel("backend@1.0.0")).toBe("Backend Agent (1.0.0)");
+    expect(agentLabel("backend@1.0.0")).toBe("Backend");
+    expect(agentLabel("devops-docs@1.0.0")).toBe("DevOps & Docs");
   });
 });
