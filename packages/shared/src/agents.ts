@@ -273,6 +273,8 @@ export const DecisionKindSchema = z.enum([
   "adr",
   /** Thinking: the option it recommends. */
   "recommendation",
+  /** Depo at review: the readiness verdict (tests, checks, scores, reviews, comments, risky files). */
+  "readiness",
 ]);
 export type DecisionKind = z.infer<typeof DecisionKindSchema>;
 

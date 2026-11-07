@@ -10,6 +10,7 @@ import {
   Signpost,
 } from "lucide-react";
 import { useState } from "react";
+import { ReadinessBadge } from "@/components/readiness/ReadinessPill";
 import { AgentAvatar } from "@/components/team/AgentAvatar";
 import { ErrorText } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
@@ -98,6 +99,7 @@ export function TasksCard({ overview }: { overview: Overview }) {
               >
                 <span className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT[t.status])} aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-fg">{t.title}</span>
+                {t.status === "review" && <ReadinessBadge taskId={t.id} />}
                 <span className="shrink-0 text-[11px] text-muted">{LABEL.get(t.status)}</span>
                 <span className="w-16 shrink-0 text-right text-[11px] text-subtle">
                   {formatRelative(t.updatedAt)}

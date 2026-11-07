@@ -33,6 +33,7 @@ import { AutoMemory } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelWarmup } from "../models/speed";
+import type { ReadinessHooks } from "../readiness/service";
 import { ReviewStore } from "../review/comments";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
@@ -73,6 +74,8 @@ export interface TaskManagerOptions {
   qa?: ToolContext["qa"];
   /** Loads the first step's model early, at background priority (models.preload). */
   warmup?: Pick<ModelWarmup, "warm">;
+  /** The readiness report: a decision at review, a note for reviewers, the verdict at release. */
+  readiness?: ReadinessHooks;
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -144,6 +147,7 @@ export class TaskManager {
       ...(o.previews ? { previews: o.previews } : {}),
       ...(o.eta ? { eta: o.eta } : {}),
       ...(o.qa ? { qa: o.qa } : {}),
+      ...(o.readiness ? { readiness: o.readiness } : {}),
     });
   }
 
@@ -714,6 +718,8 @@ export class TaskManager {
         details: { changeSetId: cs.id, files: cs.files.map((f) => f.path) },
         status: "succeeded",
       });
+      // One honest verdict at review time, recorded as a decision (no model call).
+      if (statusFor(cs) === "review") this.o.readiness?.atReview({ projectId, taskId, changeSetId: cs.id });
     } else {
       emit({ type: "handoff", text: "Finished with no file changes", status: "succeeded" });
     }

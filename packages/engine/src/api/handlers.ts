@@ -26,6 +26,7 @@ import { checkSpeedSetting } from "../models/speed";
 import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { QaService } from "../qa/service";
+import type { ReadinessService } from "../readiness/service";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SearchService } from "../search/service";
 import type { SecurityService } from "../security/service";
@@ -33,6 +34,7 @@ import type { SettingsRepo } from "../settings";
 import type { SkillService } from "../skills/service";
 import { checkForUpdate } from "../util/update";
 import type { ProjectService } from "../workspace/service";
+import { readinessHandlers } from "./readiness-handlers";
 import { steerReviewHandlers } from "./review-handlers";
 
 export interface HandlerContext {
@@ -62,6 +64,8 @@ export interface HandlerContext {
   git?: GitService;
   /** Page checks in a headless browser (absent in engines built without it, e.g. some tests). */
   qa?: QaService;
+  /** The readiness report at review time. */
+  readiness?: ReadinessService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -296,6 +300,7 @@ export const handlers: Handlers = {
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
   ...steerReviewHandlers,
+  ...readinessHandlers,
   "agents.list": (_p, ctx) => ({ agents: MANIFESTS.map((m) => ctx.lab.active(m.id)) }),
   "app.checkUpdate": async (_p, ctx) => {
     const repo = ctx.settings.get("update.repo");

@@ -36,6 +36,7 @@ import type { Logger } from "../logger";
 import type { ModelManager } from "../models/manager";
 import { autoTopicsPrompt, definitionOfDone } from "../playbooks";
 import { planningGuide, raiseTheBar } from "../playbooks/plan";
+import type { ReadinessHooks } from "../readiness/service";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { ProjectKnowledge, TeamHooks, ToolContext } from "../tools/index";
 import { ToolError } from "../tools/paths";
@@ -95,6 +96,8 @@ export interface TeamHost {
   eta?: { planNote(plan: Plan, parallel: number): string | null } | undefined;
   /** Page checks in a headless browser (check_page). */
   qa?: ToolContext["qa"];
+  /** The readiness report: the verdict so far for reviewers, and the verdict at release. */
+  readiness?: Pick<ReadinessHooks, "reviewBrief" | "releaseLine"> | undefined;
 }
 
 export interface AgentExtras {
@@ -878,8 +881,33 @@ export class TeamRunner {
     );
     const blockers = gate.filter((g) => g.blocks);
     const unfinished = plan.nodes.filter((x) => x.status !== "done");
-    if (blockers.length > 0) {
+    // The readiness verdict (tests, checks, reviews, risky files) goes with the release call.
+    const ready = this.h.readiness?.releaseLine(input.taskId, plan) ?? null;
+    const say = (
+      e: Emit,
+      kind: DecisionKind,
+      text: string,
+      extra: Record<string, JsonValue | undefined>,
+      status: EventStatus,
+    ) =>
       decide(
+        e,
+        kind,
+        ready ? `${text}. Readiness: ${ready.headline.toLowerCase()}` : text,
+        ready
+          ? {
+              ...extra,
+              readiness: ready.verdict,
+              items: [
+                ...((extra.items as string[] | undefined) ?? []),
+                ...ready.reasons.map((r) => `Readiness: ${r}`),
+              ],
+            }
+          : extra,
+        status,
+      );
+    if (blockers.length > 0) {
+      say(
         emit,
         "release",
         `Manager: release blocked by ${listWords(blockers.map((b) => `${b.label} (${b.overall}/100)`))}`,
@@ -891,7 +919,7 @@ export class TeamRunner {
         "failed",
       );
     } else if (unfinished.length > 0) {
-      decide(
+      say(
         emit,
         "release",
         `Manager: ${done} of ${n} tasks finished, so review the changes with care`,
@@ -904,7 +932,7 @@ export class TeamRunner {
       );
     } else {
       const scores = gate.map((g) => `${g.label} ${g.overall}/100`);
-      decide(
+      say(
         emit,
         "release",
         `Manager: ready for your review (${[n === 1 ? "the task is done" : `all ${n} tasks done`, ...scores].join(", ")})`,
@@ -1718,6 +1746,8 @@ export class TeamRunner {
               ? `Files they changed:\n${run.changed.map((c) => `- ${c}`).join("\n")}`
               : "They changed no project files.",
             `Their summary: ${run.text.slice(0, 1500)}`,
+            // What the tools say so far (test runs, checks), so a review never approves over a failing run.
+            this.h.readiness?.reviewBrief(input.taskId) ?? "",
             definitionOfDone(owner.id)
               ? `${owner.name}'s definition of done (check the work against it):\n${definitionOfDone(owner.id)}`
               : "",

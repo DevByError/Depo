@@ -151,6 +151,8 @@ export function decisionTone(d: Pick<TeamDecision, "kind" | "outcome">): Tone {
       return d.outcome === "declined" ? "neutral" : "success";
     case "result":
       return d.outcome === "incomplete" ? "warning" : "info";
+    case "readiness":
+      return d.outcome === "ready" ? "success" : d.outcome === "not_ready" ? "danger" : "warning";
     default:
       return "accent";
   }
@@ -177,6 +179,12 @@ export function decisionLabel(d: Pick<TeamDecision, "kind" | "outcome">): string
       return "Architecture";
     case "recommendation":
       return "Recommends";
+    case "readiness":
+      return d.outcome === "ready"
+        ? "Ready to apply"
+        : d.outcome === "not_ready"
+          ? "Not ready"
+          : "Ready with warnings";
   }
 }
 

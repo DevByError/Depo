@@ -36,6 +36,8 @@ export function useReplayPlayer(taskId: string | null): ReplayPlayer {
   const edgeRef = useRef(0);
   const speedRef = useRef(speed);
   speedRef.current = speed;
+  // Read by the timer, so a tick that fires between Pause and the timer's cleanup does nothing.
+  const playingRef = useRef(false);
   const sync = useCallback((index: ReplayIndex | null, edge: number) => {
     indexRef.current = index;
     edgeRef.current = edge;
@@ -50,6 +52,7 @@ export function useReplayPlayer(taskId: string | null): ReplayPlayer {
   // biome-ignore lint/correctness/useExhaustiveDependencies: resets only when the task changes.
   useEffect(() => {
     setCursor(null);
+    playingRef.current = false;
     setPlaying(false);
   }, [taskId]);
 
@@ -57,11 +60,12 @@ export function useReplayPlayer(taskId: string | null): ReplayPlayer {
     if (!playing) return;
     const id = setInterval(() => {
       const idx = indexRef.current;
-      if (!idx) return;
+      if (!idx || !playingRef.current) return;
       const end = edgeRef.current;
       const next = advance(idx, cursorRef.current ?? idx.start, TICK_MS * speedRef.current, end);
       if (next >= end) {
         setCursor(null);
+        playingRef.current = false;
         setPlaying(false);
       } else setCursor(next);
     }, TICK_MS);
@@ -82,10 +86,15 @@ export function useReplayPlayer(taskId: string | null): ReplayPlayer {
     if (!idx) return;
     // From the edge, the film starts at the beginning.
     if (cursorRef.current === null) setCursor(idx.start);
+    playingRef.current = true;
     setPlaying(true);
   }, [setCursor]);
-  const pause = useCallback(() => setPlaying(false), []);
+  const pause = useCallback(() => {
+    playingRef.current = false;
+    setPlaying(false);
+  }, []);
   const goLive = useCallback(() => {
+    playingRef.current = false;
     setPlaying(false);
     setCursor(null);
   }, [setCursor]);

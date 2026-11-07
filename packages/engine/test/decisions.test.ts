@@ -504,7 +504,12 @@ describe("decision events from a team run", () => {
     // The order tells the story.
     const order = decisions.map(kindOf);
     expect(order[0]).toBe("plan");
-    expect(order.at(-1)).toBe("release");
+    // The release call, then the readiness verdict once the change set is ready.
+    expect(order.at(-2)).toBe("release");
+    expect(order.at(-1)).toBe("readiness");
+    const [ready] = of(decisions, "readiness");
+    expect(ready?.agent.startsWith("manager@")).toBe(true);
+    expect(String(release[0]?.text)).toContain("Readiness: ");
     expect(order.indexOf("send_back")).toBeGreaterThan(order.indexOf("review"));
 
     // team.timeline over the real socket matches its schema and agrees with the events.
@@ -535,7 +540,7 @@ describe("decision events from a team run", () => {
     expect(by.backend?.lastDecision?.text).toBe("Backend: Hashed the passwords before storing them.");
     expect(by.security?.reviews).toBe(2);
     expect(by.reasoning?.reviews).toBe(4);
-    expect(by.manager?.lastDecision?.kind).toBe("release");
+    expect(by.manager?.lastDecision?.kind).toBe("readiness");
     expect(by.database?.action).toBeTruthy();
     expect(t.agents.every((a) => a.workMs >= 0)).toBe(true);
     // The Manager's time is the run's span, from the first event to the last.
@@ -563,7 +568,14 @@ describe("decision events from a team run", () => {
 
     const [release] = of(decisions, "release");
     expect(release?.details?.outcome).toBe("unfinished");
-    expect(release?.text).toBe("Manager: 1 of 5 tasks finished, so review the changes with care");
+    // A reviewer's rejection is still open, so the readiness verdict says not ready.
+    expect(release?.text).toBe(
+      "Manager: 1 of 5 tasks finished, so review the changes with care. Readiness: not ready",
+    );
+    expect(release?.details?.readiness).toBe("not_ready");
+    const [ready] = of(decisions, "readiness");
+    expect(ready?.details?.outcome).toBe("not_ready");
+    expect(ready?.text).toMatch(/^Not ready: a reviewer still asks for changes/);
 
     const t = e.tasks.teamTimeline(task.id);
     expect(t.agents.find((a) => a.id === "backend")?.state).toBe("blocked");

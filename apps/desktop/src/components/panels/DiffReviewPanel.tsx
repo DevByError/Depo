@@ -17,6 +17,7 @@ import {
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Tokens } from "@/components/code/Tokens";
 import { CommitChangesBar } from "@/components/git/CommitOffer";
+import { ReadinessPill } from "@/components/readiness/ReadinessPill";
 import {
   CommentCard,
   CommentEditor,
@@ -171,6 +172,7 @@ export function DiffReviewPanel() {
               <h2 className="text-[13px] font-semibold text-fg">Diff Review</h2>
             )}
           </div>
+          {reviewable && current.taskId && <ReadinessPill taskId={current.taskId} />}
           <Button
             size="sm"
             variant="ghost"

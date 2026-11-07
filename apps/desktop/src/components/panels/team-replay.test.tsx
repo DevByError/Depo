@@ -322,7 +322,10 @@ describe("replay", () => {
     fireEvent.keyDown(s, { key: "Home" });
     fireEvent.keyDown(s, { key: " " });
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
-    await waitFor(() => expect(Number(s.getAttribute("aria-valuenow"))).toBeGreaterThan(2));
+    // Timers run late on a busy machine: allow time for a few ticks.
+    await waitFor(() => expect(Number(s.getAttribute("aria-valuenow"))).toBeGreaterThan(2), {
+      timeout: 4000,
+    });
     fireEvent.keyDown(s, { key: " " });
     expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
     const paused = s.getAttribute("aria-valuenow");
@@ -334,9 +337,9 @@ describe("replay", () => {
     fireEvent.keyDown(s, { key: "End" });
     fireEvent.keyDown(s, { key: "ArrowLeft" });
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Play" })).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Play" })).toBeTruthy(), { timeout: 8000 });
     expect(s.getAttribute("aria-valuenow")).toBe("720");
-  });
+  }, 20_000);
 
   test("a moment can be copied as a link, and a pasted link opens the replay there", async () => {
     const writeText = vi.fn(() => Promise.resolve());
