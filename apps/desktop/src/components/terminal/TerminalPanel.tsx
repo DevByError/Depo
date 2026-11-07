@@ -26,6 +26,7 @@ import {
   newestRun,
   pushHistory,
   runFailed,
+  runStateShort,
   runStateText,
 } from "@/lib/terminal";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
@@ -204,9 +205,12 @@ function TerminalView({ projectId }: { projectId: string }) {
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2">
           <TargetPicker projectId={projectId} />
           {selected && (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted" aria-live="polite">
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted" aria-live="polite">
               <RunStateIcon state={selected.state} />
-              <span className="truncate">{runStateText(selected, now)}</span>
+              <span className="whitespace-nowrap" title={runStateText(selected, now)} aria-hidden>
+                {runStateShort(selected, now)}
+              </span>
+              <span className="sr-only">{runStateText(selected, now)}</span>
             </span>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">

@@ -137,7 +137,7 @@ function TestRunRow({
               <code className="min-w-0 truncate font-mono text-[11.5px] text-muted">{run.command}</code>
             </span>
             <span className="truncate text-[11px] text-subtle">
-              {who} in {where} · {formatRelative(run.at)}
+              {who} · {where} · {formatRelative(run.at)}
               {run.durationMs !== null ? ` · took ${shortDuration(run.durationMs)}` : ""}
             </span>
           </span>

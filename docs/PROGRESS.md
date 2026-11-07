@@ -1,8 +1,18 @@
 # Progress
 
-**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look (round 1), then steering, pull-request review, visual QA, the code map, the Project home, team replay, time estimates, universal search and git commits (round 2). Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
+**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look (round 1), then steering, pull-request review, visual QA, the code map, the Project home, team replay, time estimates, universal search and git commits (round 2), then speed on a modest PC, a real Terminal with Test results and Problems, blueprints, the readiness report and syntax highlighting with line actions (round 3). Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
 
 _Last updated: 2026-11-07_
+
+## Upgrade round 3 (2026-11-07): faster on a modest PC, run and fix, strong starting points, ready or not
+
+- **Speed:** models stay loaded (`models.keep_alive`, default 30 minutes), one context size per model so roles sharing a model never reload it, prompts ordered so the runtime reuses the earlier prompt, a scheduler that keeps the loaded model, the first step's model loaded early (`models.preload`), and load and prompt-reading times in the Engine panel.
+- **Terminal, Test results, Problems:** run commands in the project or a task's private copy (policy-checked, contained, history, Stop); test runs with failures parsed for pytest, unittest, jest, vitest, bun test, go test and cargo test; Problems from the checkers already installed (tsc, Biome, ESLint, ruff, compileall, mypy, pyright, go vet, cargo check) plus crashes from previews; "Fix with an agent" on any failure; the `diagnostics` tool for agents.
+- **Blueprints:** tested FastAPI, React and full-stack starting points with accounts, roles, a complete example resource and tests; a new project can start from one, and plans for an empty project start from the closest one (`list_blueprints`, `use_blueprint`).
+- **Readiness report:** a card at review with a plain verdict and reasons, ten checks (tests and whether they are stale, code checks, security, UX, page check, plan criteria, reviews, open comments, risky files, size), and Run tests, Check the page, Scan; a pill in Diff Review and Team, a badge on Project home; the team reviewer and the release line see it.
+- **Code reading:** highlight.js in a worker for Files, Diff Review, the work log, History and chat code blocks (with Copy), AA contrast in both themes; the Files tree follows the open file; a line gutter with "Ask about this", "Change this" and "Copy path:line".
+- **Polish:** shorter Terminal status, clearer Test results rows, a Diff Review header that wraps on narrow windows; end-to-end runs use one temporary folder and stop the engine gracefully.
+- **Verified:** engine 534 tests, UI 338, gateway 46, shared 7, browser e2e 17 (axe in both themes); lint and types clean; the new screens checked in a browser in dark, light and a narrow window with the scripted model.
 
 ## Upgrade round 2 (2026-11-07): steer, review like a pull request, see the app, understand the code
 

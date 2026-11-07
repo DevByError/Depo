@@ -220,3 +220,27 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Decision:** Imports are read from the code index; the module diagram lives in Depo's data folder and is copied into the project only when the owner asks. TypeScript `import type` edges are kept apart and never make a cycle.
 - **Reason:** Generated files in the repo create noise in diffs; type-only cycles are harmless at run time and would make the map cry wolf.
 
+## ADR-0050: One context size per model, and background work never swaps the model
+- **Decision:** Every call to a model uses the same context length (the largest any assigned role needs, capped by what fits in VRAM plus RAM) and the owner's keep-alive. The scheduler holds background jobs that would load a different model while chat or task work waits or runs, and for 3 s after, releasing them after 20 s.
+- **Reason:** On a 4 GB GPU a reload costs tens of seconds; Ollama reloads whenever `num_ctx` changes. Prefix reuse only works when the model and its context stay put.
+
+## ADR-0051: highlight.js in a worker, not Shiki
+- **Decision:** Code is coloured with highlight.js 11 in a module Web Worker, the core and each grammar loaded on first use, with a size limit above which code is shown plain.
+- **Reason:** Measured with `vite build`: the highlight.js core is 21 kB and grammars 0.5 to 13 kB, against 165 kB for Shiki's core and 70 to 230 kB per grammar. Lezer has no PowerShell or batch parser. Colours must never block typing or scrolling.
+
+## ADR-0052: Blueprints start only empty projects
+- **Decision:** A plan's first build step starts from a blueprint only when the project has no code and the request does not name a stack the blueprint lacks. Building blocks remain the way to add a piece to existing code.
+- **Reason:** Small local models write much better code inside a strong, tested structure, but overwriting or reshaping an owner's existing project would be a betrayal of the review step.
+
+## ADR-0053: The readiness report makes no model calls and its scans never replace the project's score
+- **Decision:** Readiness is computed from stored facts only (events, scores, page checks, plan, comments, the change set). A security scan run from the card scans the task's copy and is kept apart from the project's own security report.
+- **Reason:** The verdict must be instant, repeatable and honest; a scan of unreviewed changes must not overwrite the score of the code the owner actually has.
+
+## ADR-0054: In the Terminal, "ask" counts as approval but deny always wins
+- **Decision:** A command the owner types is judged by the same command policy as agent commands. A deny rule refuses it; a command that would ask for approval runs, because typing it is the approval. It runs contained, with a time limit, no keyboard input and telemetry switched off.
+- **Reason:** Asking the owner to approve their own command is noise, but a deny rule is a standing decision that protects them even from a slip.
+
+## ADR-0055: Checkers are the project's own installed tools, never installed by Depo
+- **Decision:** Problems come from compilers and linters already on the PC (tsc, Biome, ESLint, ruff, compileall, mypy, pyright, go vet, cargo check), planned from the project's files, run through the command policy with caches kept out of the project.
+- **Reason:** Installing tools changes the owner's machine and needs the internet; real findings from the project's own setup are what its CI would say.
+

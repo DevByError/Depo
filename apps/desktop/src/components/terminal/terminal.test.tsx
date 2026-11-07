@@ -340,8 +340,8 @@ test("Test results: runs with counts, failures with file links, run again in the
   expect(await screen.findByText("3 passed, 1 failed")).toBeTruthy();
   const list = screen.getByRole("list", { name: "Test runs" });
   expect(within(list).getByText("10 passed")).toBeTruthy();
-  expect(within(list).getByText(/Testing in add a \/health endpoint/)).toBeTruthy();
-  expect(within(list).getByText(/You in Your project/)).toBeTruthy();
+  expect(within(list).getByText(/Testing · add a \/health endpoint/)).toBeTruthy();
+  expect(within(list).getByText(/You · Your project/)).toBeTruthy();
   expect(within(list).getByText("Failed")).toBeTruthy();
   expect(within(list).getByText("Passed")).toBeTruthy();
 

@@ -60,3 +60,19 @@ After round 2 Depo steers, reviews like a pull request, sees the app it builds a
 4. Readiness report: one card at review time with tests, checks, security and UX scores, page checks and the plan's criteria, and a plain verdict.
 5. Code you can read: syntax highlighting everywhere, the Files tree follows the open file, and "Ask about this" or "Change this" on selected lines.
 
+## Round 3: what was built
+
+All five, in parallel worktrees, merged and tested together:
+
+1. **Speed on a modest PC:** keep-alive on every call, one context size per model, prompts ordered for prefix reuse, a scheduler that keeps the loaded model, warm-up of the first step's model, and load and prompt-reading times in the Engine panel, with a "Model speed" section in Settings.
+2. **Terminal, Test results and Problems:** a real Terminal (project or private copy, history, Stop, recent runs), test runs with parsed failures for seven runners, Problems from the compilers and linters already installed plus crashes from previews, and "Fix with an agent" on any failure. Agents get a `diagnostics` tool.
+3. **Blueprints:** tested FastAPI, React and full-stack starting points with accounts, roles, an example resource and tests; agents extend them instead of starting from nothing; "Start from" cards in New project.
+4. **Readiness report:** one card with a plain verdict and up to three reasons, checks for tests (including stale), code checks, security, UX, page check, plan criteria, reviews, open comments, risky files and size, and buttons to run tests, check the page or scan again. A pill in Diff Review and Team.
+5. **Code you can read:** syntax highlighting everywhere code appears (AA contrast in both themes, including diff backgrounds), a Files tree that follows the open file, a line gutter, and "Ask about this", "Change this" and "Copy path:line" on selected lines.
+
+A screenshot pass then shortened the Terminal status, fixed the Test results wording and let the Diff Review header wrap on narrow windows. The end-to-end setup now uses one temporary folder per run, removed at the end, and stops the engine gracefully.
+
+## After three rounds
+
+Depo now plans with a team you can watch and steer, builds from strong starting points, runs and checks what it builds in a real browser, answers "is it ready?" in one card, and lets the owner review, comment, undo and commit like a pull request, all on the owner's PC with local models. What remains is proof with real models on the owner's hardware: prompt tuning for small models, the real speed gain of keep-alive and prefix reuse, and Windows-specific checks (Job Objects for the Terminal, path quirks in the parsers).
+

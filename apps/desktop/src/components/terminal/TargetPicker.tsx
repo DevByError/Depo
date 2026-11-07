@@ -45,7 +45,7 @@ export function TargetPicker({ projectId }: { projectId: string }) {
         value={value ?? ""}
         onChange={(e) => setTarget(projectId, e.target.value || null)}
         onFocus={() => void targets.refetch()}
-        className="h-7 min-w-0 max-w-64 truncate rounded-md border border-border bg-raised px-1.5 text-xs text-fg outline-none focus:border-accent"
+        className="h-7 min-w-0 max-w-48 truncate rounded-md border border-border bg-raised px-1.5 text-xs text-fg outline-none focus:border-accent"
       >
         {list.map((t) => (
           <option key={t.taskId ?? "project"} value={t.taskId ?? ""}>

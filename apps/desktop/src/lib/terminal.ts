@@ -72,6 +72,24 @@ export function runStateText(run: TerminalRun, now = Date.now()): string {
   }
 }
 
+/** The toolbar's short form: "Running 3.0s", "Exit 1 · 2.5s", "Stopped · 4.1s". */
+export function runStateShort(run: TerminalRun, now = Date.now()): string {
+  const took = run.durationMs ?? Math.max(0, now - new Date(run.startedAt).getTime());
+  const time = shortDuration(took);
+  switch (run.state) {
+    case "running":
+      return `Running ${time}`;
+    case "succeeded":
+      return `Exit 0 · ${time}`;
+    case "failed":
+      return run.exitCode === null ? `Failed · ${time}` : `Exit ${run.exitCode} · ${time}`;
+    case "stopped":
+      return `Stopped · ${time}`;
+    case "timed_out":
+      return `Time limit · ${time}`;
+  }
+}
+
 /** A run that ended badly and is worth sending to an agent. */
 export function runFailed(run: TerminalRun | null | undefined): boolean {
   return !!run && (run.state === "failed" || run.state === "timed_out");

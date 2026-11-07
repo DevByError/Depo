@@ -14,7 +14,15 @@ import {
   tailExcerpt,
 } from "./fix-request";
 import { countsLabel, groupByFile, listWords, position, severityShown, uniqueKeys } from "./problems";
-import { historyStep, newestRun, pushHistory, runFailed, runStateText, shortDuration } from "./terminal";
+import {
+  historyStep,
+  newestRun,
+  pushHistory,
+  runFailed,
+  runStateShort,
+  runStateText,
+  shortDuration,
+} from "./terminal";
 
 const TS = "2026-11-07T10:00:00.000Z";
 const run = (over: Partial<TerminalRun> = {}): TerminalRun => ({
@@ -63,6 +71,9 @@ test("run state text and which runs can be sent to an agent", () => {
     "Stopped at the time limit after 10m 0s",
   );
   expect(runStateText(run(), new Date(TS).getTime() + 4000)).toBe("Running for 4.0s");
+  expect(runStateShort(run({ state: "failed", exitCode: 2, durationMs: 3000 }))).toBe("Exit 2 · 3.0s");
+  expect(runStateShort(run({ state: "succeeded", exitCode: 0, durationMs: 600 }))).toBe("Exit 0 · 0.6s");
+  expect(runStateShort(run(), new Date(TS).getTime() + 4000)).toBe("Running 4.0s");
   expect(runFailed(run({ state: "failed", exitCode: 1 }))).toBe(true);
   expect(runFailed(run({ state: "timed_out" }))).toBe(true);
   expect(runFailed(run({ state: "stopped" }))).toBe(false);

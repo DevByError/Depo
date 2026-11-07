@@ -142,8 +142,9 @@ export function DiffReviewPanel() {
   return (
     <div className="@container flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-          <div className="min-w-0 flex-1">
+        <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border px-4 py-2.5">
+          {/* A real basis so the actions wrap to a second row on a narrow window instead of crushing the title. */}
+          <div className="min-w-0 grow basis-56">
             {current ? (
               <>
                 <label className="sr-only" htmlFor="change-set-select">
@@ -172,53 +173,55 @@ export function DiffReviewPanel() {
               <h2 className="text-[13px] font-semibold text-fg">Diff Review</h2>
             )}
           </div>
-          {reviewable && current.taskId && <ReadinessPill taskId={current.taskId} />}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="@4xl:hidden"
-            aria-expanded={showHistory}
-            aria-controls="undo-history"
-            title="Every apply saves a checkpoint you can undo"
-            onClick={() => setShowHistory((v) => !v)}
-          >
-            <History /> Undo history
-          </Button>
-          {reviewable && current.taskId && (
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {reviewable && current.taskId && <ReadinessPill taskId={current.taskId} />}
             <Button
               size="sm"
-              variant="secondary"
-              title="Run the app from this task's private copy and open it in the Preview tab"
-              onClick={() => {
-                usePreviewUi
-                  .getState()
-                  .show({ projectId, taskId: current.taskId, previewId: null, autoStart: true });
-                useUi.getState().setCenterTab("preview");
-              }}
+              variant="ghost"
+              className="@4xl:hidden"
+              aria-expanded={showHistory}
+              aria-controls="undo-history"
+              title="Every apply saves a checkpoint you can undo"
+              onClick={() => setShowHistory((v) => !v)}
             >
-              <MonitorPlay /> Preview these changes
+              <History /> Undo history
             </Button>
-          )}
-          {reviewable && (
-            <>
+            {reviewable && current.taskId && (
               <Button
                 size="sm"
-                variant="ghost"
-                onClick={() => setConfirmDiscard(true)}
-                disabled={discard.isPending || confirmDiscard}
+                variant="secondary"
+                title="Run the app from this task's private copy and open it in the Preview tab"
+                onClick={() => {
+                  usePreviewUi
+                    .getState()
+                    .show({ projectId, taskId: current.taskId, previewId: null, autoStart: true });
+                  useUi.getState().setCenterTab("preview");
+                }}
               >
-                <X /> Discard
+                <MonitorPlay /> Preview these changes
               </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => apply.mutate()}
-                disabled={apply.isPending || selectedCount === 0}
-              >
-                <Check /> Apply {selectedCount} file{selectedCount === 1 ? "" : "s"}
-              </Button>
-            </>
-          )}
+            )}
+            {reviewable && (
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmDiscard(true)}
+                  disabled={discard.isPending || confirmDiscard}
+                >
+                  <X /> Discard
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => apply.mutate()}
+                  disabled={apply.isPending || selectedCount === 0}
+                >
+                  <Check /> Apply {selectedCount} file{selectedCount === 1 ? "" : "s"}
+                </Button>
+              </>
+            )}
+          </div>
         </header>
         {reviewable && confirmDiscard && (
           <form
