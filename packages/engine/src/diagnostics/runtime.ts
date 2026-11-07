@@ -1,4 +1,5 @@
 import type { PageCheck, PreviewInfo, PreviewLogLine, RuntimeProblem } from "@depo/shared";
+import { STACK_FRAME } from "../terminal/test-parsers";
 import { normalizeFile } from "./parsers";
 
 /**
@@ -28,7 +29,7 @@ function inProject(file: string, root: string): string | null {
 const PY_EXCEPTION =
   /^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Warning|Failure)|[A-Z]\w+Error)(?::\s*(.*))?$/;
 const JS_ERROR = /^(?:Uncaught\s+)?(?:\[?\w+\]?\s+)?((?:[A-Z]\w*)?Error)(?:\s*\[[\w_]+\])?:\s*(.+)$/;
-const JS_FRAME = /^\s*at\s+(?:.*?\()?((?:file:\/\/\/?)?(?:[A-Za-z]:)?[^\s():]+):(\d+):(\d+)\)?\s*$/;
+const JS_FRAME = STACK_FRAME;
 
 /** Crashes in log lines: Python tracebacks and JavaScript errors followed by a stack. */
 export function crashesFromLog(lines: string[], root: string): Crash[] {

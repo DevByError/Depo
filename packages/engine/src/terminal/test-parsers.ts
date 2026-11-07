@@ -20,6 +20,12 @@ export interface ParsedTests {
 const MAX_FAILURES = 50;
 const MAX_MESSAGE = 1500;
 
+/**
+ * A JavaScript stack frame: `at fn (C:\My App\a.js:4:17)`, `at /srv/a.js:4:17` or a file:// URL.
+ * Paths may contain spaces. Groups: file, line, column.
+ */
+export const STACK_FRAME = /^\s*at (?:.*? \()?((?:file:\/\/\/?)?.+?):(\d+):(\d+)\)?\s*$/;
+
 function clip(s: string, max = MAX_MESSAGE): string {
   const t = s.trim();
   return t.length > max ? `${t.slice(0, max)} …` : t;
@@ -66,7 +72,14 @@ type Parser = (out: string, root?: string) => ParsedTests | null;
 
 export const parsePytest: Parser = (out, root) => {
   const lines = out.split("\n");
-  const summaryLine = [...lines].reverse().find((l) => /\d+ (passed|failed|errors?)\b.* in [\d.]+s/.test(l));
+  // "2 failed, 1 passed in 0.02s", optionally framed by =====; not cargo's "test result: …; finished in".
+  const summaryLine = [...lines]
+    .reverse()
+    .find((l) =>
+      /^=*\s*\d+ (passed|failed|errors?|skipped|deselected|xfailed|xpassed|warnings?)\b[^;]* in [\d.]+s/.test(
+        l,
+      ),
+    );
   const hasMarkers =
     /^=+ (FAILURES|ERRORS|short test summary info) =+$/m.test(out) || /^FAILED \S+::/m.test(out);
   if (!summaryLine && !hasMarkers) return null;
@@ -102,7 +115,8 @@ export const parsePytest: Parser = (out, root) => {
       continue;
     }
     if (!current) continue;
-    const e = /^E {2,}(.*)$/.exec(l);
+    // pytest aligns "E" lines at column 8; deeper indentation belongs to the message.
+    const e = /^E {1,7}(.*)$/.exec(l);
     if (e) current.e.push(e[1] as string);
     const loc = /^([^\s:][^:]*\.py):(\d+): \w/.exec(l);
     if (loc) {
@@ -253,7 +267,7 @@ export const parseJest: Parser = (out, root) => {
     for (let j = i + 1; j < lines.length; j++) {
       const l = lines[j] as string;
       if (/^\s*● /.test(l) || /^(PASS|FAIL) /.test(l) || /^Tests?:/.test(l)) break;
-      const at = /^\s*at .*?\(?((?:[A-Za-z]:)?[^\s():]+):(\d+):(\d+)\)?\s*$/.exec(l);
+      const at = STACK_FRAME.exec(l);
       if (at) {
         if (file === null && !/node_modules|node:internal/.test(at[1] as string)) {
           file = relFile(at[1] as string, root);
@@ -303,7 +317,7 @@ export const parseBun: Parser = (out, root) => {
     let file: string | null = null;
     let line: number | null = null;
     for (const b of block) {
-      const at = /^\s*at .*?\(?((?:[A-Za-z]:)?[^\s():]+):(\d+):(\d+)\)?\s*$/.exec(b);
+      const at = STACK_FRAME.exec(b);
       if (at && !/node_modules/.test(at[1] as string)) {
         file = relFile(at[1] as string, root);
         line = Number(at[2]);

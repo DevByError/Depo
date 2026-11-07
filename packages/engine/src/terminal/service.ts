@@ -283,7 +283,7 @@ export class TerminalService {
   /** Stop a running command and its whole process tree. */
   async kill(runId: string): Promise<boolean> {
     const live = this.live.get(runId);
-    if (!live || live.info.state !== "running") return false;
+    if (live?.info.state !== "running") return false;
     live.stopped = true;
     live.proc?.kill();
     await Promise.race([live.done, Bun.sleep(5000)]);
