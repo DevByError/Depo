@@ -39,6 +39,14 @@ export type ProjectDialog =
 
 export type FeedScope = "project" | "all";
 
+/** A moment of a team run to reopen in the Team tab's replay (from a shared reference). */
+export interface TeamMoment {
+  taskId: string;
+  projectId: string | null;
+  /** Time since the run started. */
+  atMs: number;
+}
+
 interface UiState extends Layout {
   theme: Theme;
   centerTab: CenterTab;
@@ -63,6 +71,11 @@ interface UiState extends Layout {
   setLogsTaskId(id: string | null): void;
   /** Open the Logs tab, filtered to one task (or to none). */
   openLogs(taskId: string | null): void;
+  /** Team tab: a shared moment waiting to be opened in the replay. */
+  teamMoment: TeamMoment | null;
+  /** Open the Team tab's replay at a moment (switches project and task when needed). */
+  openTeamMoment(m: TeamMoment): void;
+  clearTeamMoment(): void;
   setProjectId(id: string | null): void;
   setProjectDialog(d: ProjectDialog | null): void;
   setFeedScope(s: FeedScope): void;
@@ -147,6 +160,15 @@ export const useUi = create<UiState>((set, get) => ({
   logsTaskId: null,
   setLogsTaskId: (logsTaskId) => set({ logsTaskId }),
   openLogs: (logsTaskId) => set({ logsTaskId, bottomTab: "logs", bottomOpen: true }),
+  teamMoment: null,
+  openTeamMoment: (m) =>
+    set((s) => ({
+      teamMoment: m,
+      taskId: m.taskId,
+      centerTab: "team",
+      ...(m.projectId && m.projectId !== s.projectId ? { projectId: m.projectId, changeSetId: null } : {}),
+    })),
+  clearTeamMoment: () => set({ teamMoment: null }),
   setProjectId: (projectId) => set({ projectId, changeSetId: null, taskId: null }),
   setProjectDialog: (projectDialog) => set({ projectDialog }),
   setFeedScope: (feedScope) => set({ feedScope }),

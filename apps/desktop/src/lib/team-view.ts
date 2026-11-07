@@ -9,6 +9,7 @@ import {
   type TeamDecision,
 } from "@depo/shared";
 import type { Tone } from "./event-style";
+import { agentName as stepAgentName } from "./step-summary";
 
 /**
  * Pure helpers for the Team screen and the Agent board: they merge the `team.timeline` snapshot
@@ -39,8 +40,11 @@ export function isBusy(state: AgentState): boolean {
   return state === "working" || state === "thinking";
 }
 
-/** A live `decision` event as a timeline entry. */
-export function decisionFromEvent(e: DepoEvent): TeamDecision | null {
+/** The parts of an event a decision is read from (a live event or a stored one from `team.events`). */
+export type DecisionSource = Pick<DepoEvent, "id" | "ts" | "agent" | "text" | "details"> & { type: string };
+
+/** A `decision` event as a timeline entry. */
+export function decisionFromEvent(e: DecisionSource): TeamDecision | null {
   if (e.type !== "decision") return null;
   const d = DecisionDetailsSchema.safeParse(e.details);
   if (!d.success) return null;
@@ -231,28 +235,9 @@ export const TASK_STATUS_TEXT: Record<TaskStatus, string> = {
   cancelled: "Stopped",
 };
 
-/** Display names of the fifteen agents (the engine sends them too; this covers decisions alone). */
-export const AGENT_NAMES: Record<string, string> = {
-  manager: "Manager",
-  thinking: "Thinking",
-  reasoning: "Reasoning",
-  "project-management": "Project Management",
-  "ui-ux-design": "UI/UX Design",
-  diagram: "Diagram",
-  backend: "Backend",
-  frontend: "Frontend",
-  database: "Database",
-  integration: "Integration",
-  "ai-integration": "AI Integration",
-  testing: "Testing",
-  security: "Security",
-  enhancement: "Enhancement",
-  "devops-docs": "DevOps and Docs",
-  user: "You",
-};
-
+/** Display names come from step-summary's `agentName`, so an agent is named the same everywhere. */
 export function agentName(id: string): string {
-  return AGENT_NAMES[id] ?? id;
+  return id === "user" ? "You" : stepAgentName(id) || id;
 }
 
 /** The roster in lib/agents.ts uses short ids for three agents. */

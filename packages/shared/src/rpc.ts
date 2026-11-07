@@ -37,6 +37,7 @@ import {
 } from "./extensions";
 import { LogMethods } from "./logs";
 import { PreviewMethods } from "./preview";
+import { TeamReplayMethods } from "./team-replay";
 
 /** JSON-RPC 2.0 envelopes used on the UI <-> engine WebSocket. */
 export const RpcIdSchema = z.union([z.string(), z.number().int()]);
@@ -1150,6 +1151,7 @@ export const ApiSchema = {
   ...TaskMethods,
   ...LogMethods,
   ...PreviewMethods,
+  ...TeamReplayMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

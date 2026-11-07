@@ -1,7 +1,8 @@
 import path from "node:path";
-import { DEPO_VERSION, type HeartbeatDetails } from "@depo/shared";
+import { AGENT_IDS, type AgentId, DEPO_VERSION, type HeartbeatDetails } from "@depo/shared";
 import { eq } from "drizzle-orm";
 import { TaskManager } from "./agent/tasks";
+import { EtaService } from "./agents/eta";
 import { AgentLab } from "./agents/lab";
 import { handlers } from "./api/handlers";
 import { type ApiServer, startApiServer } from "./api/server";
@@ -234,7 +235,23 @@ export function createEngine(opts: EngineOptions): Engine {
     },
   });
   projects.beforeWorkspaceRemoved((dir) => previews.stopRoot(dir));
+  /** Time estimates learned on this PC from finished work (team.eta, plan approval message). */
+  const eta = new EtaService({
+    db: database.db,
+    bus,
+    logger: logger.child({ component: "eta" }),
+    callStats,
+    modelFor: (agent) => {
+      const role = isAgentId(agent) ? lab.active(agent).role : "coder";
+      return (models.resolve(role) ?? models.resolve("coder"))?.model ?? null;
+    },
+    parallel: () => {
+      const v = settings.get("team.parallel");
+      return typeof v === "number" && v >= 1 ? Math.floor(v) : 2;
+    },
+  });
   const tasks: TaskManager = new TaskManager({
+    eta,
     previews,
     extras,
     manifest: (id) => lab.active(id),
@@ -436,4 +453,8 @@ async function draftSkill(models: ModelManager, workflow: string) {
     }),
   });
   return out.value;
+}
+
+function isAgentId(id: string): id is AgentId {
+  return (AGENT_IDS as readonly string[]).includes(id);
 }
