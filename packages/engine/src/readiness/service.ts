@@ -602,7 +602,7 @@ export class ReadinessService implements ReadinessHooks {
   /** Reviews, send-backs and escalations of the current plan's run (a follow-up plans again). */
   private reviewEvidence(evs: StoredEvent[], plan: Plan): ReviewEvidence[] {
     const starts = plan.nodes.map((n) => n.startedAt).filter((t): t is string => !!t);
-    const since = starts.length ? starts.reduce((a, b) => (a < b ? a : b)) : null;
+    const since = starts.length ? ([...starts].sort()[0] ?? null) : null;
     const out: ReviewEvidence[] = [];
     for (const e of evs) {
       if (e.type !== "decision") continue;
