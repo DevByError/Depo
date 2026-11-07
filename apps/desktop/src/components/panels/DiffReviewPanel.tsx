@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { inputClass } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import { useEngine } from "@/store/engine";
@@ -56,12 +57,17 @@ export function DiffReviewPanel() {
 
   const [selection, setSelection] = useState<Selection>(() => defaultSelection(current));
   const [openFile, setOpenFile] = useState<string | null>(null);
+  // Discard asks first, with an optional reason that Depo remembers as a preference.
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [reason, setReason] = useState("");
   // Reset the selection when another change set is shown (or the same one changes status).
   const key = `${current?.id}:${current?.updatedAt}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the shown change set changes
   useEffect(() => {
     setSelection(defaultSelection(current));
     setOpenFile(current?.files[0]?.path ?? null);
+    setConfirmDiscard(false);
+    setReason("");
   }, [key]);
 
   const apply = useMutation({
@@ -78,8 +84,16 @@ export function DiffReviewPanel() {
     },
   });
   const discard = useMutation({
-    mutationFn: () => call("changes.discard", { id: current?.id ?? "" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["changes"] }),
+    mutationFn: () => {
+      const why = reason.trim();
+      return call("changes.discard", { id: current?.id ?? "", ...(why ? { reason: why } : {}) });
+    },
+    onSuccess: () => {
+      setConfirmDiscard(false);
+      setReason("");
+      void qc.invalidateQueries({ queryKey: ["changes"] });
+      void qc.invalidateQueries({ queryKey: ["memory"] });
+    },
   });
 
   if (!projectId) {
@@ -129,7 +143,12 @@ export function DiffReviewPanel() {
           </div>
           {reviewable && (
             <>
-              <Button size="sm" variant="ghost" onClick={() => discard.mutate()} disabled={discard.isPending}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setConfirmDiscard(true)}
+                disabled={discard.isPending || confirmDiscard}
+              >
                 <X /> Discard
               </Button>
               <Button
@@ -143,6 +162,34 @@ export function DiffReviewPanel() {
             </>
           )}
         </header>
+        {reviewable && confirmDiscard && (
+          <form
+            aria-label="Discard changes"
+            className="flex flex-wrap items-center gap-2 border-b border-border bg-raised/40 px-4 py-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              discard.mutate();
+            }}
+          >
+            <label htmlFor="discard-reason" className="text-xs text-muted">
+              Discard these changes? Tell Depo why (optional) and it will remember.
+            </label>
+            <input
+              id="discard-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Keep the old layout"
+              maxLength={500}
+              className={cn(inputClass, "h-7 w-auto min-w-48 flex-1")}
+            />
+            <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDiscard(false)}>
+              Keep
+            </Button>
+            <Button type="submit" size="sm" disabled={discard.isPending}>
+              Discard changes
+            </Button>
+          </form>
+        )}
         {apply.data && (
           <p role="status" className="border-b border-border bg-raised/40 px-4 py-1.5 text-xs text-muted">
             Applied {apply.data.applied.length} file{apply.data.applied.length === 1 ? "" : "s"}. A checkpoint

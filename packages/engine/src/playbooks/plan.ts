@@ -57,7 +57,7 @@ export function planningGuide(mode: TeamMode, text: string): string {
   ];
   if (n.users)
     lines.push(
-      "- Accounts: sign-up or invite, login, logout, token refresh or session expiry, password reset, Argon2id hashing and a login rate limit.",
+      "- Accounts: sign-up or invite, login, logout, token refresh or session expiry, password reset, Argon2id (or scrypt) hashing and a login rate limit.",
     );
   if (n.admin)
     lines.push(

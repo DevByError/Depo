@@ -585,6 +585,10 @@ describe("agent team", () => {
     const agents = state.agents;
     expect(agents.find((a) => a.id === "database")?.done).toBe(1);
     expect(agents.every((a) => a.state === "idle")).toBe(true);
+
+    // Depo remembered what the finished team task taught (memory.auto).
+    await e.tasks.autoMemory?.idle();
+    expect(e.memory.list(project.id).some((f) => f.source === "auto")).toBe(true);
   }, 60_000);
 
   test("Phase 3 acceptance: a todo app (Next.js + FastAPI + PostgreSQL + login) goes through the full pipeline", async () => {
@@ -693,6 +697,9 @@ describe("agent team", () => {
     expect(t.status).toBe("done");
     expect(messages.at(-1)?.text).toContain("declined");
     expect(e.tasks.teamState(task.id).plan?.nodes.every((n) => n.status === "todo")).toBe(true);
+    // Nothing was built, so nothing is remembered.
+    await e.tasks.autoMemory?.idle();
+    expect(e.memory.list(project.id).some((f) => f.source === "auto")).toBe(false);
   }, 60_000);
 
   test("reviews can be switched off, and a single-step mode needs no negotiation", async () => {

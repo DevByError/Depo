@@ -6,7 +6,7 @@
 - High severity findings are blocking and were routed to their owners.
 
 ## Checklist
-- Authentication: Argon2id or bcrypt, generic login errors, rate limit and lockout on login, short-lived access tokens with refresh rotation or server sessions with rotation on login, logout that really invalidates.
+- Authentication: Argon2id, scrypt or bcrypt, generic login errors, rate limit and lockout on login, short-lived access tokens with refresh rotation or server sessions with rotation on login, logout that really invalidates.
 - Input: schema validation at the edge, parameterised queries, output encoding in templates, no eval, safe file paths.
 - Mass assignment: request models list allowed fields; users cannot set role, owner or price.
 - Cookies: HttpOnly, Secure, SameSite; CSRF protection for cookie-authenticated state changes; CORS with explicit origins.

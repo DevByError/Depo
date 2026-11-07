@@ -194,7 +194,8 @@ function FactList({ projectId, facts }: { projectId: string | null; facts: Memor
       <ErrorText error={add.error} />
       {facts.length === 0 ? (
         <p className="text-xs text-subtle">
-          Nothing yet. Agents add items here with their remember tool, and so can you.
+          Nothing yet. Depo adds items here after each task, agents add them with their remember tool, and so
+          can you.
         </p>
       ) : (
         <ul
@@ -251,6 +252,14 @@ function FactRow({ fact }: { fact: MemoryFact }) {
       ) : (
         <>
           <span className="min-w-0 flex-1 text-fg">{fact.text}</span>
+          {fact.source === "auto" && (
+            <span
+              className="shrink-0 rounded bg-accent-soft px-1 text-[10px] uppercase text-accent"
+              title="Depo remembered this by itself after a task"
+            >
+              auto
+            </span>
+          )}
           <span className="shrink-0 text-[10px] text-subtle" title={fact.updatedAt}>
             {fact.source === "agent" ? "by agent · " : ""}
             {formatRelative(fact.updatedAt)}

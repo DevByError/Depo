@@ -151,7 +151,7 @@ export class MemoryStore {
    * With a key (e.g. "auto:test-command") the keyed item is updated in place. Otherwise an item
    * that says the same thing as an existing one (same normalised text, or token overlap of 80% or
    * more) is not added again: an auto item is refreshed with the new wording, anything the user or
-   * an agent wrote is left as it is.
+   * an agent wrote is left as it is. A change of case or punctuation only counts as unchanged.
    */
   upsertAuto(
     projectId: string,
@@ -166,7 +166,9 @@ export class MemoryStore {
       (key ? existing.find((f) => f.signature === key) : undefined) ??
       existing.find((f) => isDuplicate(f.text, clean) && (!key || !f.signature?.startsWith("auto:")));
     if (same) {
-      if (same.source !== "auto" || same.text === clean) return { fact: same, change: "unchanged" };
+      // Only auto items are refreshed, and only when the wording really changed (not case or punctuation).
+      if (same.source !== "auto" || normalizeMemoryText(same.text) === normalizeMemoryText(clean))
+        return { fact: same, change: "unchanged" };
       this.db
         .update(memoryFacts)
         .set({ text: clean, kind, updatedAt: now })

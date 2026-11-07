@@ -94,6 +94,29 @@ export function TeamSettings() {
   );
 }
 
+/** Whether Depo saves what it learns after each task (memory.auto). */
+export function MemorySetting() {
+  const s = useSetting<boolean>("memory.auto", true);
+  return (
+    <fieldset className="mt-5">
+      <legend className="mb-1 text-xs font-medium text-fg">Memory</legend>
+      <label className="flex items-center gap-2 text-[13px] text-muted">
+        <input
+          type="checkbox"
+          checked={s.value}
+          disabled={s.disabled}
+          onChange={(e) => s.set(e.target.checked)}
+        />
+        Remember what each task teaches about the project (stack, test command, decisions)
+      </label>
+      <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+        Saved items are marked auto in the Memory panel, where you can edit or delete them. Secrets are never
+        saved.
+      </p>
+    </fieldset>
+  );
+}
+
 export function NotificationSetting() {
   const s = useSetting<boolean>("notify.enabled", true);
   const setEnabled = useNotifications((n) => n.setEnabled);
