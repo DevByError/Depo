@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { highlightCode, highlightKey, isTooLarge, peekHighlight } from "./highlighter";
 import type { LanguageId } from "./languages";
-import { splitLines, type Token } from "./tokens";
+import type { Token } from "./tokens";
 
 /**
  * plain: no known language; loading: colours on their way; ready: highlighted; large: over the
@@ -91,9 +91,4 @@ export function useDiffHighlight(
     });
   }, [rows, before.lines, after.lines]);
   return { tokens, large: before.state === "large" || after.state === "large" };
-}
-
-/** Tokens for each line of `code`, or null per line while not highlighted. */
-export function linesOf(code: string, h: Highlighted): { text: string; tokens: Token[] | null }[] {
-  return splitLines(code).map((text, i) => ({ text, tokens: h.lines?.[i] ?? null }));
 }

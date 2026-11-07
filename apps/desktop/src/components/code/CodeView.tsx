@@ -76,8 +76,12 @@ export function CodeLines({
     return () => window.clearTimeout(t);
   }, [goto, lines.length]);
 
+  // Cleared (Escape, the bar's close button): forget the anchor and any text selected in the code.
   useEffect(() => {
-    if (!range) anchor.current = null;
+    if (range) return;
+    anchor.current = null;
+    const sel = window.getSelection?.();
+    if (sel && sel.rangeCount > 0 && boxRef.current?.contains(sel.anchorNode)) sel.removeAllRanges();
   }, [range]);
 
   const focusLine = useCallback((line: number) => {
@@ -92,7 +96,7 @@ export function CodeLines({
     setCursor(line);
   }, []);
 
-  const handlers = useRef<Handlers>({
+  const [handlers] = useState<Handlers>(() => ({
     onClick: (e) => {
       const line = lineOf(e.currentTarget);
       window.getSelection?.()?.removeAllRanges();
@@ -150,7 +154,7 @@ export function CodeLines({
           return;
       }
     },
-  });
+  }));
 
   // Text selected with the mouse selects its lines; a plain click in the code clears the selection.
   useEffect(() => {
@@ -204,7 +208,7 @@ export function CodeLines({
             selB={hit ? range.b : 0}
             cursor={inside(cursor) ? cursor : 0}
             flash={inside(flash) ? flash : 0}
-            handlers={handlers.current}
+            handlers={handlers}
           />
         );
       })}
@@ -246,8 +250,10 @@ const Chunk = memo(function Chunk({
         key={n}
         data-line={n}
         className={cn(
-          "flex scroll-mt-10 scroll-mb-16 transition-colors duration-700",
+          "flex scroll-mt-10 scroll-mb-16",
           picked && "bg-accent-soft shadow-[inset_2px_0_0_var(--accent)]",
+          // Only the flash fades; selected lines change at once (and follow a theme switch at once).
+          !picked && "transition-colors duration-700",
           !picked && n === flash && "bg-accent-soft",
         )}
       >
@@ -259,7 +265,7 @@ const Chunk = memo(function Chunk({
           aria-pressed={picked}
           {...handlers}
           className={cn(
-            "w-12 shrink-0 cursor-pointer select-none pr-3 text-right text-[11px] leading-[19px] tabular-nums hover:text-fg focus-visible:-outline-offset-2",
+            "flex w-12 shrink-0 cursor-pointer select-none items-start justify-end pr-3 text-[11px] leading-[19px] tabular-nums hover:text-fg focus-visible:-outline-offset-2",
             picked ? "text-muted" : "text-subtle",
           )}
         >

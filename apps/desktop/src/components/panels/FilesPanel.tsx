@@ -29,16 +29,42 @@ function cssEscape(s: string): string {
     : s.replace(/["\\]/g, "\\$&");
 }
 
+/** The open file and folders of each project, kept while the app runs so coming back to Files resumes. */
+const remembered = new Map<string, { selected: string | null; expanded: Set<string> }>();
+
 /** Read-only project browser. Agents work on a copy; this always shows the real files. */
 export function FilesPanel() {
   const projectId = useUi((s) => s.projectId);
+  if (!projectId) {
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-center">
+        <div className="max-w-sm">
+          <FolderTree className="mx-auto mb-3 size-6 text-muted" aria-hidden />
+          <h2 className="text-[14px] font-semibold text-fg">No project open</h2>
+          <p className="mt-1 text-[13px] text-muted">
+            Open a project folder from the sidebar to browse its files.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return <ProjectFiles key={projectId} projectId={projectId} />;
+}
+
+function ProjectFiles({ projectId }: { projectId: string }) {
   const request = useNav((s) => s.file);
-  const [selected, setSelected] = useState<string | null>(request ? cleanPath(request.path) : null);
-  const [goto, setGoto] = useState<{ line: number; seq: number } | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(() =>
-    request ? new Set(parentDirs(cleanPath(request.path))) : new Set(),
+  const [selected, setSelected] = useState<string | null>(() =>
+    request ? cleanPath(request.path) : (remembered.get(projectId)?.selected ?? null),
   );
+  const [goto, setGoto] = useState<{ line: number; seq: number } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const before = remembered.get(projectId)?.expanded ?? [];
+    return new Set([...before, ...(request ? parentDirs(cleanPath(request.path)) : [])]);
+  });
   const treeRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    remembered.set(projectId, { selected, expanded });
+  }, [projectId, selected, expanded]);
   // Set when a file was opened from elsewhere: the tree scrolls to it once its folders have loaded.
   const [reveal, setReveal] = useState<{ path: string; seq: number } | null>(null);
 
@@ -83,19 +109,6 @@ export function FilesPanel() {
     });
   }, []);
 
-  if (!projectId) {
-    return (
-      <div className="flex h-full items-center justify-center p-8 text-center">
-        <div className="max-w-sm">
-          <FolderTree className="mx-auto mb-3 size-6 text-muted" aria-hidden />
-          <h2 className="text-[14px] font-semibold text-fg">No project open</h2>
-          <p className="mt-1 text-[13px] text-muted">
-            Open a project folder from the sidebar to browse its files.
-          </p>
-        </div>
-      </div>
-    );
-  }
   return (
     <div className="flex h-full min-h-0">
       <nav
@@ -169,7 +182,7 @@ function Dir({
                 data-tree-path={e.path}
                 onClick={() => onToggle(e.path)}
                 style={pad}
-                className="flex w-full items-center gap-1 py-0.5 pr-2 text-left text-xs text-muted hover:bg-hover hover:text-fg"
+                className="flex min-h-6 w-full items-center gap-1 py-0.5 pr-2 text-left text-xs text-muted hover:bg-hover hover:text-fg"
               >
                 {isOpen ? (
                   <ChevronDown className="size-3" aria-hidden />
@@ -202,7 +215,7 @@ function Dir({
               aria-current={selected === e.path ? "true" : undefined}
               style={{ paddingLeft: `${20 + depth * 12}px` }}
               className={cn(
-                "flex w-full items-center gap-1 py-0.5 pr-2 text-left text-xs",
+                "flex min-h-6 w-full items-center gap-1 py-0.5 pr-2 text-left text-xs",
                 selected === e.path ? "bg-accent-soft text-fg" : "text-muted hover:bg-hover hover:text-fg",
               )}
             >
