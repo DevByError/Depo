@@ -307,7 +307,7 @@ describe("warm-up", () => {
     ).toBe("fast");
   });
 
-  test("a warm-up that fails or is cancelled never fails the task", async () => {
+  test("stopping a task right away ends its warm-up too", async () => {
     const { e, proj } = await setup();
     e.models.assign("coder", { providerId: "ollama", model: "qwen2.5-coder:1.5b" });
     const project = await e.projects.open(proj);
@@ -315,6 +315,71 @@ describe("warm-up", () => {
     e.tasks.cancel(task.id);
     await e.tasks.settled(task.id);
     await waitFor(() => (e.scheduler.status().running.length === 0 ? true : undefined));
+    expect(e.scheduler.status().queued).toEqual([]);
     expect(e.tasks.get(task.id).task.status).toBe("cancelled");
+  });
+
+  test("the warm-up skips what is loaded, loads once for two tasks, and never throws", async () => {
+    const preloads: { model: string; contextLength?: number }[] = [];
+    let inMemory: { name: string; contextLength: number | null }[] = [];
+    let fail = false;
+    const provider: ModelProvider = {
+      id: "ollama",
+      kind: "ollama",
+      baseUrl: "http://127.0.0.1:1",
+      health: async () => ({ ok: true, version: "x", message: null }),
+      listModels: async () => [],
+      embed: async () => [],
+      chat: async function* () {},
+      loaded: async () => inMemory.map((m) => ({ ...m, sizeVramBytes: null, expiresAt: null })),
+      preload: async (model, opts) => {
+        await Bun.sleep(5);
+        if (fail) throw new Error("model requires more system memory");
+        preloads.push({ model, ...(opts?.contextLength ? { contextLength: opts.contextLength } : {}) });
+        return { loadMs: 900 };
+      },
+    };
+    let enabled = true;
+    let paused = false;
+    const { ModelWarmup } = await import("../src/models/speed");
+    const { createLogger } = await import("../src/logger");
+    const t = tempDir("depo warmup");
+    cleanup = t.cleanup;
+    const w = new ModelWarmup({
+      models: { resolve: () => ({ provider, model: "coder:7b", contextLength: 16_384 }) },
+      enabled: () => enabled,
+      paused: () => paused,
+      logger: createLogger({ dir: t.dir, level: "error", flushMs: 0 }),
+    });
+    const job = { projectId: "prj_1", taskId: "tsk_1" };
+    // Two tasks starting together share one load.
+    expect(await Promise.all([w.warm("coder", job), w.warm("coder", job)])).toEqual(["loaded", "loaded"]);
+    expect(preloads).toEqual([{ model: "coder:7b", contextLength: 16_384 }]);
+    inMemory = [{ name: "coder:7b", contextLength: 16_384 }];
+    expect(await w.warm("coder", job)).toBe("already_loaded");
+    // Loaded with another context length: the next call would reload it, so load it right.
+    inMemory = [{ name: "coder:7b", contextLength: 4096 }];
+    expect(await w.warm("coder", job)).toBe("loaded");
+    inMemory = [];
+    fail = true;
+    expect(await w.warm("coder", job)).toBe("failed");
+    paused = true;
+    expect(await w.warm("coder", job)).toBe("paused");
+    enabled = false;
+    expect(await w.warm("coder", job)).toBe("off");
+    const ctl = new AbortController();
+    ctl.abort();
+    enabled = true;
+    paused = false;
+    fail = false;
+    expect(await w.warm("coder", job, ctl.signal)).toBe("cancelled");
+    const plain = new ModelWarmup({
+      models: {
+        resolve: () => ({ provider: { ...provider, preload: undefined }, model: "m", contextLength: 8192 }),
+      },
+      enabled: () => true,
+      logger: createLogger({ dir: t.dir, level: "error", flushMs: 0 }),
+    });
+    expect(await plain.warm("coder", job)).toBe("unsupported");
   });
 });
