@@ -1,8 +1,21 @@
 # Progress
 
-**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look. Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
+**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look (round 1), then steering, pull-request review, visual QA, the code map, the Project home, team replay, time estimates, universal search and git commits (round 2). Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
 
 _Last updated: 2026-11-07_
+
+## Upgrade round 2 (2026-11-07): steer, review like a pull request, see the app, understand the code
+
+- **Steering:** send a note while an agent works; it is read at the next step (team: the Manager first, who may replan). Declining an approval asks why; the reason reaches the task and memory.
+- **Pull-request review:** line comments in Diff Review (click, Shift+click for ranges, keyboard, Ctrl+Enter), "Request changes" sends them back; comments carry over to the next version or are marked outdated.
+- **Visual QA:** agents call `check_page` to screenshot the running app at phone, tablet and desktop width, read console errors and failed requests and run axe; thumbnails in the work log; "Check this page" in Preview. Outside requests are blocked.
+- **Link when ready:** the private copy starts by itself when changes are ready, Chat shows "Open the running app", and the Preview tab opens on it.
+- **Code map:** import graph for TS/JS and Python (best effort for ten more languages), modules, cycles, entry points, hot spots, `code_map` for agents, an architecture diagram that redraws itself.
+- **Project home:** stack, git state, quick actions, health cards, tasks, previews, decisions, memory, the code map.
+- **Team replay and time estimates:** a scrubber rebuilds the team at any moment; estimates learned from this PC's real speed appear in the plan approval, Team, Plan and Chat.
+- **Search and git:** Ctrl+K searches files, symbols, contents, tasks, decisions, memory and logs at once and can ask Depo; applied changes can be committed with a drafted conventional message; a History tab.
+- **Polish:** the undo list in Diff Review folds away on narrow panels, sharper command matching, readable live command output, the bottom panel starts closed.
+- **Verified:** engine 417 tests, UI 206, browser e2e 17 (axe in both themes); lint and types clean; the new screens checked in a browser in dark, light and a narrow window with the scripted model.
 
 ## Upgrade round 1 (2026-11-07): watch the team, run what it builds, deeper agents
 

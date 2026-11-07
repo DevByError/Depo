@@ -191,3 +191,32 @@ Short ADRs: decision, reason, alternatives. Newest last.
 ## ADR-0042: Look and layout
 - **Decision:** Slate surfaces with one teal accent, IBM Plex Sans, agent family colours as theme tokens, every text colour checked for AA contrast on every surface. Work screens stay in the top tab strip; tool screens move to an icon rail; side panels become drawers below 1180 px (right) and 860 px (left).
 - **Reason:** Twenty tabs in one strip did not fit; a calm, consistent look reads as a professional tool.
+
+## ADR-0043: Steering notes are read at step boundaries
+- **Decision:** A note sent while an agent works waits in the task's inbox and is read at the top of the agent loop or before a final answer, never in the middle of a model call or a command. In a team the Manager reads it first and may replan. Unread notes become a follow-up when the run ends normally.
+- **Reason:** Interrupting a local model mid-call wastes minutes of prompt reading; a step boundary is the earliest point the note can change what happens next without breaking a tool call.
+
+## ADR-0044: Line comments belong to a change set and carry over by exact quote
+- **Decision:** Review comments are stored per change set and line range with the quoted code. "Request changes" sends them as one follow-up; on the next version a comment carries over only when its quoted code still matches exactly, otherwise it is marked outdated.
+- **Reason:** Fuzzy re-anchoring would put feedback on the wrong line; an honest "outdated" is better than a confident mistake.
+
+## ADR-0045: Time estimates are learned on this PC and say when they are guesses
+- **Decision:** Estimates come from this PC's own finished steps per agent and kind, scaled by today's model speed, with a first guess from model speed when there is no history, labelled as such.
+- **Reason:** Speed on a 4 GB GPU differs by orders of magnitude from published benchmarks; only local history is honest.
+
+## ADR-0046: Git commits only what Depo applied and never pushes
+- **Decision:** Committing is an owner click after an apply. Only the applied files are staged (literal pathspecs), every git command goes through the command policy, failures roll back, and Depo never pushes or rewrites history.
+- **Reason:** The owner's own uncommitted work must never end up in a Depo commit, and anything that leaves the PC stays the owner's decision.
+
+## ADR-0047: Page checks run in a local headless browser and block the internet
+- **Decision:** `check_page` drives the installed Chromium-family browser over the DevTools Protocol with a temporary profile, opens loopback addresses only, blocks every outside request and counts it as a failure with advice to self-host, and validates screenshot paths before serving them. The vision review runs only for agent checks, at background priority.
+- **Reason:** Agents must see what they build without anything leaving the PC; an app that needs a CDN to render is not finished for a local-first owner.
+
+## ADR-0048: A finished task's private copy starts by itself under a standing setting
+- **Decision:** When changes are ready for review Depo starts the private copy (setting `preview.auto_start`, default on), treating the setting as the owner's OK for the start command. It never runs a denied command, never installs packages, and stops the copy when the changes are applied or discarded unless pinned.
+- **Reason:** "Give me a link and I can see the result" should not need extra clicks, but installs and denied commands still need the owner.
+
+## ADR-0049: The code map is generated, kept out of the project, and type-only imports never count
+- **Decision:** Imports are read from the code index; the module diagram lives in Depo's data folder and is copied into the project only when the owner asks. TypeScript `import type` edges are kept apart and never make a cycle.
+- **Reason:** Generated files in the repo create noise in diffs; type-only cycles are harmless at run time and would make the map cry wolf.
+

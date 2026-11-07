@@ -63,6 +63,13 @@ All methods have Zod schemas for params (validated by the engine) and results (v
 | `logs.query` / `logs.tail` / `logs.components` / `logs.info` | Engine log search (level, levels, component, text, task, project, since/until, paging with `before`, byte cap) read backwards over `engine.log` and the rotated files; live lines after a cursor from an in-memory ring |
 | `logs.export` / `logs.openFolder` | Diagnostics .zip in Downloads (logs, system info, hardware, redacted settings, recent events, installed models, model timings, scheduler); show the logs folder in Explorer |
 | `models.stats` | Recent model calls (tokens/s, time to first token, errors) and a per-model summary, in memory for this run |
+| `tasks.steer` | A note for a working task, read at the agent's next step (team: the Manager first) |
+| `review.comments.list` / `.add` / `.update` / `.remove`, `review.requestChanges` | Line comments on a change set in Diff Review, and sending them back as a follow-up |
+| `team.events` / `team.eta` | A task's stored events in pages (for replay); time estimates learned on this PC |
+| `search.everything` | Ctrl+K search over files, symbols, file contents, tasks, decisions, memory and logs, with a time budget per scope |
+| `git.status` / `git.draftCommit` / `git.commit` / `git.log` / `git.show` / `git.setIdentity` | Commit applied change sets (only the applied files, never pushed) and read history |
+| `qa.check` / `qa.get` / `qa.list` / `qa.screenshot`, `preview.pin` | Page checks in a headless browser and their screenshots; keep an automatic preview running |
+| `codemap.get` / `codemap.file` / `codemap.repo` | Module and file import graph, cycles, entry points, hot spots; detected stack and git state |
 
 Server push: `{"jsonrpc":"2.0","method":"event","params": DepoEvent}` for every event.
 
@@ -70,7 +77,7 @@ Server push: `{"jsonrpc":"2.0","method":"event","params": DepoEvent}` for every 
 
 `DepoEvent` = id, ts, seq (per engine run), projectId, taskId, agent (`name@version` or `engine`/`user`), type, text, details, durationMs, status, ephemeral.
 
-Types are the spec's minimum list (`thinking`, `reading_file`, `running_command`, …, `checkpoint_created`) plus system types (`heartbeat`, `engine_started`, `engine_stopping`, `client_connected`, `client_disconnected`, `settings_changed`, `info`, `warning`). Heartbeats are ephemeral: broadcast every 2 s (setting `engine.heartbeat_ms`) but not stored.
+Types are the spec's minimum list (`thinking`, `reading_file`, `running_command`, …, `checkpoint_created`) plus system types (`heartbeat`, `engine_started`, `engine_stopping`, `client_connected`, `client_disconnected`, `settings_changed`, `info`, `warning`) and the upgrade types `decision`, `preview_started`/`preview_stopped`, `memory_updated`, `owner_note` (a steering note; details `{ noteId, state, readBy? }`), `committed` (a git commit of applied files) and `rendering_screenshot` (a page check; thumbnails and counts in details). Heartbeats are ephemeral: broadcast every 2 s (setting `engine.heartbeat_ms`) but not stored.
 
 Text and details are passed through the redactor (secret-looking keys, `.env`/`set`/`$env:` assignments, bearer tokens, JWTs, GitHub/AWS keys, private keys) before they are stored, logged or sent.
 
@@ -224,4 +231,37 @@ Agents' decisions are `decision` events (`details.kind`: plan, plan_approval, se
 
 ## UI shell
 
-Tool rail (left edge: projects toggle, tool screens as icon tabs, theme, settings) | Sidebar (projects, running tasks and previews) | Centre (work tabs: Project, Chat, Team, Plan, Files, Diff Review, Preview) | Right panel (Activity, Agents); bottom panel (Engine, Terminal, Problems, Test results, Logs). Below 1180 px the right panel and below 860 px the sidebar become drawers. Theme tokens live in `styles.css` (slate surfaces, teal accent, agent family colours, all text AA on every surface); per-agent colour and initials come from `lib/agent-color.ts`. Scroll following: `lib/use-stick-to-bottom.ts` (chat, any DOM list) and `lib/use-follow-list.ts` (virtualised lists).
+Tool rail (left edge: projects toggle, tool screens as icon tabs, theme, settings) | Sidebar (projects, running tasks and previews) | Centre (work tabs: Project, Chat, Team, Plan, Files, Diff Review, Preview) | Right panel (Activity, Agents); bottom panel (Engine, Terminal, Problems, Test results, Logs, History), closed at first (Ctrl+J). Below 1180 px the right panel and below 860 px the sidebar become drawers. Theme tokens live in `styles.css` (slate surfaces, teal accent, agent family colours, all text AA on every surface); per-agent colour and initials come from `lib/agent-color.ts`. Scroll following: `lib/use-stick-to-bottom.ts` (chat, any DOM list) and `lib/use-follow-list.ts` (virtualised lists).
+
+## Steering and line comments (round 2)
+
+A note sent while a task works (`tasks.steer`, an `owner_note` event, `ChatItem.steer` for its state) waits in the task's inbox and is read only at a step boundary: the top of the agent loop and before a final answer. In a team run the Manager reads it first, replans if needed (a `plan`/`replanned` decision) and passes it to the active agents through the blackboard. Notes still unread when the run ends normally become a follow-up; otherwise they are dropped. A reason given when declining an approval goes to the running task as a note and to self-memory.
+
+Diff Review comments (`review_comments`, migration 8) belong to a change set and a line range (old or new side). Status: open, addressed (by the change, an agent or the owner) or outdated. "Request changes" sends the open comments, with the quoted code, as one follow-up; on the next version a comment carries over when its quoted code still matches exactly.
+
+## Team replay and time estimates (round 2)
+
+`team.events` pages a task's stored events (noise skipped, text clipped). `lib/team-replay.ts` is one reducer for live and replay, with a checkpoint every 200 events, so the scrubber under the Team header can rebuild the graph, agent cards and decisions at any moment; markers show decisions, reviews, changes, send-backs and errors. "Share moment" copies a local `depo://team/...` reference.
+
+`agents/eta.ts`: `EtaTracker` times work, review and fix steps and single-agent tasks from the event bus (approval waits subtracted, only finished nodes learn); `EtaService` keeps the newest 40 samples per agent and kind (`eta_samples`, `eta_models`, migration 7) and the model speed, scales old samples by today's speed, and falls back to other agents' history, then a first guess from model speed that says so. `simulateSchedule` honours `team.parallel` along the critical path. Estimates appear in the plan approval, the Team header, node cards, the Plan board and the Chat header.
+
+## Search (round 2)
+
+`search/service.ts` runs seven scopes in parallel, each with a time budget in ms (files 500, symbols 300, content 900, tasks 300, decisions 300, memory 250, logs 700); a scope that runs out returns what it has and says so. Files: fuzzy match on a 20 s cached file list. Content: ripgrep (fixed strings, smart case, killed on timeout) or a built-in scanner. Symbols from the code index; memory and logs work without a project. The palette shows commands at once and engine results after a 160 ms pause; prefixes `>` commands, `@` symbols, `#` tasks and decisions, `/` files, `?` ask; the last row asks Depo (`tasks.send` in ask mode). Results open where they live (`store/nav.ts`): a file at its line, a task in Chat, a decision in Team, a memory item, a log filter.
+
+## Git (round 2)
+
+`git/repo.ts`, `message.ts`, `service.ts`. Every git command goes through `classifyCommand` and the project's command rules (a deny rule wins) and runs contained. A commit stages only the files Depo applied for that change set (`--pathspec-from-file` with literal pathspecs), so the owner's other work is untouched; it can first create a `depo/<slug>` branch, uses the repo's own identity (or one set for this repo with `git.setIdentity`), rolls back staging and branch on failure, and never pushes. The message is a conventional commit drafted by the local model at background priority, with a template fallback. UI: "Commit these changes" in Diff Review after an apply, the History bottom tab, the branch in the status bar and on the Project home.
+
+## Visual QA and automatic previews (round 2)
+
+`design/cdp.ts` is a small DevTools Protocol client: it starts the installed Chromium-family browser headless with a temporary profile (Job Object on Windows, process group elsewhere, always killed and cleaned), and drives pages over a loopback WebSocket. Requests that leave the PC are blocked and reported. `design/page-check.ts` loads a page at phone, tablet and desktop widths, runs up to 10 steps (click, type, press, wait_for), looks for expected text, takes screenshots and thumbnails, collects console errors and failed requests, and runs axe-core 4.14 (`design/axe.ts`). Checks are stored under `<copy>/.depo/qa/<id>/` (left out of change sets) or `<data>/qa/<projectId>`; images are served only after their path is validated. `QaService` runs one check at a time, emits `rendering_screenshot`, and optionally asks the vision model for a review at background priority (agent checks only). Agent tool `check_page` (Frontend, UI/UX Design, Testing, Integration, single coder); serious findings feed the UX audit.
+
+`preview/auto.ts`: when a task ends ready for review, its private copy starts in the background if Depo knows how (setting `preview.auto_start`, default on; skipped when packages need installing or a preview already runs), and stops when the change set is applied or discarded unless pinned. Chat shows "Open the running app"; the Preview tab opens on the running copy.
+
+## Code map and Project home (round 2)
+
+`codeindex/analyse.ts`, `resolve.ts`, `graph.ts`, `codemap.ts`. The indexer reads imports from the syntax tree for TS/JS (ES imports, re-exports, `require`, dynamic `import()`; `import type` kept apart so it never makes a cycle; tsconfig/jsconfig paths with `extends`, workspace packages, `.js`→`.ts`, index files) and Python (absolute, relative, packages, `src/` layouts), and best effort for Go, Rust, Java, Kotlin, C#, PHP, Ruby, C, Dart, Vue/Svelte/Astro, CSS and HTML. Results live in `code_imports` and new `code_files` columns (`branches`, `entry`, `map_version`; migration 9) and follow the file watcher. The map groups folders into at most 40 modules, finds runtime import cycles, entry points (declared or guessed) and hot spots (most imported, largest, most branches, changed most in the last 400 commits, read-only and cached 10 minutes). Agent tool `code_map` (Thinking, Reasoning, Backend, Frontend, Integration, Enhancement; the single coder is told to use it first; Import mode's study step starts with it). A Mermaid module diagram is redrawn 4 s after code changes settle and kept in Depo's data folder (`projects/<id>/code-map.mmd`, listed in Diagrams as generated; "Save a copy to the project" writes `docs/diagrams/code-map.mmd`).
+
+The Project tab is the project home: header (stack, branch with changed/ahead/behind, last commit), quick actions (New task, Preview, Scan, Rebuild index), health cards (last test run with a sparkline, security score, UX score, code size by language), tasks, running previews, latest decisions, memory highlights, recent changes, code index, the code map (graph with a table alternative, module and file drill-down, Open in Files), and project settings folded at the bottom.
+

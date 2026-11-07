@@ -36,3 +36,8 @@ Where Depo now stands against the strongest coding agents (Claude Code, Cursor, 
 9. Team replay: a scrubber that rebuilds the graph, agent cards and decisions at any moment.
 10. Time estimates learned from this PC's real speed, before and during a run.
 11. Universal search in Ctrl+K and git commits with a drafted conventional message.
+
+## Round 2: what was built
+
+All eleven ideas, in five parallel worktrees, merged and tested together: steering notes (single and team), decline reasons, line comments with "Request changes", visual QA with a DevTools Protocol client and axe (`check_page`, thumbnails, "Check this page"), automatic preview with "Open the running app", code map with an auto architecture diagram and the `code_map` tool, the Project home, team replay, time estimates learned on this PC, Ctrl+K universal search, and git commits with a drafted message plus a History tab. A screenshot pass then gave Diff Review more room, sharpened command matching, made the Preview tab open on the running copy and closed the bottom panel by default. Verified: engine 417, UI 206, e2e 17.
+
