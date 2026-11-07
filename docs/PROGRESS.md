@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-07_
 
+## Fix (2026-11-07): a small model that loops is stopped in seconds
+
+- Found on the owner's PC: qwen2.5-coder:3b repeated the same four edit calls for 55 minutes in "Writing a reply".
+- Each step now has a reply limit (8192 tokens) and a repetition guard: after a few identical copies the reply is stopped, each call in it runs once, the model is told, and the task carries on. Three stopped replies in a row end the task with "Try a larger model, or ask for a smaller step." A reply cut off at the limit is never taken as the answer. Vision and Agent Lab calls have limits too (ADR-0057).
+- Verified: 8 new engine tests (the owner's exact loop, a repeating phrase, nine normal replies left alone, the loop recovering, giving up, and the length limit).
+
 ## Design references (2026-11-07): "make it look like this"
 
 - **In the chat:** paste, drop or pick a picture (up to 4), or add a website link (up to 2) from the paperclip, or click "Copy the look of <site>" when a link is typed. With nothing written, the message is "Use the same UI/UX and theme as the attached reference."

@@ -12,12 +12,20 @@ import type { EventBus } from "../events/bus";
 import { getLogger, withLogContext } from "../logger";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
+import { type Repetition, RepetitionGuard } from "./repetition";
 import { extractTextToolCalls, looksLikeToolCall, stripToolMarkup } from "./textcalls";
 
 /** A model call may be retried this many times after a transient failure. */
 const MODEL_RETRIES = 4;
 /** Waits between retries grow, so a runtime that is busy (re)loading a model gets about a minute. */
 const RETRY_BACKOFF = [1, 3, 8, 15];
+/**
+ * Longest reply one step may write, in tokens: room for a big file in a tool call, but a model
+ * that rambles is stopped (Ollama's own default is no limit at all).
+ */
+export const MAX_REPLY_TOKENS = 8192;
+/** Replies stopped for repeating themselves, in a row, before the task gives up. */
+const MAX_LOOPS = 3;
 const log = getLogger({ component: "agent" });
 
 export type Emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown;
@@ -45,6 +53,8 @@ export interface LoopParams {
     onTest(r: { passed: boolean; output: string }): string | undefined;
   };
   temperature?: number;
+  /** Longest reply per step in tokens (default MAX_REPLY_TOKENS). */
+  maxReplyTokens?: number;
   /**
    * Steering: notes from the owner that arrived since the last call, as messages to add. Asked
    * only between steps (before each model call, and before a final answer is accepted).
@@ -102,6 +112,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   let lastTest = null as { command: string; passed: boolean } | null;
   let editedSinceTest = false;
   let finishNudges = 0;
+  let loops = 0;
 
   const ctx: ToolContext = {
     ...p.ctx,
@@ -133,31 +144,47 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     });
     let streamed = "";
     let lastEmit = 0;
-    const res = await chatWithRetry(
-      p,
-      {
-        model: p.model,
-        messages: history,
-        tools,
-        contextLength: p.contextLength,
-        signal,
-        ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
-      },
-      (delta) => {
-        streamed += delta;
-        const now = Date.now();
-        if (now - lastEmit > 150) {
-          lastEmit = now;
-          emit({
-            type: "thinking",
-            text: lastLine(streamed),
-            details: { jobId: messageId, text: streamed.slice(-4000) },
-            ephemeral: true,
-            status: "running",
-          });
-        }
-      },
-    );
+    // A reply that starts repeating itself is stopped here, without cancelling the task.
+    const guard = new RepetitionGuard();
+    const loop: { found: Repetition | null } = { found: null };
+    const stop = new AbortController();
+    const relay = () => stop.abort();
+    signal.addEventListener("abort", relay, { once: true });
+    let res: Awaited<ReturnType<typeof chatWithRetry>>;
+    try {
+      res = await chatWithRetry(
+        p,
+        {
+          model: p.model,
+          messages: history,
+          tools,
+          contextLength: p.contextLength,
+          signal: stop.signal,
+          maxTokens: p.maxReplyTokens ?? MAX_REPLY_TOKENS,
+          ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
+        },
+        (delta) => {
+          streamed += delta;
+          if (!loop.found) {
+            loop.found = guard.check(streamed);
+            if (loop.found) stop.abort();
+          }
+          const now = Date.now();
+          if (now - lastEmit > 150) {
+            lastEmit = now;
+            emit({
+              type: "thinking",
+              text: lastLine(streamed),
+              details: { jobId: messageId, text: streamed.slice(-4000) },
+              ephemeral: true,
+              status: "running",
+            });
+          }
+        },
+      );
+    } finally {
+      signal.removeEventListener("abort", relay);
+    }
     emit({
       type: "planning",
       text: "Model answered",
@@ -165,6 +192,28 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       ephemeral: true,
       status: "succeeded",
     });
+    let repeated = false;
+    if (res === null && loop.found && !signal.aborted) {
+      // Keep what came before the loop and one copy of the repeated part, then carry on.
+      loops++;
+      repeated = true;
+      log.warn("model reply repeated itself", {
+        model: p.model,
+        times: loop.found.times,
+        chars: streamed.length,
+      });
+      if (loops >= MAX_LOOPS)
+        throw new Error(
+          `The model kept repeating the same lines (${MAX_LOOPS} replies stopped). Try a larger model, or ask for a smaller step.`,
+        );
+      emit({
+        type: "retrying",
+        text: "The model started repeating itself, so Depo stopped that reply.",
+        details: { repeated: loop.found.unit.slice(0, 400), times: loop.found.times },
+        status: "running",
+      });
+      res = { text: streamed.slice(0, loop.found.keep), toolCalls: [], finishReason: "unknown", usage: null };
+    }
     if (res === null) break; // cancelled
     if ("badOutput" in res) {
       // The runtime could not read the model's reply (usually a broken tool call). Tell the model
@@ -180,12 +229,23 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       continue;
     }
     badOutputs = 0;
+    if (!repeated) loops = 0;
     let calls: ToolCall[] = res.toolCalls;
     if (calls.length === 0) {
       const parsed = extractTextToolCalls(res.text, toolNames);
       calls = parsed.calls;
       if (calls.length) res.text = parsed.rest;
-      else if (looksLikeToolCall(res.text, toolNames)) {
+      else if (repeated || res.finishReason === "length") {
+        // Cut off with no tool call: not a final answer. Show the model where it stopped.
+        history.push({ role: "assistant", content: res.text });
+        history.push({
+          role: "user",
+          content: repeated
+            ? "Depo stopped your reply because it kept repeating the same lines. Do not repeat yourself. Make one tool call, or give your final answer in a few sentences."
+            : "Your reply was too long and was cut off. Make one tool call at a time, write big files in parts, and keep the final answer short.",
+        });
+        continue;
+      } else if (looksLikeToolCall(res.text, toolNames)) {
         // A tool call written as text that could not be read: not a final answer.
         badOutputs++;
         if (badOutputs >= 3)
@@ -205,6 +265,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       }
     }
     if (calls.length === 0) res.text = stripToolMarkup(res.text);
+    calls = uniqueCalls(calls);
     const assistant: ChatMessage = {
       role: "assistant",
       content: res.text,
@@ -270,6 +331,12 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       history.push(toolMsg);
       p.persist({ ...toolMsg, ...(result.isError ? { isError: true } : {}) });
     }
+    if (repeated)
+      history.push({
+        role: "user",
+        content:
+          "Depo stopped your last reply because it kept repeating the same tool calls. Each call above ran once; read the results. Make one call at a time and never repeat a call.",
+      });
   }
 
   return {
@@ -280,6 +347,17 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     lastTest,
     changed: [...changed],
   };
+}
+
+/** The same call twice in one reply (same tool, same arguments) runs once. */
+export function uniqueCalls(calls: ToolCall[]): ToolCall[] {
+  const seen = new Set<string>();
+  return calls.filter((c) => {
+    const key = `${c.name}\u0000${c.rawArguments || JSON.stringify(c.arguments ?? null)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function chatWithRetry(

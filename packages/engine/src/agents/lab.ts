@@ -17,6 +17,7 @@ import {
   newId,
 } from "@depo/shared";
 import { z } from "zod";
+import { MAX_REPLY_TOKENS } from "../agent/loop";
 import type { EventBus } from "../events/bus";
 import type { ModelManager } from "../models/manager";
 import { vetText } from "../skills/vet";
@@ -460,6 +461,7 @@ export class AgentLab {
             ...messages,
           ],
           contextLength: r.contextLength ?? 16_384,
+          maxTokens: MAX_REPLY_TOKENS,
           ...(signal ? { signal } : {}),
         }),
       );

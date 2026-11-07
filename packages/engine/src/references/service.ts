@@ -427,6 +427,7 @@ export class ReferenceService {
           messages: [{ role: "user", content: prompt, images }],
           ...(o.signal ? { signal: o.signal } : {}),
           contextLength: v.contextLength ?? 8192,
+          maxTokens: 1500,
         }),
       );
     const res = this.o.scheduler

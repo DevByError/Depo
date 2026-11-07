@@ -1570,6 +1570,7 @@ export class TeamRunner {
           messages: [{ role: "user", content: prompt, images }],
           signal: input.signal,
           contextLength: v.contextLength ?? DEFAULT_CONTEXT,
+          maxTokens: 1500,
         }),
       );
     const res = await (this.h.scheduler

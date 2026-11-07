@@ -304,6 +304,7 @@ export class QaService implements QaHooks {
           messages: [{ role: "user", content: prompt, images: [image] }],
           signal: ac.signal,
           contextLength: v.contextLength ?? 8192,
+          maxTokens: 1500,
         }),
       );
     try {
