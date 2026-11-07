@@ -23,6 +23,7 @@ import {
   TeamTimelineSchema,
   WorkModeSchema,
 } from "./agents";
+import { blueprintMethods } from "./blueprints";
 import { CodeMapMethods } from "./codemap";
 import { DiagnosticsMethods } from "./diagnostics";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
@@ -1177,6 +1178,7 @@ export const ApiSchema = {
   ...ReadinessMethods,
   ...TerminalMethods,
   ...DiagnosticsMethods,
+  ...blueprintMethods(ProjectSchema),
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

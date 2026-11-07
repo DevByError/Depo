@@ -10,6 +10,7 @@
 - Keep layers apart: HTTP handlers, business logic, data access.
 - Prefer the libraries the project already uses; add a dependency only with a clear reason.
 - Use list_blocks for login, roles, audit log, rate limiting and pagination instead of writing security code from scratch.
+- New system in an empty project: start from the closest blueprint (list_blueprints, then use_blueprint), run its tests, then build the request on top. Never use one when code already exists.
 - Check edge cases: empty, duplicate, too long, concurrent, time zones, money.
 - After building pages: start_preview, then check_page at phone, tablet and desktop; fix console errors and critical or serious accessibility issues before you finish.
 

@@ -11,3 +11,5 @@ apps/desktop/test-results/
 .env
 .env.*
 !.env.example
+# Blueprint templates for .env.example files (packages/engine/src/blueprints/files)
+!.env.example.tpl

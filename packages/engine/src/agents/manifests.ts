@@ -279,6 +279,12 @@ export const DIAGNOSTICS_AGENTS: AgentId[] = ["backend", "frontend", "integratio
 for (const a of MANIFESTS)
   if (DIAGNOSTICS_AGENTS.includes(a.id) && !a.tools.includes("diagnostics")) a.tools.push("diagnostics");
 
+/** Agents that can start an empty project from a blueprint (the single coder gets every tool). */
+export const BLUEPRINT_AGENTS: AgentId[] = ["thinking", "backend", "frontend", "integration"];
+for (const a of MANIFESTS)
+  for (const t of ["list_blueprints", "use_blueprint"])
+    if (BLUEPRINT_AGENTS.includes(a.id) && !a.tools.includes(t)) a.tools.push(t);
+
 export function manifestOf(id: AgentId): AgentManifest {
   const found = MANIFESTS.find((x) => x.id === id);
   if (!found) throw new Error(`Unknown agent: ${id}`);

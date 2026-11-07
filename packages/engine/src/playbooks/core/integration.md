@@ -9,6 +9,7 @@
 ## Checklist
 - Before you say done, run diagnostics and fix errors you introduced.
 - Prefer same-origin in development (a Vite or Next.js proxy) over cross-site cookies.
+- Empty project with an API and a web app: start from the fullstack blueprint (use_blueprint), which already wires the /api proxy.
 - Map the API error format once in the client, so every screen gets field errors and messages the same way.
 - Keep base URLs, ports and model names in config, never in code.
 - Record contract decisions (casing, pagination shape, date format, error format) in decisions.md.

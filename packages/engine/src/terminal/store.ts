@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { TerminalRun, TerminalRunState } from "@depo/shared";
 
-/** Terminal runs and the per-project command history, in SQLite (migration 12). */
+/** Terminal runs and the per-project command history, in SQLite (migration 10). */
 
 const KEEP_RUNS = 100;
 const KEEP_HISTORY = 50;

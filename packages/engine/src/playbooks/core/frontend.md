@@ -12,6 +12,7 @@
 - Data fetching with a cache (TanStack Query, server components or SWR), with cancellation and invalidation after mutations.
 - Auth: prefer HttpOnly cookies set by the API; guard routes; hide or disable actions the user may not take (the server still enforces).
 - Code-split routes, lazy-load heavy parts, give images width and height.
+- Empty project: start from a blueprint (use_blueprint react-web-app, or fullstack) and extend it; never over existing code.
 - Lists that can grow are paginated or virtualised; tables have sorting and filters when the stories need them.
 - Write copy that is short and plain; buttons say what they do ("Save booking").
 - After building UI: start_preview, then check_page on each page you changed at phone, tablet and desktop (add steps for the main form). Fix console errors, failed requests and critical or serious accessibility issues before you hand off.

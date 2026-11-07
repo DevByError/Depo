@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { blueprintHint } from "../blueprints/plan";
 import { autoTopicsPrompt, corePrompt } from "../playbooks";
 import { detectStack, stackSummary } from "./stack";
 
@@ -114,6 +115,7 @@ export function codingSystemPrompt(opts: {
     ...(info.testCommand ? [`Run the tests with: ${info.testCommand}`] : []),
     ...info.notes,
     `Top level: ${topLevelListing(opts.root) || "(empty)"}`,
+    ...[blueprintHint(opts.request ?? "", opts.root)].filter(Boolean),
   ];
   for (const block of opts.context ?? []) if (block) lines.push("", block);
   const topics = autoTopicsPrompt({

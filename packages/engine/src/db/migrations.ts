@@ -411,7 +411,7 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     // Terminal runs and command history, and the newest diagnostics per target (round 3, worker 2).
     // IF NOT EXISTS keeps it safe to renumber.
-    version: 12,
+    version: 10,
     name: "terminal_diagnostics",
     sql: `
       CREATE TABLE IF NOT EXISTS terminal_runs (
