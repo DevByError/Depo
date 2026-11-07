@@ -17,7 +17,8 @@ import { packageManagerFor } from "./stack";
  * The finish line: when an agent says it is done, Depo itself installs the app's packages, starts
  * the test database (with tables and demo data) when the app uses MySQL, starts the app from the
  * private copy and opens its home page in the headless browser. Problems go back to the agent to
- * fix; when all is well the owner gets the links. Commands go through run_command, so the command
+ * fix (except Depo's own test database not starting: that goes to the owner); when all is well the
+ * owner gets the links. Commands go through run_command, so the command
  * policy, the approvals (or the project's full access) and the activity feed apply as usual.
  */
 
@@ -59,6 +60,11 @@ export interface FinishDeps {
 export interface FinishResult {
   /** Plain problems for the agent to fix (empty when everything ran). */
   problems: string[];
+  /**
+   * What Depo itself could not do, so it did not check the rest (its test database would not
+   * start). Not the agent's to fix: it goes to the owner in the run report, never to the model.
+   */
+  blocked: string[];
   /** The running app, frontend first. */
   running: { label: string; url: string; role: string }[];
   /** Short lines for the owner: what Depo did. */
@@ -154,9 +160,10 @@ export async function runFinishLine(
 ): Promise<FinishResult> {
   const problems: string[] = [];
   const notes: string[] = [];
+  const blocked: string[] = [];
   const projectId = ctx.projectId;
   const taskId = ctx.taskId;
-  if (!projectId || !taskId) return { problems, running: [], notes };
+  if (!projectId || !taskId) return { problems, running: [], notes, blocked };
   const run = async (command: string, cwd: string, timeout = 900) => {
     const r = await executeTool(
       "run_command",
@@ -169,12 +176,12 @@ export async function runFinishLine(
   // 1. Packages: every part of the app that still needs its packages installed.
   let detection = await deps.previews.detect(projectId, taskId);
   let recipe: RunRecipe | undefined = detection.recipes[detection.suggested];
-  if (!recipe) return { problems, running: [], notes };
+  if (!recipe) return { problems, running: [], notes, blocked };
   const parts = (r: RunRecipe) => (r.kind === "both" ? (r.parts ?? []) : [r]);
   const installs = new Map<string, string>();
   for (const p of parts(recipe)) if (p.missing) installs.set(p.missing.cwd, p.missing.install);
   for (const [cwd, command] of installs) {
-    if (signal.aborted) return { problems, running: [], notes };
+    if (signal.aborted) return { problems, running: [], notes, blocked };
     const r = await run(command, cwd);
     if (r.ok) notes.push(`Installed the packages${cwd ? ` in ${cwd}` : ""}.`);
     else
@@ -182,11 +189,11 @@ export async function runFinishLine(
         `Installing the packages with \`${command}\`${cwd ? ` in ${cwd}` : ""} failed:\n${tail(r.content, 15)}`,
       );
   }
-  if (problems.length) return { problems, running: [], notes };
+  if (problems.length) return { problems, running: [], notes, blocked };
   if (installs.size) {
     detection = await deps.previews.detect(projectId, taskId);
     recipe = detection.recipes[detection.suggested];
-    if (!recipe) return { problems, running: [], notes };
+    if (!recipe) return { problems, running: [], notes, blocked };
   }
 
   // 2. The test database, its tables and demo data.
@@ -204,7 +211,7 @@ export async function runFinishLine(
       );
       for (const step of dataSteps(ctx.root)) {
         for (const command of step.commands) {
-          if (signal.aborted) return { problems, running: [], notes };
+          if (signal.aborted) return { problems, running: [], notes, blocked };
           const r = await run(command, step.cwd, 300);
           if (!r.ok) {
             problems.push(
@@ -217,20 +224,26 @@ export async function runFinishLine(
         }
       }
     } catch (err) {
-      problems.push(`The test database could not start: ${err instanceof Error ? err.message : String(err)}`);
+      // Depo's own database, not the app's code: the model cannot fix it (it would only tell the
+      // owner to change folder permissions), and the app cannot run without it.
+      if (signal.aborted) return { problems, running: [], notes, blocked };
+      blocked.push(
+        `Depo's test database did not start, so Depo did not run the app or its tests. ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { problems, running: [], notes, blocked };
     }
-    if (problems.length) return { problems, running: [], notes };
+    if (problems.length) return { problems, running: [], notes, blocked };
   }
 
   // 3. The tests of every part that has them, the way the owner would run them.
   for (const t of testCommands(ctx.root, parts(recipe))) {
-    if (signal.aborted) return { problems, running: [], notes };
+    if (signal.aborted) return { problems, running: [], notes, blocked };
     const r = await run(t.command, t.cwd, 600);
     const where = t.cwd ? ` in ${t.cwd}` : "";
     if (r.ok) notes.push(`Tests pass${where} (\`${t.command}\`).`);
     else problems.push(`The tests${where} fail (\`${t.command}\`):\n${tail(r.content, 20)}`);
   }
-  if (problems.length) return { problems, running: [], notes };
+  if (problems.length) return { problems, running: [], notes, blocked };
 
   // 4. Start the app fresh (an agent's own preview may predate the installs and the .env).
   for (const p of deps.previews.list(projectId))
@@ -241,7 +254,7 @@ export async function runFinishLine(
     if (started.reason === "failed")
       problems.push(`The app did not start: ${started.detail ?? "unknown error"}`);
     else if (started.reason === "needs_install") problems.push("The app's packages are still not installed.");
-    return { problems, running: [], notes };
+    return { problems, running: [], notes, blocked };
   }
   const limit = deps.startTimeoutMs ?? START_TIMEOUT_MS;
   const settled = await Promise.all(
@@ -271,7 +284,7 @@ export async function runFinishLine(
     .filter((p) => p.state === "running")
     .sort((a, b) => (rank[a.role] ?? 3) - (rank[b.role] ?? 3))
     .map((p) => ({ label: p.label, url: p.url, role: p.role }));
-  if (problems.length) return { problems, running, notes };
+  if (problems.length) return { problems, running, notes, blocked };
 
   // 5. Look at the home page like a person would: console errors and failed requests.
   if (deps.qa && running.some((p) => p.role !== "backend")) {
@@ -294,7 +307,7 @@ export async function runFinishLine(
       notes.push(`The page check could not run: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return { problems, running, notes };
+  return { problems, running, notes, blocked };
 }
 
 /** What the agent reads when the finish line found problems. */
@@ -312,5 +325,9 @@ export function finishSummary(r: FinishResult): string {
   if (r.running.length) lines.push(`Running now: ${r.running.map((p) => `${p.label} ${p.url}`).join(" · ")}`);
   lines.push(...r.notes);
   if (r.problems.length) lines.push("Still not working:", ...r.problems.map((p) => `- ${p.split("\n")[0]}`));
+  for (const b of r.blocked) {
+    const [first, ...rest] = b.split("\n");
+    lines.push(`Depo could not check the app: ${first}`, ...rest.slice(0, 3).map((l) => `  ${l}`));
+  }
   return lines.length ? [RUN_REPORT_HEADING, ...lines].join("\n") : "";
 }

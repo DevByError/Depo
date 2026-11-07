@@ -432,7 +432,7 @@ describe("the finish line: Depo runs the work like the owner will", () => {
     expect(summary.split("\n")[1]).toBe(
       "Running now: Next.js (fe) http://127.0.0.1:3000/ · Bun (be) http://127.0.0.1:4000/",
     );
-    expect(finishSummary({ problems: [], running: [], notes: [] })).toBe("");
+    expect(finishSummary({ problems: [], running: [], notes: [], blocked: [] })).toBe("");
   }, 30_000);
 
   test("failing tests come back to the agent before the app is started", async () => {
@@ -442,6 +442,26 @@ describe("the finish line: Depo runs the work like the owner will", () => {
     expect(r.problems[0]).toContain("The tests in be fail (`bun run test`)");
     expect(r.problems[0]).toContain("1 fail");
     expect(s.calls).not.toContain("autoStart");
+  }, 30_000);
+
+  test("Depo's own test database not starting goes to the owner, not to the agent", async () => {
+    const s = finishSetup({});
+    s.deps.devdb = {
+      ensure: async () => {
+        throw new Error(
+          "The test database did not start on port 50538. [ERROR] [MY-012271] [InnoDB] The innodb_system data file 'ibdata1' must be writable",
+        );
+      },
+      writeEnv: () => [],
+    };
+    const r = await runFinishLine(s.ctx, s.deps, new AbortController().signal);
+    expect(r.problems).toEqual([]);
+    expect(r.blocked).toHaveLength(1);
+    expect(r.blocked[0]).toContain("Depo's test database did not start");
+    expect(s.calls).not.toContain("autoStart");
+    const summary = finishSummary(r);
+    expect(summary).toContain("Depo could not check the app: Depo's test database did not start");
+    expect(summary).toContain("must be writable");
   }, 30_000);
 
   test("an app that does not start comes back to the agent with its last output lines", async () => {
@@ -575,6 +595,34 @@ describe("when the model runtime falls over", () => {
       ),
     ).toBe("crashed");
     expect(fallOf(new ModelGatewayError("http", "Ollama returned 500: model not found", 500))).toBeNull();
+    // The runner hangs while Ollama itself still answers (seen on a 4 GB card running a 7b model).
+    expect(
+      fallOf(
+        new ModelGatewayError(
+          "http",
+          'Ollama returned 500: {"error":"Post \\"http://127.0.0.1:50574/tokenize\\": dial tcp 127.0.0.1:50574: connectex: A connection attempt failed because the connected party did not properly respond after a period of time"}',
+          500,
+        ),
+      ),
+    ).toBe("crashed");
+    expect(
+      fallOf(
+        new ModelGatewayError("http", 'Ollama returned 500: Post "http://127.0.0.1:1/completion": EOF', 500),
+      ),
+    ).toBe("crashed");
+    expect(
+      fallOf(
+        new ModelGatewayError(
+          "unreachable",
+          "Could not connect to Ollama in time (ETIMEDOUT: Connection timed out).",
+          undefined,
+          "ETIMEDOUT: Connection timed out",
+        ),
+      ),
+    ).toBe("dropped");
+    expect(
+      fallOf(new ModelGatewayError("unreachable", "x", undefined, "EHOSTUNREACH: no route to host")),
+    ).toBeNull();
     expect(smallerContext(32_768)).toBe(16_384);
     expect(smallerContext(6000)).toBe(4096);
     // Comes back on the third health check; a local Ollama that is down is started once.
@@ -642,5 +690,57 @@ describe("when the model runtime falls over", () => {
     expect(res.finalText).toBe("All good.");
     expect(seen).toEqual([32_768, 32_768, 16_384]);
     expect(events.some((t) => t.includes("smaller context (16,384 tokens)"))).toBe(true);
+  });
+
+  test("a hung model process is unloaded before the retry, so Ollama starts a fresh one", async () => {
+    const dir = temp("depo hung");
+    const { bus, approvals } = busAndApprovals(dir);
+    const { ModelGatewayError } = await import("@depo/model-gateway");
+    const order: string[] = [];
+    let n = 0;
+    const provider: ModelProvider = {
+      id: "fake",
+      kind: "ollama",
+      baseUrl: "http://127.0.0.1:1",
+      health: async () => ({ ok: true, version: "fake", message: null }),
+      listModels: async () => [],
+      embed: async () => [],
+      unload: async (model) => {
+        order.push(`unload ${model}`);
+      },
+      chat: () => {
+        order.push("chat");
+        const fail = n++ < 1;
+        return (async function* (): AsyncIterable<ChatChunk> {
+          if (fail)
+            throw new ModelGatewayError(
+              "http",
+              'Ollama returned 500: {"error":"Post \\"http://127.0.0.1:50574/tokenize\\": dial tcp 127.0.0.1:50574: connectex: did not properly respond"}',
+              500,
+            );
+          yield { type: "text", delta: "Back." };
+          yield { type: "done", finishReason: "stop", usage: null };
+        })();
+      },
+    };
+    const res = await runAgentLoop({
+      provider,
+      model: "qwen2.5-coder:7b",
+      contextLength: 8192,
+      history: [
+        { role: "system", content: "s" },
+        { role: "user", content: "hi" },
+      ],
+      toolNames: [],
+      ctx: { root: dir, bus, approvals, projectId: "prj_1", taskId: "tsk_1", agent: "coder" },
+      maxSteps: 3,
+      signal: new AbortController().signal,
+      job: { projectId: "prj_1", taskId: "tsk_1", label: "t" },
+      retryDelayMs: 1,
+      emit: () => {},
+      persist: () => {},
+    });
+    expect(res.finalText).toBe("Back.");
+    expect(order).toEqual(["chat", "unload qwen2.5-coder:7b", "chat"]);
   });
 });

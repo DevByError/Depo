@@ -5,8 +5,9 @@ import { getLogger } from "../logger";
  * When the local model runtime falls over mid-task. A refused connection means nothing listens
  * (Ollama is not running: Depo starts `ollama serve` once, when it is installed); a dropped one
  * means it crashed or ran out of memory while answering (on a 4 GB GPU, usually a context too big
- * for the card). Depo waits for the runtime to answer again and, after a second crash, asks for a
- * smaller context so the next try fits.
+ * for the card). A crashed or hung model process (Ollama still answers, its runner does not) is
+ * unloaded so the next call starts a fresh one. Depo waits for the runtime to answer again and,
+ * after a second crash, asks for a smaller context so the next try fits.
  */
 
 const log = getLogger({ component: "models" });
@@ -19,17 +20,21 @@ export function fallOf(err: unknown): Fall {
   const text = `${err.message} ${err.detail ?? ""}`;
   if (err.kind === "unreachable") {
     if (/ECONNREFUSED|ConnectionRefused|refused|not running/i.test(text)) return "refused";
-    if (/Unable to connect|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH/i.test(text)) return null;
+    if (/ENETUNREACH|EHOSTUNREACH/i.test(text)) return null;
+    // Includes a connection that timed out: the runtime is there but stuck or swamped.
     return "dropped";
   }
-  if (err.kind === "http" && (err.status ?? 0) >= 500)
-    return /runner process (has )?terminated|out of memory|CUDA error|cudaMalloc|failed to allocate|exit status|signal: killed/i.test(
-      text,
-    )
-      ? "crashed"
-      : null;
+  if (err.kind === "http" && (err.status ?? 0) >= 500) return RUNNER_DOWN.test(text) ? "crashed" : null;
   return null;
 }
+
+/**
+ * Ollama answering 500 because its model process died or hangs: out of memory, or the server
+ * cannot reach the runner any more (`Post "http://127.0.0.1:50574/tokenize": dial tcp …:
+ * connectex: … did not properly respond`, `…/completion": EOF`, `wsarecv: … forcibly closed`).
+ */
+const RUNNER_DOWN =
+  /runner process (has )?terminated|out of memory|CUDA error|cudaMalloc|failed to allocate|exit status|signal: killed|dial tcp|connectex|wsarecv|forcibly closed|did not properly respond|connection reset|\/(tokenize|detokenize|completion|embedding|health)"?: |": EOF/i;
 
 /** A context about half as big (never below 4096 tokens), rounded to 1024. */
 export function smallerContext(n: number): number {

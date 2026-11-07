@@ -9,6 +9,7 @@ import { choosePort, isListening } from "../preview/ports";
 import { writeStream } from "../util/github";
 import { extractZip } from "../util/unzip";
 import { type DbBinaries, findBinaries } from "./binaries";
+import { runsOn, type ServerProcs, systemProcs } from "./procs";
 
 /**
  * Test databases: one MySQL-compatible database per project, run by Depo on 127.0.0.1, so agents
@@ -59,6 +60,8 @@ export interface DevDbOptions {
   env?: Record<string, string | undefined>;
   /** Override where the server comes from (tests). */
   binaries?: () => DbBinaries | null;
+  /** Override how server processes are listed and stopped (tests). */
+  procs?: ServerProcs;
 }
 
 /** The portable MariaDB Depo downloads on Windows (a long-term support release). */
@@ -73,6 +76,10 @@ const SQL_TIMEOUT_MS = 30_000;
 const MAX_SQL_OUTPUT = 12_000;
 
 export class DevDbError extends Error {}
+
+/** The server's log says another server still holds the data folder's files. */
+const LOCKED =
+  /must be writable|Unable to lock|another mysqld|already in use by another|Check that you do not already have another/i;
 
 /** A database name from a project name: lower case letters, digits and underscores. */
 export function databaseName(projectName: string): string {
@@ -119,10 +126,12 @@ export class DevDatabaseService {
   private installing: Promise<DbBinaries> | null = null;
   private readonly log: Logger;
   private readonly platform: NodeJS.Platform;
+  private readonly sys: ServerProcs;
 
   constructor(private readonly o: DevDbOptions) {
     this.log = o.logger.child({ component: "devdb" });
     this.platform = o.platform ?? process.platform;
+    this.sys = o.procs ?? systemProcs(this.platform);
   }
 
   // ---- where things are --------------------------------------------------------------------
@@ -233,6 +242,8 @@ export class DevDatabaseService {
       await this.provision(bins, inst);
       return this.info(projectId, inst, "running", null);
     }
+    // A server that was not stopped cleanly leaves its pid file behind and may still be running.
+    if (fs.existsSync(path.join(this.home(projectId), "server.pid"))) await this.stopLeftovers(projectId);
     const port = await choosePort(inst?.port ?? 3307);
     inst = inst
       ? { ...inst, port }
@@ -255,7 +266,14 @@ export class DevDatabaseService {
     });
     const data = this.dataDir(projectId);
     if (!this.initialized(data)) await this.initialize(bins, kind.kind, data, port);
-    await this.launch(projectId, bins, kind.kind, port);
+    try {
+      await this.launch(projectId, bins, kind.kind, port);
+    } catch (err) {
+      // Another copy of this database's server held its files (launch stopped it): try once more.
+      if (!(err instanceof LockedError)) throw err;
+      await this.stopLeftovers(projectId);
+      await this.launch(projectId, bins, kind.kind, port);
+    }
     await this.provision(bins, inst);
     this.save(projectId, { ...inst, engine: kind.kind, version: kind.version });
     const info = this.info(projectId, this.load(projectId), "running", null);
@@ -343,19 +361,29 @@ export class DevDatabaseService {
   ): Promise<void> {
     const home = this.home(projectId);
     const logFile = path.join(home, "server.log");
+    const logStart = fileSize(logFile);
+    const files = path.join(home, "files");
+    if (kind === "mysql") fs.mkdirSync(files, { recursive: true });
     const argv = [
       bins.server,
       "--no-defaults",
       `--datadir=${this.dataDir(projectId)}`,
       `--port=${port}`,
       "--bind-address=127.0.0.1",
-      "--skip-name-resolve",
+      // MySQL 8 makes only root@localhost: with names skipped, a login from 127.0.0.1 is refused
+      // (error 1130), so its loopback logins keep the name "localhost". MariaDB has both.
+      ...(kind === "mariadb" ? ["--skip-name-resolve"] : []),
       `--pid-file=${path.join(home, "server.pid")}`,
       `--log-error=${logFile}`,
       "--character-set-server=utf8mb4",
       ...(this.platform === "win32" ? [] : [`--socket=${this.socketPath(projectId)}`]),
       ...(kind === "mysql"
-        ? ["--mysqlx=OFF", "--collation-server=utf8mb4_0900_ai_ci"]
+        ? [
+            "--mysqlx=OFF",
+            "--collation-server=utf8mb4_0900_ai_ci",
+            // Its built-in default may be a folder that does not exist (then it will not start).
+            `--secure-file-priv=${files}`,
+          ]
         : ["--collation-server=utf8mb4_unicode_ci"]),
       ...this.rootUser(),
     ];
@@ -373,19 +401,55 @@ export class DevDatabaseService {
     });
     this.procs.set(projectId, { proc, exited });
     const deadline = Date.now() + START_TIMEOUT_MS;
-    while (Date.now() < deadline) {
+    let login = "";
+    for (let round = 0; Date.now() < deadline; round++) {
       if (!this.procs.has(projectId)) break;
-      if ((await isListening(port)) && (await this.ping(bins, port))) return;
+      // InnoDB keeps retrying a locked data file for minutes: no need to wait for it.
+      if (round % 5 === 4 && LOCKED.test(readFrom(logFile, logStart))) break;
+      if (await isListening(port)) {
+        const r = await this.client(bins, port, { user: "root" }, "SELECT 1", 10_000);
+        if (r.exitCode === 0) return;
+        login = lastLines(r.output, 1);
+      }
       await Bun.sleep(400);
     }
-    if (this.procs.has(projectId)) proc.kill();
-    let tail = "";
+    // Stop it for real: the process Depo started and any server it left running on these files.
+    if (this.procs.has(projectId)) await this.sys.kill(proc.pid, 5000);
+    await this.stopLeftovers(projectId);
+    const log = readFrom(logFile, logStart);
+    const why =
+      serverErrors(log) ||
+      (login ? `It runs, but Depo could not sign in to it: ${login}` : lastLines(log, 4));
+    const msg = `The test database did not start on port ${port}. ${why}`.trim();
+    throw LOCKED.test(log) ? new LockedError(msg) : new DevDbError(msg);
+  }
+
+  /**
+   * Stop servers still running on this project's data folder that this engine is not using (left
+   * over from a start that timed out, a crash or an earlier run). True when one was stopped.
+   */
+  private async stopLeftovers(projectId: string): Promise<boolean> {
+    const data = this.dataDir(projectId);
+    let found: number[] = [];
     try {
-      tail = lastLines(fs.readFileSync(logFile, "utf8"), 8);
-    } catch {
-      tail = "";
+      found = (await this.sys.list())
+        .filter((p) => runsOn(p.command, data, this.platform))
+        .map((p) => p.pid)
+        .filter((pid) => pid !== process.pid);
+    } catch (err) {
+      this.log.warn("could not list database servers", { projectId, err });
+      return false;
     }
-    throw new DevDbError(`The test database did not start on port ${port}. ${tail}`.trim());
+    for (const pid of found) {
+      this.log.warn("stopping a test database server left running", { projectId, pid });
+      await this.sys.kill(pid).catch(() => undefined);
+    }
+    if (found.length) {
+      const own = this.procs.get(projectId);
+      if (own && found.includes(own.proc.pid)) this.procs.delete(projectId);
+      fs.rmSync(path.join(this.home(projectId), "server.pid"), { force: true });
+    }
+    return found.length > 0;
   }
 
   /** Create the database and the app's user (idempotent; also resets the password to the saved one). */
@@ -473,7 +537,10 @@ export class DevDatabaseService {
     if (bins) await this.client(bins, i.port, { user: "root" }, "SHUTDOWN", 10_000).catch(() => undefined);
     if (own) {
       const done = await Promise.race([own.exited.then(() => true), Bun.sleep(15_000).then(() => false)]);
-      if (!done) own.proc.kill();
+      if (!done) {
+        await this.sys.kill(own.proc.pid);
+        await this.stopLeftovers(projectId);
+      }
     }
     this.log.info("test database stop requested", { projectId });
     return true;
@@ -706,6 +773,36 @@ export class DevDatabaseService {
       clearTimeout(timer);
     }
   }
+}
+
+class LockedError extends DevDbError {}
+
+/** A log file from a byte offset ("" when it cannot be read). */
+function readFrom(file: string, offset: number): string {
+  try {
+    return fs.readFileSync(file).subarray(offset).toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function fileSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
+/** The first error lines of a server log (this start's part), without their time stamps. */
+export function serverErrors(log: string): string {
+  return log
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => /\[ERROR\]/.test(l) && !/\bAborting\b/i.test(l))
+    .slice(0, 3)
+    .map((l) => l.replace(/^\S+Z\s+\d+\s+/, "").replace(/^\d{4}-\d\d-\d\d\s+[\d:]+\s+\d+\s+/, ""))
+    .join("\n");
 }
 
 function lastLines(text: string, n: number): string {

@@ -521,17 +521,23 @@ export class TaskManager {
         type: "info",
         text: r.problems.length
           ? `The app does not run yet: ${r.problems[0]?.split("\n")[0] ?? ""}`
-          : r.running.length
-            ? `The app runs: ${r.running.map((p) => p.url).join(", ")}`
-            : "Nothing to start for this work",
-        details: { problems: r.problems.length, running: r.running.map((p) => p.url) },
+          : r.blocked.length
+            ? `Depo could not check the app: ${r.blocked[0]?.split("\n")[0] ?? ""}`
+            : r.running.length
+              ? `The app runs: ${r.running.map((p) => p.url).join(", ")}`
+              : "Nothing to start for this work",
+        details: {
+          problems: r.problems.length,
+          blocked: r.blocked.length,
+          running: r.running.map((p) => p.url),
+        },
         durationMs: Math.round(performance.now() - t0),
-        status: r.problems.length ? "failed" : "succeeded",
+        status: r.problems.length || r.blocked.length ? "failed" : "succeeded",
       });
       return r;
     } catch (err) {
       this.log.warn("finish line failed", { taskId: ctx.taskId, err });
-      return { problems: [], running: [], notes: [] };
+      return { problems: [], running: [], notes: [], blocked: [] };
     }
   }
 

@@ -16,6 +16,7 @@ import { getLogger, withLogContext } from "../logger";
 import { fallOf, smallerContext, waitForRuntime } from "../models/revive";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
+import { codeBlocks, dumpInProgress, dumpNudge, filesFromDump, isCodeDump } from "./codedump";
 import { type Repetition, RepetitionGuard } from "./repetition";
 import {
   extractTextToolCalls,
@@ -25,6 +26,7 @@ import {
   looksLikeToolCall,
   stripToolMarkup,
   withoutInventedResults,
+  withoutStrayResultTag,
 } from "./textcalls";
 
 /** A model call may be retried this many times after a transient failure. */
@@ -40,6 +42,8 @@ export const MAX_REPLY_TOKENS = 8192;
 const MAX_LOOPS = 3;
 /** Text allowed after a complete tool call written as text before the reply is stopped. */
 const AFTER_CALL_CHARS = 400;
+/** Replies stopped for pasting code instead of saving it, per run, before Depo lets them finish. */
+const MAX_DUMP_CUTS = 3;
 const log = getLogger({ component: "agent" });
 
 export type Emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown;
@@ -137,6 +141,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   let finishNudges = 0;
   let doItNudges = 0;
   let madeUpResults = 0;
+  let dumpCuts = 0;
+  let finalDumps = 0;
   let loops = 0;
   const canEdit = p.toolNames.includes("write_file") || p.toolNames.includes("edit_file");
   // Lowered when the runtime crashes twice (a context too big for the GPU's memory).
@@ -178,6 +184,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     // A reply that goes on after a complete tool call written as text (inventing the result,
     // then the next steps) is stopped there: the call runs and the model gets the real result.
     const early = { end: -1, checkedAt: 0, cut: false };
+    // A reply that pastes whole files as text (no tool call) is stopped once that is clear.
+    const dump = { checkedAt: 0, cut: false };
     const stop = new AbortController();
     const relay = () => stop.abort();
     signal.addEventListener("abort", relay, { once: true });
@@ -205,6 +213,21 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
             if (early.end < 0) early.end = firstTextCallEnd(streamed, toolNames);
             if (early.end >= 0 && streamed.length - early.end > AFTER_CALL_CHARS) {
               early.cut = true;
+              stop.abort();
+            }
+          }
+          if (
+            canEdit &&
+            dumpCuts < MAX_DUMP_CUTS &&
+            !loop.found &&
+            !early.cut &&
+            !dump.cut &&
+            early.end < 0 &&
+            streamed.length - dump.checkedAt >= 200
+          ) {
+            dump.checkedAt = streamed.length;
+            if (dumpInProgress(streamed, toolNames)) {
+              dump.cut = true;
               stop.abort();
             }
           }
@@ -273,6 +296,13 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       });
       res = { text: streamed.slice(0, cut), toolCalls: [], finishReason: "unknown", usage: null };
     }
+    let dumped = false;
+    if (res === null && dump.cut && !signal.aborted) {
+      dumpCuts++;
+      dumped = true;
+      log.warn("model reply pasted code instead of saving it", { model: p.model, chars: streamed.length });
+      res = { text: streamed, toolCalls: [], finishReason: "unknown", usage: null };
+    }
     if (res === null) break; // cancelled
     if ("badOutput" in res) {
       // The runtime could not read the model's reply (usually a broken tool call). Tell the model
@@ -289,8 +319,9 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     }
     badOutputs = 0;
     if (!repeated) loops = 0;
+    res.text = withoutStrayResultTag(res.text);
     let calls: ToolCall[] = res.toolCalls;
-    if (calls.length === 0) {
+    if (calls.length === 0 && !dumped) {
       const parsed = extractTextToolCalls(res.text, toolNames);
       calls = parsed.calls;
       if (calls.length) res.text = parsed.rest;
@@ -329,6 +360,43 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       res.text =
         withoutInventedResults(res.text) ||
         "The model could not finish this step with its tools. The work so far is ready for review.";
+    // Code pasted into the reply instead of saved: save the complete files it labels, ask for tools.
+    let dumpNote: string | null = null;
+    if (
+      calls.length === 0 &&
+      canEdit &&
+      (dumped || (changed.size === 0 && finalDumps < 2 && isCodeDump(res.text)))
+    ) {
+      if (!dumped) finalDumps++;
+      const { files, existing } = p.toolNames.includes("write_file")
+        ? filesFromDump(res.text, ctx.root)
+        : { files: [], existing: [] };
+      calls = files.map((f, i) => {
+        const args = { path: f.path, content: f.content };
+        return {
+          id: `dump_${steps}_${i + 1}`,
+          name: "write_file",
+          arguments: args,
+          rawArguments: JSON.stringify(args),
+        };
+      });
+      const firstBlock = codeBlocks(res.text)[0]?.start ?? res.text.length;
+      res.text = res.text.slice(0, firstBlock).trim();
+      dumpNote = dumpNudge(
+        files.map((f) => f.path),
+        existing,
+        dumped,
+      );
+      emit({
+        type: "retrying",
+        text: `The model ${dumped ? "was pasting" : "pasted"} code into its reply instead of saving files${dumped ? ", so Depo stopped it" : ""}. ${
+          files.length
+            ? `Depo saved the ${files.length === 1 ? "new file" : `${files.length} new files`} it named (${files.map((f) => f.path).join(", ")}) and asked it to use its tools.`
+            : "Asking it to save files with its tools."
+        }`,
+        status: "running",
+      });
+    }
     calls = uniqueCalls(calls);
     const assistant: ChatMessage = {
       role: "assistant",
@@ -344,6 +412,10 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         details: { jobId: messageId, text: res.text.slice(-4000) },
         status: "info",
       });
+    }
+    if (calls.length === 0 && dumpNote) {
+      history.push({ role: "user", content: dumpNote });
+      continue;
     }
     if (calls.length === 0) {
       // A note arrived while the model wrote its answer: read it before finishing.
@@ -472,7 +544,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       history.push(toolMsg);
       p.persist({ ...toolMsg, ...(result.isError ? { isError: true } : {}) });
     }
-    if (repeated)
+    if (dumpNote) history.push({ role: "user", content: dumpNote });
+    else if (repeated)
       history.push({
         role: "user",
         content:
@@ -612,6 +685,11 @@ async function chatWithRetry(
         details: { attempt: attempt + 1, ...(fall ? { fall } : {}) },
         status: "running",
       });
+      // A hung model process stays hung: unloading it makes Ollama start a fresh one for the retry.
+      if (fall === "crashed" && p.provider.unload)
+        await p.provider.unload(req.model, AbortSignal.timeout(15_000)).catch((e: unknown) => {
+          log.warn("could not unload the crashed model", { model: req.model, err: e });
+        });
       if (fall && p.retryDelayMs === undefined) {
         const back = await waitForRuntime(p.provider, { ...(req.signal ? { signal: req.signal } : {}) });
         if (!back && !req.signal?.aborted)

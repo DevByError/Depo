@@ -124,6 +124,24 @@ export function inventsToolResult(text: string): boolean {
   return /<tool_(response|result)>|<\/tool_(response|result)>/i.test(text);
 }
 
+/**
+ * Some models (qwen2.5-coder 7b among them) open their replies with a bare "<tool_response>" tag
+ * and then write ordinary sentences ("<tool_response>\nLet's start by reading app.ts."). That is a
+ * habit, not a made-up result, so the tag is dropped. A tag that is closed, or followed by
+ * something that reads like a tool's output, is left for the made-up-result check.
+ */
+export function withoutStrayResultTag(text: string): string {
+  const m = /^\s*<tool_(response|result)>[ \t]*\n?/i.exec(text);
+  if (!m) return text;
+  const rest = text.slice(m[0].length);
+  if (/<\/?tool_(response|result)>/i.test(rest)) return text;
+  const first = rest.trimStart().split("\n", 1)[0] ?? "";
+  return PROSE_START.test(first) ? rest.trimStart() : text;
+}
+
+const PROSE_START =
+  /^(I|I'll|I've|I'm|I am|I will|Let's|Let me|Now|Next|Then|Sure|Okay|OK|Alright|The|This|These|To|Here|Great|Sorry|Apologies|No|Yes|All|Done|First|Please|We|It|My|Based on|Since|After|Before|Unfortunately|Thank)\b/;
+
 /** The reply without the tool results the model wrote itself (and anything after an unclosed one). */
 export function withoutInventedResults(text: string): string {
   return text

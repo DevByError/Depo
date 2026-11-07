@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-07_
 
+## Fix (2026-11-07): the Skill Finder test on the owner's PC (MySQL 8, qwen2.5-coder:7b)
+
+- **Found from their logs and database:** part 1 "finished" with no file changed (one reply wrote code as text for 88 minutes, the final answer was a pasted `schema.sql`); in part 2 the test database never started, the model was asked to fix that and told the owner to run `icacls`, and then Ollama's model process hung (500 on `/tokenize`, then time-outs) and the task failed. MySQL 8 had started fine, but Depo could not sign in to it from 127.0.0.1, gave up after 90 s and stopped only MySQL's monitor process, so the real server kept its files locked for every later try.
+- **Fixed:** MySQL 8 sign-in from 127.0.0.1, and a server left running on the project's data folder is found and stopped (never another MySQL on the PC) (ADR-0069); Depo's own database failure goes in the run report instead of to the model (ADR-0070); a hung Ollama runner is unloaded and the call retried (ADR-0071); a reply that pastes code is stopped early, new files it names are saved, existing files are never overwritten from a paste, and the stray `<tool_response>` before a sentence no longer counts as a made-up result (ADR-0072).
+- **Verified:** a real MySQL 8.0.46 in the container: fresh start in 4 s, a leftover server with no saved settings stopped and replaced (data kept), a second server holding the files detected from the log and stopped, then a clean stop; the same leftover case with MariaDB. Engine 605 tests (14 new), UI 353; lint and types clean.
+
 ## Follow-ups that build on the work (2026-11-07): "ask for updates over the updates I already did"
 
 - **Found on the owner's PC (qwen2.5-coder:3b):** the first build worked, but the follow-up "make the UI/UX responsive" started from zero and told the owner what to do. Causes, from their database and logs: the model was shown the project folder's file list ("README.md (2 lines)") instead of the 46 files in its copy; two 8192-token replies (11 and 14 minutes) were one real call followed by made-up results and pretend calls ("Folder created."), none of which ran; the first answer was itself a made-up tool result; tests were run with `npm test` in a Bun project; the vision role used a coder that cannot see (400) and the fast role a model that was never pulled (404); the Preview showed the API's JSON page; the Team tab said "This task uses a single agent".
