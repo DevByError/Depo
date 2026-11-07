@@ -1,9 +1,9 @@
-import type { AgentStatus } from "@depo/shared";
-import { useQuery } from "@tanstack/react-query";
-import { Cpu } from "lucide-react";
+import { ArrowUpRight, Cpu, Signpost } from "lucide-react";
+import { AgentAvatar, AgentStateBadge, MiniProgress } from "@/components/team/AgentAvatar";
 import { AGENT_TEAM, type AgentInfo } from "@/lib/agents";
 import { cn } from "@/lib/cn";
-import { call } from "@/lib/engine";
+import { engineAgentId, isBusy, type LiveAgent } from "@/lib/team-view";
+import { useTeamView } from "@/lib/use-team";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 import { connectionLabel } from "./ConnectionBadge";
@@ -11,39 +11,18 @@ import { HeartbeatPulse } from "./HeartbeatPulse";
 
 const GROUPS: AgentInfo["group"][] = ["Leadership", "Design", "Builders", "Quality", "Delivery"];
 
-/** Board ids differ from the roster ids for three agents. */
-const ROSTER_TO_ENGINE: Record<string, string> = {
-  pm: "project-management",
-  design: "ui-ux-design",
-  devops: "devops-docs",
-};
-
-const STATE_TEXT: Record<AgentStatus["state"], string> = {
-  idle: "Idle",
-  thinking: "Thinking",
-  working: "Working",
-  waiting: "Waiting",
-  blocked: "Blocked",
-};
-const STATE_DOT: Record<AgentStatus["state"], string> = {
-  idle: "bg-border",
-  thinking: "bg-info animate-pulse",
-  working: "bg-accent animate-pulse",
-  waiting: "bg-warning",
-  blocked: "bg-danger",
-};
-
+/**
+ * The right-hand Agent board: for a team task, each agent taking part with its live state, what
+ * it is doing and its last decision (the compact form of the Team screen); the rest of the team below.
+ */
 export function AgentBoard() {
   const status = useEngine((s) => s.status);
   const info = useEngine((s) => s.info);
   const taskId = useUi((s) => s.taskId);
-  const team = useQuery({
-    queryKey: ["team", taskId],
-    queryFn: () => call("team.get", { taskId: taskId ?? "" }),
-    enabled: status === "open" && !!taskId,
-  });
-  const byId = new Map((team.data?.agents ?? []).map((a) => [a.id as string, a]));
-  const teamTask = team.data && team.data.mode !== "single";
+  const setCenterTab = useUi((s) => s.setCenterTab);
+  const { view } = useTeamView(taskId);
+  const team = view && view.mode !== "single" ? view : null;
+  const taking = new Set(team?.agents.map((a) => a.id as string) ?? []);
   return (
     <section className="h-full overflow-y-auto p-3" tabIndex={0} aria-label="Agent board">
       <section
@@ -63,42 +42,101 @@ export function AgentBoard() {
         </div>
       </section>
 
-      <p className="mb-3 text-xs leading-relaxed text-subtle">
-        {teamTask
-          ? "Live status of each agent in the current task."
-          : "Pick a work mode other than Single agent in a new task to put the team to work. Each agent shows idle, thinking, working, waiting or blocked."}
-      </p>
-
-      {GROUPS.map((group) => (
-        <section key={group} className="mb-3" aria-label={group}>
-          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-subtle">{group}</h4>
-          <ul className="divide-y divide-border/60 rounded-lg border border-border">
-            {AGENT_TEAM.filter((a) => a.group === group).map((a) => {
-              const s = byId.get(ROSTER_TO_ENGINE[a.id] ?? a.id);
-              const state = s?.state ?? "idle";
-              return (
-                <li key={a.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs">
-                  <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", STATE_DOT[state])} />
-                  <span className="min-w-0 flex-1">
-                    <span className="text-fg">{a.name}</span>
-                    <span className="block truncate text-subtle">
-                      {s && state !== "idle" ? s.text : a.role}
-                    </span>
-                  </span>
-                  <span className="shrink-0 text-right text-[11px] text-subtle">
-                    {STATE_TEXT[state]}
-                    {s && s.total > 0 && (
-                      <span className="block tabular-nums">
-                        {s.done}/{s.total}
-                      </span>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
+      {team ? (
+        <>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-subtle">In this task</h4>
+            <button
+              type="button"
+              onClick={() => setCenterTab("team")}
+              className="inline-flex items-center gap-0.5 rounded text-[11px] font-medium text-accent hover:underline"
+            >
+              Open Team view
+              <ArrowUpRight className="size-3" aria-hidden />
+            </button>
+          </div>
+          <ul className="mb-4 flex flex-col gap-2" aria-label="Agents in this task">
+            {team.agents.map((a) => (
+              <BoardAgent key={a.id} agent={a} />
+            ))}
           </ul>
-        </section>
-      ))}
+          <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-subtle">
+            Rest of the team
+          </h4>
+          <ul className="flex flex-wrap gap-1.5" aria-label="Agents not in this task">
+            {AGENT_TEAM.filter((a) => !taking.has(engineAgentId(a.id))).map((a) => (
+              <li
+                key={a.id}
+                title={a.role}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border py-0.5 pr-2 pl-0.5 text-[11px] text-muted"
+              >
+                <AgentAvatar id={engineAgentId(a.id)} name={a.name} size="xs" />
+                {a.name}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <p className="mb-3 text-xs leading-relaxed text-subtle">
+            Pick a work mode other than Single agent in a new task to put the team to work. Each agent then
+            shows what it is doing and what it decided.
+          </p>
+          {GROUPS.map((group) => (
+            <section key={group} className="mb-3" aria-label={group}>
+              <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-subtle">{group}</h4>
+              <ul className="divide-y divide-border/60 rounded-lg border border-border">
+                {AGENT_TEAM.filter((a) => a.group === group).map((a) => (
+                  <li key={a.id} className="flex items-center gap-2.5 px-2.5 py-1.5 text-xs">
+                    <AgentAvatar id={engineAgentId(a.id)} name={a.name} size="sm" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-fg">{a.name}</span>
+                      <span className="block truncate text-subtle">{a.role}</span>
+                    </span>
+                    <AgentStateBadge state="idle" compact />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </>
+      )}
     </section>
+  );
+}
+
+function BoardAgent({ agent: a }: { agent: LiveAgent }) {
+  const busy = isBusy(a.state);
+  return (
+    <li
+      data-agent={a.id}
+      className={cn(
+        "rounded-lg border bg-panel px-2.5 py-2",
+        busy ? "border-border-strong" : "border-border",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <AgentAvatar id={a.id} name={a.name} size="sm" busy={busy} />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{a.name}</span>
+        <AgentStateBadge state={a.state} compact />
+      </div>
+      {a.action && (
+        <p className="mt-1.5 truncate text-xs text-muted" title={a.action}>
+          {a.action}
+        </p>
+      )}
+      {a.lastDecision && (
+        <p className="mt-1 flex gap-1.5 text-[11px] leading-4 text-subtle">
+          <Signpost className="mt-px size-3 shrink-0" aria-hidden />
+          <span className="line-clamp-2 min-w-0">{a.lastDecision.text}</span>
+        </p>
+      )}
+      {a.total > 0 && (
+        <div className="mt-1.5 flex items-center gap-2 text-[11px] tabular-nums text-subtle">
+          <MiniProgress id={a.id} done={a.done} total={a.total} className="flex-1" />
+          {a.done}/{a.total}
+        </div>
+      )}
+    </li>
   );
 }

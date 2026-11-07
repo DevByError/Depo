@@ -26,6 +26,7 @@ export const TAB_COMMANDS: { id: CenterTab; label: string; keywords: string }[] 
   { id: "knowledge", label: "Knowledge", keywords: "packs docs osv" },
   { id: "blocks", label: "Blocks", keywords: "building blocks login roles auth" },
   { id: "security", label: "Security", keywords: "scan secrets vulnerabilities" },
+  { id: "team", label: "Team", keywords: "agents mission control decisions live graph" },
 ];
 
 /**

@@ -15,6 +15,7 @@ import {
   Presentation,
   Puzzle,
   ShieldCheck,
+  UsersRound,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { AgentLabPanel } from "@/components/panels/AgentLabPanel";
@@ -33,6 +34,7 @@ import { PlanBoard } from "@/components/panels/PlanBoard";
 import { SecurityPanel } from "@/components/panels/SecurityPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { SlidesPanel } from "@/components/panels/SlidesPanel";
+import { TeamPanel } from "@/components/panels/TeamPanel";
 import { cn } from "@/lib/cn";
 import { type CenterTab, useUi } from "@/store/ui";
 
@@ -64,6 +66,7 @@ export const CENTER_TABS: TabDef[] = [
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "blocks", label: "Blocks", icon: Blocks },
   { id: "security", label: "Security", icon: ShieldCheck },
+  { id: "team", label: "Team", icon: UsersRound },
 ];
 
 export function CenterTabs() {
@@ -152,6 +155,8 @@ export function CenterTabs() {
             <SecurityPanel />
           ) : current.id === "models" ? (
             <ModelsPanel />
+          ) : current.id === "team" ? (
+            <TeamPanel />
           ) : (
             <PhaseNotice icon={current.icon} title={current.label} phase={current.phase ?? "a later phase"}>
               {current.blurb}
