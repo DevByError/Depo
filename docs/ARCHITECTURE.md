@@ -203,3 +203,25 @@ packages/engine/src/
 Knowledge loads in steps so small local models are not flooded. Every system prompt has the agent's core and a one-line list of topics. Topic sections are added only when the model's context allows it (none up to 8k tokens, 1 up to 16k, 2 above), chosen by the request text, the detected stack and the agent's own field, and trimmed at a heading or paragraph. Anything else is one `read_playbook` call away (`{topic}`, `{query}`, or nothing to list). Build plans (full, backend, frontend, ai) get the production bar: accounts, roles, validation, errors, pagination, seed data, tests, README and run script, accessible UI states, OpenAPI, as testable criteria. Reviewers check work against the owner's definition of done.
 
 After a single or team task ends in review or done (never cancelled or declined), `AutoMemory` saves facts read from the files (stack, package manager, the test command that passed, run command, ports, layout; keyed `auto:*` in `memory_facts.signature`), then asks the fast or coder model, at background priority, for at most 5 items as JSON. Items are cleaned, checked for secrets, deduplicated (same normalised text or token Jaccard of 0.8 or more updates instead of adding), stored with source `auto`, capped at 40 per project, and announced with one `memory_updated` event. A reason given when declining a command or plan, or when discarding changes, becomes a preference; a discard also re-reads the facts from the real project. Setting `memory.auto` (default on) turns it off. No migration: `source` is a text column.
+
+## Previews (packages/engine/src/preview/)
+
+```
+  recipes.ts        how to start a folder: Node (npm/pnpm/yarn/bun; Next, Vite, CRA, servers), FastAPI/Flask/Django
+                    (venv interpreter first), static sites, monorepo frontend + backend; a saved command wins
+  manager.ts        start / restart / stop, readiness over HTTP, 2000-line redacted log ring, states, cleanup
+                    when the engine stops, a task copy is removed or a project is removed
+  ports.ts          a free port on 127.0.0.1
+  static-server.ts  built-in static server (MIME types, no path traversal)
+  http-check.ts     loopback-only HTTP checks for agents
+```
+
+A preview runs the project's real folder or a task's private copy, so new code can be run and tried before it is applied. Commands go through the command policy and run contained (`startShell` in `tools/shell/run.ts`, Job Objects on Windows), bind to 127.0.0.1, and get telemetry-off variables. RPC: `preview.targets`, `preview.detect`, `preview.start`, `preview.stop`, `preview.restart`, `preview.list`, `preview.logs`; events `preview_started`, `preview_stopped`. Agent tools: `start_preview`, `http_check`, `stop_preview` (Backend, Frontend, Integration, Testing and the single coder). The Tauri CSP allows `frame-src` for loopback so the Preview tab can embed the app.
+
+## Team view (decisions and timeline)
+
+Agents' decisions are `decision` events (`details.kind`: plan, plan_approval, send_back, escalate, release, review, result, adr, recommendation) with plain text. `team.timeline { taskId }` (`agents/timeline.ts`) builds per-agent stats (state, current action, done/total, reviews, time, last decision) and the decision list from the plan and the events table. The UI merges live events with that snapshot: `TeamPanel.tsx` (header stats, `PlanGraph` layered DAG from `lib/dag-layout.ts`, `AgentCard`, `DecisionTimeline`) and the compact `AgentBoard`.
+
+## UI shell
+
+Tool rail (left edge: projects toggle, tool screens as icon tabs, theme, settings) | Sidebar (projects, running tasks and previews) | Centre (work tabs: Project, Chat, Team, Plan, Files, Diff Review, Preview) | Right panel (Activity, Agents); bottom panel (Engine, Terminal, Problems, Test results, Logs). Below 1180 px the right panel and below 860 px the sidebar become drawers. Theme tokens live in `styles.css` (slate surfaces, teal accent, agent family colours, all text AA on every surface); per-agent colour and initials come from `lib/agent-color.ts`. Scroll following: `lib/use-stick-to-bottom.ts` (chat, any DOM list) and `lib/use-follow-list.ts` (virtualised lists).

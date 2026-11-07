@@ -1,8 +1,20 @@
 # Progress
 
-**Current phase:** Phases 3, 4 and 5 are built and pass their acceptance tests in the development container and on the build PC (engine tests with a scripted model). They still need a run with a real model on the owner's PC and the browser end-to-end suite (see "Not verified yet").
+**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look. Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
 
-_Last updated: 2026-11-06_
+_Last updated: 2026-11-07_
+
+## Upgrade round 1 (2026-11-07): watch the team, run what it builds, deeper agents
+
+- **Chat like Claude:** the view follows new content only while you are at the bottom (`lib/use-stick-to-bottom.ts`, "Jump to latest" pill); each turn's work is one line that you open; every step is one line with an agent chip and a plain summary, details on click (diffs for edits, exit code and output for commands); the Manager's plan shows as a numbered card; the composer grows, has a work-mode menu with descriptions, and Stop.
+- **Team view (mission control):** new `decision` events (plan, plan approval, send back, escalate, review verdicts, results, ADRs, recommendation, release) and `team.timeline`; a Team tab with a live task graph, agent cards (state, current action, last decision, progress), and a decisions timeline; the Agents panel shows what each agent is doing.
+- **Run and preview:** `preview/` detects how to start Node, Next, Vite, FastAPI, Flask, Django, static and monorepo projects, runs the real folder or a task's private copy on 127.0.0.1, checks readiness, keeps logs; a Preview tab with the link, Open in browser, Copy link, a phone/tablet/desktop viewer and live logs; "Preview these changes" in Diff Review; running previews in the sidebar. Agents get `start_preview`, `http_check` (loopback only) and `stop_preview` and smoke-test what they build.
+- **Agent knowledge:** a playbook core per agent (definition of done, checklist, anti-patterns) plus 27 topics (FastAPI, Django, Node, Nest, Next, React, Tailwind, mobile, Postgres, MongoDB, Redis, auth, RBAC, testing, OWASP, performance, accessibility, Docker/CI, local AI/RAG and more) loaded within a budget that follows the model's context, and the `read_playbook` tool. Build plans get a production bar (auth, roles, validation, errors, pagination, seed data, tests, README, run script, accessible states, API docs) with testable criteria.
+- **Self-memory:** after each finished task Depo saves facts it can read (stack, commands, ports, layout) and up to five items from a short background model summary, with dedupe, a cap, and secrets filtered; setting `memory.auto`; "auto" badge in Memory.
+- **Logs:** structured JSON lines with components and task context, model call timing (time to first token, tokens/s), tool and command timing, `logs.query`/`logs.tail`/`logs.export` (diagnostics zip), a Logs tab, Activity feed filters and grouping, model performance in the Engine panel; setting `logs.level`.
+- **Look:** slate and teal theme tokens (AA contrast checked on every surface), IBM Plex Sans, agent family colours (`lib/agent-color.ts`), a tool rail for tool screens, side panels that become drawers on narrow windows.
+- **Fixes:** the hot-reload dev server crashed on a Node import (the UI now imports `@depo/model-gateway/contracts`); flaky message order; Windows paths in scanner output; Security reviews only code.
+- **Verified:** engine 309 tests, UI 115, gateway 37, shared 7, browser e2e 17 (axe WCAG 2.2 AA in both themes); lint and types clean; a full-system team run and a FastAPI preview checked in a browser with the scripted model.
 
 ## Phases 6 to 9 (security, Agent Lab, building blocks, polish and release)
 

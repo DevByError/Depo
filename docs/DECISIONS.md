@@ -172,3 +172,22 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Decision:** "Check for updates" asks the GitHub releases API for the configured repository and shows a link. No background checks, no silent install. The release workflow pins its actions to commits and publishes from a job that never sees the signing secrets.
 - **Reason:** Local-first means no surprise network traffic; in-app installs need signing keys and a real release to test.
 
+## ADR-0038: Previews run on loopback, from the real folder or a task's private copy
+- **Decision:** Depo starts a project's dev server itself (detected recipe or a saved command), on a free port on 127.0.0.1, through the command policy and contained like any command. A preview of a task's private copy lets the owner and the agents run new code before it overwrites the real files. `http_check` only reaches loopback addresses.
+- **Reason:** "Give me a link and I can see the result" without exposing anything to the network, and end-to-end proof that the built system runs, not only unit tests.
+
+## ADR-0039: Agent knowledge is a small core plus topics loaded on demand
+- **Decision:** Every agent's prompt carries a short playbook core and a topic list; one or two topic sections are added when the request or detected stack matches and the model's context allows it; the rest is read with `read_playbook`.
+- **Reason:** Local models have small contexts and slow prompt reading. Progressive loading gives them depth without paying for it on every step.
+
+## ADR-0040: Depo remembers by itself, conservatively
+- **Decision:** After a finished task, facts read from the files are saved without a model call, plus at most five items from a background summary. Items are deduplicated, capped (40 per project), filtered for secrets and marked "auto"; the owner can delete them or turn `memory.auto` off. Preferences are saved only when the owner gives a reason.
+- **Reason:** Memory that grows without care becomes noise or leaks secrets; small, checked items stay useful.
+
+## ADR-0041: Decisions are events
+- **Decision:** What agents decide (plans, reviews, send-backs, results, ADRs, the release verdict) is emitted as a `decision` event with plain text and structured details, and `team.timeline` builds the Team view from the plan and the events table.
+- **Reason:** The owner wants to watch the team think. Events are already stored, streamed and replayable, so decisions need no new storage.
+
+## ADR-0042: Look and layout
+- **Decision:** Slate surfaces with one teal accent, IBM Plex Sans, agent family colours as theme tokens, every text colour checked for AA contrast on every surface. Work screens stay in the top tab strip; tool screens move to an icon rail; side panels become drawers below 1180 px (right) and 860 px (left).
+- **Reason:** Twenty tabs in one strip did not fit; a calm, consistent look reads as a professional tool.
