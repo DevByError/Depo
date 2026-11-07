@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import { E2E_TMP } from "../playwright.config";
 import { fixtureCopy, seriousA11yViolations, useFakeOllamaAsCoder } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -108,7 +108,7 @@ test("Phase 2 acceptance: two projects run tasks at the same time with separate 
 
 test("create, edit, remember, duplicate, archive and remove a project", async ({ page }) => {
   test.setTimeout(90_000);
-  const parent = mkdtempSync(path.join(tmpdir(), "depo e2e new "));
+  const parent = mkdtempSync(path.join(E2E_TMP, "new "));
   await page.goto("");
   await expect(page.getByTestId("connection-status")).toHaveText(/Engine connected/);
 

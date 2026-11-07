@@ -1,10 +1,9 @@
 import { cpSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
-import { FAKE_OLLAMA_PORT } from "../playwright.config";
+import { E2E_TMP, FAKE_OLLAMA_PORT } from "../playwright.config";
 
 const FIXTURE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -13,7 +12,7 @@ const FIXTURE = path.resolve(
 
 /** A fresh copy of the FastAPI demo project, so applying changes never touches the repo. */
 export function fixtureCopy(name = "fastapi-demo"): string {
-  const dir = path.join(mkdtempSync(path.join(tmpdir(), "depo e2e ")), name);
+  const dir = path.join(mkdtempSync(path.join(E2E_TMP, "project ")), name);
   cpSync(FIXTURE, dir, { recursive: true });
   return dir;
 }

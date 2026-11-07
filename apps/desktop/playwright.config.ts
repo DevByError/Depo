@@ -8,11 +8,17 @@ import { defineConfig, devices } from "@playwright/test";
 export const E2E_TOKEN = "e2e".repeat(16);
 export const E2E_ENGINE_PORT = 47201;
 export const FAKE_OLLAMA_PORT = 47211;
-const dataDir = mkdtempSync(path.join(tmpdir(), "depo e2e "));
+// Every temp folder of a run lives under one root (engine data, project copies), removed by the
+// global teardown. The config is loaded by the runner and by every worker: the first load picks the
+// root and the environment hands it on, so a run makes one folder, not one per load.
+process.env.DEPO_E2E_TMP ??= mkdtempSync(path.join(tmpdir(), "depo e2e "));
+export const E2E_TMP: string = process.env.DEPO_E2E_TMP;
+const dataDir = path.join(E2E_TMP, "data");
 
 export default defineConfig({
   testDir: "e2e",
   globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
   timeout: 30_000,
   // One engine is shared by every spec, and specs change its settings, so they run one at a time.
   workers: 1,
@@ -52,6 +58,9 @@ export default defineConfig({
         DEPO_ENGINE_PORT: String(E2E_ENGINE_PORT),
         DEPO_DATA_DIR: dataDir,
       },
+      // A normal stop, so the engine also stops the previews it started (they run in their own
+      // process group and would outlive a killed engine on macOS and Linux).
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
       reuseExistingServer: false,
     },
     {
