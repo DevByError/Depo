@@ -77,12 +77,43 @@ function nameOf(n: Node): string | null {
 
 /** Top-level and nested declarations (classes, functions, methods …) of one source file. */
 export async function extractSymbols(langName: string, source: string): Promise<CodeSymbol[]> {
+  const parsed = await parseSource(langName, source);
+  if (!parsed) return [];
+  try {
+    return symbolsFromTree(parsed.root, source);
+  } finally {
+    parsed.dispose();
+  }
+}
+
+/** A parsed file. Call `dispose` when done (tree-sitter memory lives outside the JS heap). */
+export interface ParsedSource {
+  root: Node;
+  dispose(): void;
+}
+
+/** Parse once, then read symbols, imports and branches from the same tree. Null for unknown languages. */
+export async function parseSource(langName: string, source: string): Promise<ParsedSource | null> {
   const lang = await language(langName);
-  if (!lang) return [];
+  if (!lang) return null;
   const parser = new Parser();
   parser.setLanguage(lang);
   const tree = parser.parse(source);
-  if (!tree) return [];
+  if (!tree) {
+    parser.delete();
+    return null;
+  }
+  return {
+    root: tree.rootNode,
+    dispose: () => {
+      tree.delete();
+      parser.delete();
+    },
+  };
+}
+
+/** Declarations from a parsed tree (see extractSymbols). */
+export function symbolsFromTree(root: Node, source: string): CodeSymbol[] {
   const lines = source.split("\n");
   const out: CodeSymbol[] = [];
   const visit = (n: Node, parent: string | null, depth: number) => {
@@ -115,8 +146,6 @@ export async function extractSymbols(langName: string, source: string): Promise<
     }
     for (const c of n.namedChildren) if (c) visit(c, nextParent, depth + 1);
   };
-  visit(tree.rootNode, null, 0);
-  tree.delete();
-  parser.delete();
+  visit(root, null, 0);
   return out;
 }

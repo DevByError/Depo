@@ -375,9 +375,13 @@ export function templateNodes(mode: Exclude<WorkMode, "single">, text: string): 
       return [
         {
           id: "analysis",
-          title: "Study the project: stack, conventions, structure and risks",
+          title:
+            "Study the project: start with code_map (modules, entry points, cycles, hot spots), then stack, conventions, structure and risks",
           owner: "reasoning",
-          criteria: ["decisions.md records the stack and conventions", "a list of improvements"],
+          criteria: [
+            "decisions.md records the stack, the main modules and entry points, and the conventions",
+            "a list of improvements, including import cycles and hot spots worth splitting",
+          ],
         },
         {
           id: "diagrams",

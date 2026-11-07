@@ -387,6 +387,27 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS review_comments_task ON review_comments (task_id, status);
     `,
   },
+  {
+    version: 9,
+    name: "code_map",
+    sql: `
+      CREATE TABLE code_imports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        spec TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        target TEXT
+      );
+      CREATE INDEX code_imports_path ON code_imports (project_id, path);
+      CREATE INDEX code_imports_target ON code_imports (project_id, target);
+      ALTER TABLE code_files ADD COLUMN branches INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE code_files ADD COLUMN entry TEXT;
+      ALTER TABLE code_files ADD COLUMN map_version INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

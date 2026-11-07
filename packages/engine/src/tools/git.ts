@@ -79,3 +79,54 @@ export async function gitDiff(cwd: string, paths: string[] = [], staged = false)
   const r = await git(cwd, ["diff", ...(staged ? ["--cached"] : []), "--no-ext-diff", "--", ...paths]);
   return r.ok ? r.stdout : "";
 }
+
+/**
+ * How many of the last `maxCommits` commits touched each file, with paths relative to `cwd` (a
+ * project inside a bigger repository only counts its own files). Read-only and bounded: merges and
+ * bulk commits (over 100 files, such as formatting or renames) are skipped, and a slow repository
+ * gives up after `timeoutMs` with an empty result.
+ */
+export async function gitFileChurn(
+  cwd: string,
+  maxCommits = 400,
+  timeoutMs = 8000,
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const r = await git(
+    cwd,
+    ["log", `-n${maxCommits}`, "--no-merges", "--name-only", "--relative", "--format=%x1e", "--", "."],
+    timeoutMs,
+  ).catch(() => null);
+  if (!r?.ok) return counts;
+  for (const record of r.stdout.split("\x1e")) {
+    const files = record
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (files.length === 0 || files.length > 100) continue;
+    for (const f of files) counts.set(f, (counts.get(f) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Branch, uncommitted files and ahead/behind counts, from one `git status`. */
+export async function gitSummary(
+  cwd: string,
+): Promise<{ branch: string | null; changed: number; ahead: number; behind: number } | null> {
+  const r = await git(cwd, ["status", "--porcelain=v1", "-b"], 10_000).catch(() => null);
+  if (!r?.ok) return null;
+  const lines = r.stdout.split("\n").filter(Boolean);
+  const head = lines[0]?.startsWith("## ") ? (lines.shift() ?? "").slice(3) : "";
+  const branch = head
+    ? (head
+        .split("...")[0]
+        ?.replace(/^No commits yet on /, "")
+        .trim() ?? null)
+    : null;
+  return {
+    branch: branch && !branch.startsWith("HEAD (no branch)") ? branch : null,
+    changed: lines.length,
+    ahead: Number(/ahead (\d+)/.exec(head)?.[1] ?? 0),
+    behind: Number(/behind (\d+)/.exec(head)?.[1] ?? 0),
+  };
+}

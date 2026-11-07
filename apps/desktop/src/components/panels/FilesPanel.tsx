@@ -10,10 +10,10 @@ import { useUi } from "@/store/ui";
 /** Read-only project browser. Agents work on a copy; this always shows the real files. */
 export function FilesPanel() {
   const projectId = useUi((s) => s.projectId);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [goto, setGoto] = useState<{ line: number; seq: number } | null>(null);
-  // A jump from search: open that file at that line.
   const request = useNav((s) => s.file);
+  const [selected, setSelected] = useState<string | null>(request?.path ?? null);
+  const [goto, setGoto] = useState<{ line: number; seq: number } | null>(null);
+  // A jump from search or the code map: open that file (at that line, if given).
   useEffect(() => {
     if (!request) return;
     setSelected(request.path);

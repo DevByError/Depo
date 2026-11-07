@@ -526,4 +526,11 @@ export const handlers: Handlers = {
   "qa.list": (p, ctx) => ({ checks: needQa(ctx).list(p.projectId, p.taskId ?? null, p.limit ?? 10) }),
   "qa.screenshot": (p, ctx) => needQa(ctx).screenshot(p.projectId, p.taskId ?? null, p.path),
   "preview.pin": (p, ctx) => ({ preview: ctx.previews.setPinned(p.id, p.pinned) }),
+  "codemap.get": (p, ctx) =>
+    ctx.indexer.map.get(p.projectId, p.level, p.focus, {
+      ...(p.module !== undefined ? { module: p.module } : {}),
+      ...(p.limit !== undefined ? { limit: p.limit } : {}),
+    }),
+  "codemap.file": (p, ctx) => ctx.indexer.map.file(p.projectId, p.path),
+  "codemap.repo": (p, ctx) => ctx.indexer.map.repo(p.projectId),
 };

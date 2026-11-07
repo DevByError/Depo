@@ -262,6 +262,18 @@ export const MANIFESTS: AgentManifest[] = [
   ),
 ];
 
+/** Agents that read the code map first (code_map: modules, imports, entry points, hot spots). */
+export const CODE_MAP_AGENTS: AgentId[] = [
+  "thinking",
+  "reasoning",
+  "backend",
+  "frontend",
+  "integration",
+  "enhancement",
+];
+for (const a of MANIFESTS)
+  if (CODE_MAP_AGENTS.includes(a.id) && !a.tools.includes("code_map")) a.tools.push("code_map");
+
 export function manifestOf(id: AgentId): AgentManifest {
   const found = MANIFESTS.find((x) => x.id === id);
   if (!found) throw new Error(`Unknown agent: ${id}`);

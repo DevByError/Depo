@@ -103,6 +103,8 @@ function invalidateFor(type: string, status: string): void {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
   } else if (type === "indexing" && status !== "running") {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    void queryClient.invalidateQueries({ queryKey: ["codemap"] });
+    void queryClient.invalidateQueries({ queryKey: ["diagrams"] });
   }
   if (type === "handoff" || type === "test_result") {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
@@ -113,6 +115,10 @@ function invalidateFor(type: string, status: string): void {
   if (type === "applied_changes" || type === "checkpoint_created" || type === "committed") {
     void queryClient.invalidateQueries({ queryKey: ["git", "status"] });
     void queryClient.invalidateQueries({ queryKey: ["git", "log"] });
+    // The Project home's branch line (changed, ahead, last commit).
+    void queryClient.invalidateQueries({
+      predicate: (q) => q.queryKey[0] === "codemap" && q.queryKey[2] === "repo",
+    });
   }
   if (type === "rendering_screenshot" && status !== "started") {
     void queryClient.invalidateQueries({ queryKey: ["qa", "list"] });

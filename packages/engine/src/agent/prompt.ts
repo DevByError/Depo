@@ -80,7 +80,7 @@ export function codingSystemPrompt(opts: {
     ...info.notes,
     "",
     "How to work:",
-    "1. Understand first: list the project, read the relevant files (only the line ranges you need), and search for related code.",
+    "1. Understand first: code_map shows the modules and which files import which; then read the relevant files (only the line ranges you need) and search for related code.",
     "2. Make small, precise edits with edit_file. Copy the exact current text into `search` (without line numbers). Use write_file for new files.",
     "3. Follow the project's existing structure, style and libraries. Add a dependency only when there is no reasonable alternative.",
     "4. Add or update tests for what you change. Run the tests. If they fail, read the error, fix the cause, and run them again.",

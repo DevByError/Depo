@@ -30,6 +30,11 @@ export const useNav = create<NavState>((set) => ({
   clearLogsText: () => set({ logsText: null }),
 }));
 
+/** Ask the Files tab to show a project file (relative path), optionally at a line. */
+export function requestFile(path: string, line: number | null = null): void {
+  useNav.setState({ file: { path: path.replace(/\\/g, "/"), line, seq: ++seq } });
+}
+
 /** The highlight a revealed element gets for a moment. */
 const FLASH = ["ring-2", "ring-accent", "rounded-md"];
 
@@ -58,7 +63,7 @@ export function openSearchTarget(target: SearchTarget): void {
   const ui = useUi.getState();
   switch (target.kind) {
     case "file":
-      useNav.setState({ file: { path: target.path, line: target.line, seq: ++seq } });
+      requestFile(target.path, target.line);
       ui.setCenterTab("files");
       return;
     case "task":

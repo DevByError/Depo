@@ -1,60 +1,62 @@
-import type { ProjectSettings } from "@depo/shared";
+import type { ApiResult } from "@depo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  BookMarked,
-  CheckCircle2,
-  FileDiff,
+  ArrowLeft,
   FolderKanban,
-  ListTree,
   Loader2,
-  Pencil,
+  MonitorPlay,
+  Network,
+  Plus,
   RefreshCw,
-  XCircle,
+  ShieldCheck,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { CodeMapView } from "@/components/codemap/CodeMapView";
+import { HealthCards } from "@/components/overview/HealthCards";
+import {
+  CodeIndexCard,
+  DecisionsCard,
+  MemoryCard,
+  PreviewsCard,
+  RecentChangesCard,
+  TasksCard,
+  useRebuildIndex,
+} from "@/components/overview/HomeCards";
+import { ProjectHeader } from "@/components/overview/ProjectHeader";
+import { ProjectSettingsSection } from "@/components/overview/ProjectSettingsForm";
+import { Card, Empty } from "@/components/overview/parts";
 import { Button } from "@/components/ui/button";
-import { ErrorText, Field, inputClass } from "@/components/ui/modal";
+import { ErrorText } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
+import { plural } from "@/lib/code-map";
 import { call } from "@/lib/engine";
-import { formatRelative } from "@/lib/format";
 import { queryClient } from "@/lib/query";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 
-const TASK_LABELS: [string, string][] = [
-  ["running", "Working"],
-  ["queued", "Starting"],
-  ["waiting", "Needs you"],
-  ["review", "To review"],
-  ["done", "Done"],
-  ["failed", "Failed"],
-  ["cancelled", "Stopped"],
-];
-
-/** The project dashboard: what the project is, how its work is going, its index and its settings. */
+/**
+ * The project home: what the project is, how healthy it is, the work going on, what the team
+ * decided and remembers, and a map of the code. "Open code map" swaps in the full-size map.
+ */
 export function OverviewPanel() {
   const enabled = useEngine((s) => s.status === "open");
   const projectId = useUi((s) => s.projectId);
-  const setDialog = useUi((s) => s.setProjectDialog);
-  const setCenterTab = useUi((s) => s.setCenterTab);
-  const setChangeSetId = useUi((s) => s.setChangeSetId);
+  const [view, setView] = useState<"home" | "map">("home");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: another project opens on its home.
+  useEffect(() => setView("home"), [projectId]);
   const overview = useQuery({
     queryKey: ["overview", projectId],
     queryFn: () => call("projects.overview", { id: projectId ?? "" }),
     enabled: enabled && !!projectId,
     refetchInterval: (q) => (q.state.data?.index.state === "indexing" ? 1500 : false),
   });
-  const rebuild = useMutation({
-    mutationFn: () => call("index.rebuild", { projectId: projectId ?? "" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["overview", projectId] }),
-  });
 
   if (!projectId) {
     return (
       <Empty>
         <FolderKanban className="size-6 text-muted" aria-hidden />
-        <p>Create, import or open a project from the sidebar to see its dashboard here.</p>
+        <p>Create, import or open a project from the sidebar to see its home here.</p>
       </Empty>
     );
   }
@@ -73,31 +75,95 @@ export function OverviewPanel() {
       </Empty>
     );
   }
+  if (view === "map") {
+    return (
+      <section aria-label="Code map" tabIndex={0} className="h-full overflow-y-auto">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
+          <header className="flex flex-wrap items-center gap-3">
+            <Button size="sm" variant="ghost" onClick={() => setView("home")}>
+              <ArrowLeft aria-hidden /> Back to project
+            </Button>
+            <h1 className="text-lg font-semibold text-fg">Code map</h1>
+            <span className="min-w-0 truncate text-[13px] text-muted">{o.project.name}</span>
+          </header>
+          <p className="-mt-2 text-[13px] leading-relaxed text-muted">
+            How the folders and files depend on each other, read from the code. Pick a module to see its
+            files, and a file to see what it imports and what imports it. It updates as files change.
+          </p>
+          <CodeMapView projectId={o.project.id} compact={false} disabled={o.index.state === "disabled"} />
+        </div>
+      </section>
+    );
+  }
+  return <Home overview={o} onOpenMap={() => setView("map")} />;
+}
+
+function Home({ overview: o, onOpenMap }: { overview: ApiResult<"projects.overview">; onOpenMap(): void }) {
   const p = o.project;
+  const enabled = useEngine((s) => s.status === "open");
+  const setDialog = useUi((s) => s.setProjectDialog);
+  const setCenterTab = useUi((s) => s.setCenterTab);
+  const setTaskId = useUi((s) => s.setTaskId);
+  const repo = useQuery({
+    queryKey: ["codemap", p.id, "repo"],
+    queryFn: () => call("codemap.repo", { projectId: p.id }),
+    enabled: enabled && p.exists,
+    staleTime: 30_000,
+  });
+  const rebuild = useRebuildIndex(p.id);
+  const scan = useMutation({
+    mutationFn: () => call("security.scan", { projectId: p.id }, { timeoutMs: 300_000 }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["security", "last"] });
+      void queryClient.invalidateQueries({ queryKey: ["scores", p.id] });
+    },
+  });
   const idx = o.index;
+
   return (
-    <section aria-label="Project overview" className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-4xl flex-col gap-5 p-6">
-        <header className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-semibold text-fg">{p.name}</h1>
-            <p className="mt-0.5 truncate font-mono text-[11px] text-subtle" title={p.rootPath}>
-              {p.rootPath}
-            </p>
-            {p.description && <p className="mt-2 text-[13px] leading-relaxed text-muted">{p.description}</p>}
-            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-              {p.stack && <Chip>{p.stack}</Chip>}
-              {p.branch && <Chip>branch {p.branch}</Chip>}
-              <Chip>
-                {p.origin === "created" ? "Created in Depo" : p.origin === "duplicated" ? "Copy" : "Imported"}
-              </Chip>
-              {p.archivedAt && <Chip>Archived</Chip>}
-            </div>
-          </div>
-          <Button size="sm" onClick={() => setDialog({ kind: "rename", projectId: p.id })}>
-            <Pencil aria-hidden /> Edit details
+    <section aria-label="Project overview" tabIndex={0} className="h-full overflow-y-auto">
+      <div className="@container mx-auto flex max-w-5xl flex-col gap-4 p-6">
+        <ProjectHeader
+          overview={o}
+          repo={repo.data}
+          onEdit={() => setDialog({ kind: "rename", projectId: p.id })}
+        />
+
+        <fieldset
+          aria-label="Quick actions"
+          className="m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0"
+        >
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              setTaskId(null);
+              setCenterTab("chat");
+            }}
+          >
+            <Plus aria-hidden /> New task
           </Button>
-        </header>
+          <Button size="sm" onClick={() => setCenterTab("preview")}>
+            <MonitorPlay aria-hidden /> Preview
+          </Button>
+          <Button size="sm" disabled={scan.isPending || !p.exists} onClick={() => scan.mutate()}>
+            {scan.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <ShieldCheck aria-hidden />}
+            {scan.isPending ? "Scanning…" : "Scan"}
+          </Button>
+          <Button
+            size="sm"
+            disabled={idx.state === "disabled" || idx.state === "indexing" || rebuild.isPending}
+            onClick={() => rebuild.mutate()}
+          >
+            <RefreshCw className={cn(idx.state === "indexing" && "animate-spin")} aria-hidden /> Rebuild index
+          </Button>
+          <span role="status" className="text-[11px] text-muted">
+            {scan.data
+              ? `Scan finished: ${scan.data.findings.length ? plural(scan.data.findings.length, "finding") : "nothing found"}.`
+              : ""}
+          </span>
+        </fieldset>
+        <ErrorText error={scan.error} />
 
         {!p.exists && (
           <p
@@ -109,288 +175,34 @@ export function OverviewPanel() {
           </p>
         )}
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Card title="Tasks">
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-              {TASK_LABELS.filter(([k]) => o.taskCounts[k]).map(([k, label]) => (
-                <div key={k} className="flex justify-between">
-                  <dt className="text-muted">{label}</dt>
-                  <dd className="font-medium text-fg tabular-nums">{o.taskCounts[k]}</dd>
-                </div>
-              ))}
-            </dl>
-            {Object.keys(o.taskCounts).length === 0 && <p className="text-xs text-subtle">No tasks yet.</p>}
-            <Button size="sm" className="mt-3" onClick={() => setCenterTab("chat")}>
-              Open Chat
-            </Button>
-          </Card>
+        <HealthCards overview={o} />
 
-          <Card title="Last test run">
-            {o.lastTestRun ? (
-              <div className="flex items-start gap-2 text-xs">
-                {o.lastTestRun.passed ? (
-                  <CheckCircle2 className="size-4 shrink-0 text-success" aria-label="Passed" />
-                ) : (
-                  <XCircle className="size-4 shrink-0 text-danger" aria-label="Failed" />
-                )}
-                <div className="min-w-0">
-                  <p className="text-fg">{o.lastTestRun.text}</p>
-                  <p className="mt-0.5 text-subtle">{formatRelative(o.lastTestRun.at)}</p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-subtle">
-                Agents run the tests in their copy; the latest result shows here.
-              </p>
-            )}
-          </Card>
-
-          <Card
-            title="Code index"
-            icon={ListTree}
-            action={
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={idx.state === "disabled" || idx.state === "indexing" || rebuild.isPending}
-                onClick={() => rebuild.mutate()}
-              >
-                <RefreshCw className={cn(idx.state === "indexing" && "animate-spin")} aria-hidden />
-                Rebuild
-              </Button>
-            }
-          >
-            <p className="text-xs text-fg" data-testid="index-status">
-              {idx.state === "disabled"
-                ? "Turned off for this project."
-                : idx.state === "indexing"
-                  ? `Indexing${idx.progress ? ` ${idx.progress.done}/${idx.progress.total}` : ""}…`
-                  : `${idx.files} files · ${idx.symbols} symbols${idx.chunks ? ` · ${idx.chunks} chunks` : ""}`}
-            </p>
-            <p className="mt-1 text-[11px] leading-relaxed text-subtle">
-              {idx.embeddingModel
-                ? `Semantic search with ${idx.embeddingModel}.`
-                : "Symbols only. Download an embedding model in Models for search by meaning."}
-              {idx.watching ? " Watching for changes." : ""}
-              {idx.lastIndexedAt ? ` Updated ${formatRelative(idx.lastIndexedAt)}.` : ""}
-            </p>
-            {idx.error && <p className="mt-1 text-[11px] text-warning">{idx.error}</p>}
-            <ErrorText error={rebuild.error} />
-          </Card>
-
-          <Card title="Memory" icon={BookMarked}>
-            <p className="text-xs text-fg">
-              {o.memory.facts} fact{o.memory.facts === 1 ? "" : "s"} · {o.memory.lessons} lesson
-              {o.memory.lessons === 1 ? "" : "s"} learned
-            </p>
-            <p className="mt-1 text-[11px] text-subtle">Agents read the project memory before every task.</p>
-            <Button size="sm" className="mt-3" onClick={() => setCenterTab("memory")}>
-              Open Memory
-            </Button>
-          </Card>
+        <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
+          <TasksCard overview={o} />
+          <PreviewsCard projectId={p.id} />
+          <DecisionsCard projectId={p.id} />
+          <MemoryCard overview={o} />
         </div>
 
-        <Card title="Recent changes" icon={FileDiff}>
-          {o.recentChanges.length === 0 ? (
-            <p className="text-xs text-subtle">No changes yet.</p>
-          ) : (
-            <ul className="flex flex-col">
-              {o.recentChanges.map((c) => (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setChangeSetId(c.id);
-                      setCenterTab("diff");
-                    }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-hover"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-fg">{c.title}</span>
-                    <span className="text-subtle">
-                      {c.files} file{c.files === 1 ? "" : "s"}
-                    </span>
-                    <span className="w-28 text-right text-subtle">{c.status.replace("_", " ")}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+        <Card
+          title="Code map"
+          icon={Network}
+          action={
+            <Button size="sm" variant="ghost" onClick={onOpenMap}>
+              Open code map
+            </Button>
+          }
+        >
+          <CodeMapView projectId={p.id} compact disabled={idx.state === "disabled"} />
         </Card>
 
-        <ProjectSettingsForm projectId={p.id} />
+        <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
+          <RecentChangesCard overview={o} />
+          <CodeIndexCard overview={o} rebuild={rebuild} />
+        </div>
+
+        <ProjectSettingsSection projectId={p.id} />
       </div>
     </section>
-  );
-}
-
-function ProjectSettingsForm({ projectId }: { projectId: string }) {
-  const settings = useQuery({
-    queryKey: ["projectSettings", projectId],
-    queryFn: () => call("projects.settings.get", { id: projectId }),
-  });
-  const [draft, setDraft] = useState<ProjectSettings | null>(null);
-  const [allow, setAllow] = useState("");
-  const [deny, setDeny] = useState("");
-  useEffect(() => {
-    if (settings.data) {
-      setDraft(settings.data);
-      setAllow(settings.data.commandAllow.join("\n"));
-      setDeny(settings.data.commandDeny.join("\n"));
-    }
-  }, [settings.data]);
-  const save = useMutation({
-    mutationFn: (patch: Partial<ProjectSettings>) => call("projects.settings.set", { id: projectId, patch }),
-    onSuccess: (next) => {
-      queryClient.setQueryData(["projectSettings", projectId], next);
-      void queryClient.invalidateQueries({ queryKey: ["overview", projectId] });
-      void queryClient.invalidateQueries({ queryKey: ["scheduler"] });
-    },
-  });
-  if (!draft) return null;
-  const lines = (s: string) =>
-    s
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-  return (
-    <Card title="Project settings">
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          save.mutate({ ...draft, commandAllow: lines(allow), commandDeny: lines(deny) });
-        }}
-      >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Toggle
-            label="Keep a code index"
-            hint="Symbols and search for agents. Updates as files change."
-            checked={draft.indexEnabled}
-            onChange={(v) => setDraft({ ...draft, indexEnabled: v })}
-          />
-          <Toggle
-            label="Pause this project"
-            hint="Its tasks keep their place but start no new model work."
-            checked={draft.paused}
-            onChange={(v) => setDraft({ ...draft, paused: v })}
-          />
-          <Field
-            label="Tasks at once"
-            hint="How many of this project's tasks may use the model at the same time."
-          >
-            <input
-              type="number"
-              min={1}
-              max={8}
-              value={draft.maxParallel}
-              onChange={(e) => setDraft({ ...draft, maxParallel: Number(e.target.value) || 1 })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Most steps per task" hint="A task stops and hands over after this many model steps.">
-            <input
-              type="number"
-              min={5}
-              max={200}
-              value={draft.maxSteps}
-              onChange={(e) => setDraft({ ...draft, maxSteps: Number(e.target.value) || 40 })}
-              className={inputClass}
-            />
-          </Field>
-          <Field
-            label="Commands to run without asking"
-            hint="One per line, matched at the start, e.g. npm run lint. Never overrides Depo's blocked list."
-          >
-            <textarea
-              value={allow}
-              onChange={(e) => setAllow(e.target.value)}
-              rows={3}
-              className={`${inputClass} field-in-frame h-auto py-1.5 font-mono text-[11px]`}
-            />
-          </Field>
-          <Field label="Commands to block" hint="One per line. Agents are refused these in this project.">
-            <textarea
-              value={deny}
-              onChange={(e) => setDeny(e.target.value)}
-              rows={3}
-              className={`${inputClass} field-in-frame h-auto py-1.5 font-mono text-[11px]`}
-            />
-          </Field>
-        </div>
-        <ErrorText error={save.error} />
-        <div className="flex items-center justify-end gap-2">
-          {save.isSuccess && !save.isPending && (
-            <span role="status" className="text-xs text-success">
-              Saved
-            </span>
-          )}
-          <Button type="submit" variant="primary" size="sm" disabled={save.isPending}>
-            Save settings
-          </Button>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="flex items-start gap-2 text-xs">
-      <input
-        type="checkbox"
-        className="mt-0.5"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span>
-        <span className="font-medium text-fg">{label}</span>
-        <span className="mt-0.5 block text-[11px] text-subtle">{hint}</span>
-      </span>
-    </label>
-  );
-}
-
-function Card({
-  title,
-  icon: Icon,
-  action,
-  children,
-}: {
-  title: string;
-  icon?: typeof ListTree;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section aria-label={title} className="rounded-xl border border-border bg-panel p-4">
-      <div className="mb-3 flex items-center gap-2">
-        {Icon && <Icon className="size-4 text-muted" aria-hidden />}
-        <h2 className="flex-1 text-[13px] font-semibold text-fg">{title}</h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Chip({ children }: { children: ReactNode }) {
-  return <span className="rounded-full border border-border px-2 py-0.5 text-muted">{children}</span>;
-}
-
-function Empty({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[13px] text-muted">
-      {children}
-    </div>
   );
 }

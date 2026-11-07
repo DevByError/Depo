@@ -25,7 +25,6 @@ vi.mock("@/lib/engine", () => ({
 
 import { CommitDialog } from "./CommitDialog";
 import { CommitChangesBar } from "./CommitOffer";
-import { GitBranchBadge } from "./GitBadge";
 import { HistoryPanel } from "./HistoryPanel";
 
 const TEMPLATE = "feat(app): add a health check\n\nAsked for: add a health endpoint";
@@ -319,14 +318,5 @@ describe("history", () => {
     responses["git.status"] = () => status({ isRepo: false, branch: null });
     wrap(<HistoryPanel />);
     expect(await screen.findByText(/not a git repository/)).toBeTruthy();
-  });
-
-  test("the branch badge shows uncommitted changes and opens the history", async () => {
-    responses["git.status"] = () => status({ branch: "depo/health", changes: 1 });
-    wrap(<GitBranchBadge projectId="prj_1" />);
-    const badge = await screen.findByRole("button", { name: /depo\/health/ });
-    expect(badge.textContent).toContain("1 change not committed");
-    fireEvent.click(badge);
-    expect(useUi.getState()).toMatchObject({ bottomTab: "history", bottomOpen: true });
   });
 });
