@@ -8,6 +8,7 @@ import {
   FilePlus,
   FileText,
   History,
+  MonitorPlay,
   RotateCcw,
   X,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import { useEngine } from "@/store/engine";
+import { usePreviewUi } from "@/store/preview";
 import { useUi } from "@/store/ui";
 
 /** For each file: null = whole file, otherwise the selected hunk indexes. */
@@ -127,6 +129,21 @@ export function DiffReviewPanel() {
               <h2 className="text-[13px] font-semibold text-fg">Diff Review</h2>
             )}
           </div>
+          {reviewable && current.taskId && (
+            <Button
+              size="sm"
+              variant="secondary"
+              title="Run the app from this task's private copy and open it in the Preview tab"
+              onClick={() => {
+                usePreviewUi
+                  .getState()
+                  .show({ projectId, taskId: current.taskId, previewId: null, autoStart: true });
+                useUi.getState().setCenterTab("preview");
+              }}
+            >
+              <MonitorPlay /> Preview these changes
+            </Button>
+          )}
           {reviewable && (
             <>
               <Button size="sm" variant="ghost" onClick={() => discard.mutate()} disabled={discard.isPending}>

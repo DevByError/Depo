@@ -31,8 +31,14 @@
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:",
-        "img-src": "'self' data: blob:"
+        "img-src": "'self' data: blob:",
+        "frame-src": "http://127.0.0.1:* http://localhost:*"
       }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": "https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]{1,5})?(/[^\\s]*)?"
     }
   },
   "bundle": {

@@ -876,7 +876,7 @@ export class PreviewManager implements PreviewHooks {
             agent: ctx.agent,
             kind: "command",
             title: `Start the app with "${shown}"?`,
-            reason: `${v.reason}. It runs on 127.0.0.1 only, from the task's private copy, and stops when the task ends.`,
+            reason: `${v.reason}. It runs on 127.0.0.1 only, from the task's private copy. You can stop it in the Preview tab.`,
             details: { command: shown, category: v.category, preview: true },
           },
           ctx.signal,
