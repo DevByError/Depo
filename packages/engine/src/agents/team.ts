@@ -30,6 +30,8 @@ import { tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
 import type { Logger } from "../logger";
 import type { ModelManager } from "../models/manager";
+import { autoTopicsPrompt, definitionOfDone } from "../playbooks";
+import { planningGuide, raiseTheBar } from "../playbooks/plan";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { ProjectKnowledge, TeamHooks, ToolContext } from "../tools/index";
 import { ToolError } from "../tools/paths";
@@ -684,6 +686,7 @@ export class TeamRunner {
           'Plan the work as a task graph. Reply with JSON only: {"summary":"one or two sentences","nodes":[{"id":"kebab-id","title":"...","owner":"agent-id","deps":["ids that must finish first"],"criteria":["short, testable"]}],"questions":["only if you truly cannot proceed without an answer"]}.',
           `Owners must be one of:\n${allowed}`,
           "Keep the standard pipeline unless the request clearly does not need a step. Prefer 4 to 15 tasks. Every task must be small enough for one agent.",
+          planningGuide(input.mode, input.text),
           `Standard pipeline for this mode:\n${template.map((n) => `- ${n.id} (${n.owner})${n.deps?.length ? ` after ${n.deps.join(", ")}` : ""}: ${n.title}`).join("\n")}`,
           this.h.memoryContext(input.projectId)
             ? `What you know about this project:\n${this.h.memoryContext(input.projectId)}`
@@ -719,6 +722,8 @@ export class TeamRunner {
         }
       }
     }
+    // The production bar: testable criteria per task, also for the standard pipeline fallback.
+    drafts = raiseTheBar(drafts, input.mode, input.text);
     const opts = this.h.options();
     const nodes: PlanNode[] = drafts.map((d) => {
       const owner = d.owner as AgentId;
@@ -1139,6 +1144,13 @@ export class TeamRunner {
         ? `# What you know about this project\n${this.h.memoryContext(input.projectId)}`
         : "",
       this.h.repoMap(input.projectId) ? `# Repo map\n${this.h.repoMap(input.projectId)}` : "",
+      autoTopicsPrompt({
+        agent: manifest.id,
+        text: input.text,
+        root: input.ws.root,
+        mode: input.mode,
+        contextLength: this.resolve(manifest.role)?.contextLength ?? DEFAULT_CONTEXT,
+      }),
       extra,
     ]
       .filter(Boolean)
@@ -1275,6 +1287,9 @@ export class TeamRunner {
               ? `Files they changed:\n${run.changed.map((c) => `- ${c}`).join("\n")}`
               : "They changed no project files.",
             `Their summary: ${run.text.slice(0, 1500)}`,
+            definitionOfDone(owner.id)
+              ? `${owner.name}'s definition of done (check the work against it):\n${definitionOfDone(owner.id)}`
+              : "",
             "Read the changed files (and run the tests if that helps), then reply with the review JSON only.",
           ]
             .filter(Boolean)

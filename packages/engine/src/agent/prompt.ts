@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { autoTopicsPrompt, corePrompt } from "../playbooks";
+import { detectStack, stackSummary } from "./stack";
 
 /** What kind of project this is, so the agent knows how to run its tests. */
 export function detectProject(root: string): { kind: string; testCommand: string | null; notes: string[] } {
@@ -56,14 +58,22 @@ export function topLevelListing(root: string): string {
   }
 }
 
-export function codingSystemPrompt(opts: { projectName: string; root: string }): string {
+export function codingSystemPrompt(opts: {
+  projectName: string;
+  root: string;
+  /** The model's context length in tokens: decides how much playbook text fits. */
+  contextLength?: number;
+  /** The user's request, to pick the relevant playbook topics. */
+  request?: string;
+}): string {
   const info = detectProject(opts.root);
+  const stack = detectStack(opts.root);
   const win = process.platform === "win32";
   const lines = [
     "You are Depo's coding agent. You work inside a private copy of the user's project (the workspace).",
     "Nothing you do touches the user's real files. When you finish, the user reviews a diff of your changes and decides what to apply.",
     "",
-    `Project: ${opts.projectName} (${info.kind}).`,
+    `Project: ${opts.projectName} (${stackSummary(stack) || info.kind}).`,
     `Top level: ${topLevelListing(opts.root) || "(empty)"}`,
     `Shell: commands run with ${win ? "cmd.exe on Windows (use Windows syntax; `&&` works)" : "/bin/sh"} in the project root. There is no interactive input.`,
     ...(info.testCommand ? [`Run the tests with: ${info.testCommand}`] : []),
@@ -77,6 +87,15 @@ export function codingSystemPrompt(opts: { projectName: string; root: string }):
     "5. When the work is done and the tests pass, stop calling tools and reply with a short summary: what changed, which files, and the test result.",
     "",
     "Rules: read a file before editing it; never guess its contents. Do not ask the user to copy or apply anything; the review step does that. Keep replies short and plain.",
+    "",
+    corePrompt("coder"),
   ];
+  const topics = autoTopicsPrompt({
+    agent: "coder",
+    text: opts.request ?? "",
+    hints: stack.hints,
+    contextLength: opts.contextLength ?? 16_384,
+  });
+  if (topics) lines.push("", topics);
   return lines.join("\n");
 }
