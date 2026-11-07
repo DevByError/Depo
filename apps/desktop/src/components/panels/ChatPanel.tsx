@@ -1,30 +1,32 @@
-import type { ChatItem, DepoEvent, PendingApprovalDto, Task, TaskStatus, WorkMode } from "@depo/shared";
+import type { ChatItem, DepoEvent, PendingApprovalDto, Task, TaskStatus } from "@depo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  ArrowUp,
+  ArrowDown,
   Check,
-  ChevronRight,
   FileDiff,
   FlaskConical,
   HardDrive,
-  Loader2,
   Plus,
   ShieldAlert,
   ShieldCheck,
-  Square,
-  Wrench,
   X,
 } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Composer } from "@/components/chat/Composer";
+import { PlanCard } from "@/components/chat/PlanCard";
+import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
-import { EVENT_STYLE, TONE_TEXT } from "@/lib/event-style";
+import { describeNote, formatDuration, type ParsedPlan, parsePlan } from "@/lib/step-summary";
+import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 import { connectionLabel } from "./ConnectionBadge";
 import { Markdown } from "./Markdown";
+
+export { formatDuration } from "@/lib/step-summary";
 
 const PILLARS = [
   {
@@ -42,19 +44,6 @@ const PILLARS = [
     title: "Tested work",
     text: "The agent runs your tests in the copy and fixes what fails before handing over.",
   },
-];
-
-const MODES: { id: WorkMode; label: string }[] = [
-  { id: "single", label: "Single agent" },
-  { id: "full", label: "Full system" },
-  { id: "backend", label: "Backend only" },
-  { id: "frontend", label: "Frontend only" },
-  { id: "ai", label: "AI integration" },
-  { id: "import", label: "Study project" },
-  { id: "fix", label: "Fix / debug" },
-  { id: "refactor", label: "Refactor / upgrade" },
-  { id: "ask", label: "Ask / explain" },
-  { id: "business", label: "Business" },
 ];
 
 const STATUS_TEXT: Record<TaskStatus, string> = {
@@ -96,21 +85,56 @@ export function ChatPanel() {
     enabled: enabled && !!taskId,
   });
   const list = tasks.data?.tasks ?? [];
+  const open = taskId && task.data ? task.data : null;
+  // Follow new content only while the reader is at the end; opening a task starts at the end.
+  const stick = useStickToBottom<HTMLElement, HTMLDivElement>({
+    resetKey: taskId,
+    count: open?.messages.length ?? 0,
+  });
 
   return (
     <div className="flex h-full min-h-0">
       {projectId && <TaskList tasks={list} current={taskId} onSelect={setTaskId} />}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-y-auto" id="chat-scroll">
-          {taskId && task.data ? (
-            <Transcript task={task.data.task} items={task.data.messages} />
-          ) : (
-            <Welcome hasProject={!!projectId} />
-          )}
+        <div className="relative min-h-0 flex-1">
+          <section
+            ref={stick.scrollRef}
+            id="chat-scroll"
+            tabIndex={0}
+            aria-label="Chat transcript"
+            className="h-full overflow-y-auto focus-visible:-outline-offset-2"
+          >
+            <div ref={stick.contentRef}>
+              {open ? (
+                <Transcript task={open.task} items={open.messages} />
+              ) : (
+                <Welcome hasProject={!!projectId} />
+              )}
+            </div>
+          </section>
+          {open && !stick.pinned && <JumpToLatest count={stick.newCount} onClick={stick.jumpToLatest} />}
         </div>
-        <Composer task={taskId ? task.data?.task : undefined} />
+        <Composer task={taskId ? task.data?.task : undefined} onSent={stick.jumpToLatest} />
       </div>
     </div>
+  );
+}
+
+function JumpToLatest({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="absolute bottom-3 left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border-strong bg-raised py-1 pr-3 pl-2 text-xs font-medium text-fg shadow-pop transition-colors hover:bg-hover"
+    >
+      <ArrowDown className="size-3.5 text-accent" aria-hidden />
+      Jump to latest
+      {count > 0 && (
+        <span className="rounded-full bg-accent-soft px-1.5 text-[11px] text-accent tabular-nums">
+          {count} new
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -193,23 +217,35 @@ function Welcome({ hasProject }: { hasProject: boolean }) {
   );
 }
 
-/** Latest live event of a task: the streaming reply, or the latest step. */
-function useLive(taskId: string): { stream: string | null; step: DepoEvent | null } {
+/** Latest live state of a task: the streaming reply, and the latest step the engine reported. */
+function useLive(taskId: string): { stream: string | null; step: LiveStep | null } {
   const events = useEngine((s) => s.events);
   return useMemo(() => {
     let stream: string | null = null;
+    let streamAt = -1;
     let step: DepoEvent | null = null;
+    let stepAt = -1;
     for (let i = events.length - 1; i >= Math.max(0, events.length - 400); i--) {
       const e = events[i];
       if (!e || e.taskId !== taskId) continue;
       if (stream === null && e.type === "thinking" && e.ephemeral) {
         const t = e.details?.text;
         stream = typeof t === "string" ? t : e.text;
+        streamAt = i;
       }
-      if (step === null && e.type !== "thinking") step = e;
+      if (step === null && e.type !== "thinking" && e.type !== "command_output") {
+        step = e;
+        stepAt = i;
+      }
       if (step && stream !== null) break;
     }
-    return { stream, step };
+    const live: LiveStep | null =
+      streamAt > stepAt
+        ? { text: "Writing a reply", agent: events[streamAt]?.agent ?? null }
+        : step
+          ? { text: step.text, agent: step.agent }
+          : null;
+    return { stream, step: live };
   }, [events, taskId]);
 }
 
@@ -223,16 +259,11 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
     enabled,
   });
   const mine = (approvals.data?.approvals ?? []).filter((a) => a.taskId === task.id);
-  const turns = useMemo(() => groupTurns(items), [items]);
-  const endRef = useRef<HTMLDivElement>(null);
-  // Keep the newest content in view while the agent works.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new content
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [items.length, live.stream, mine.length]);
+  const turns = useMemo(() => groupTurns(items, { working: active }), [items, active]);
+  const last = turns.length - 1;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3 px-6 py-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
       <header className="flex items-center gap-2">
         <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-fg">{task.title}</h1>
         <span className="flex items-center gap-1.5 text-xs text-muted" data-testid="task-status">
@@ -242,19 +273,37 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
           {task.model && <span className="text-subtle">· {task.model}</span>}
         </span>
       </header>
-      <ol className="flex flex-col gap-6" aria-label="Conversation">
-        {turns.map((t, i) => (
-          <li key={t.user?.id ?? `turn-${i}`}>
-            <TurnView turn={t} latest={i === turns.length - 1} working={active && i === turns.length - 1} />
-          </li>
-        ))}
+      <ol className="flex flex-col gap-7" aria-label="Conversation">
+        {turns.map((t, i) => {
+          const latest = i === last;
+          const state: WorkState =
+            latest && active
+              ? task.status === "waiting"
+                ? "waiting"
+                : "working"
+              : latest && task.status === "cancelled"
+                ? "stopped"
+                : "done";
+          return (
+            <li key={t.user?.id ?? `turn-${i}`}>
+              <TurnView
+                turn={t}
+                id={t.user?.id ?? `${task.id}:${i}`}
+                state={state}
+                live={latest && active ? live.step : null}
+                stream={latest && active ? live.stream : null}
+              />
+            </li>
+          );
+        })}
       </ol>
       {mine.map((a) => (
         <ApprovalCard key={a.id} approval={a} />
       ))}
-      {active && <LiveRow stream={live.stream} step={live.step} />}
       {task.status === "review" && <ReviewBanner />}
-      <div ref={endRef} />
+      <p className="sr-only" role="status" aria-live="polite">
+        {active ? (task.status === "waiting" ? "The agent needs you." : (live.step?.text ?? "Working")) : ""}
+      </p>
     </div>
   );
 }
@@ -264,26 +313,68 @@ export interface Turn {
   user: ChatItem | null;
   steps: ChatItem[];
   answer: ChatItem | null;
+  /** "Note from Depo: …", added after the answer (for example when the last test run failed). */
+  note: ChatItem | null;
+  /** The Manager's plan in a team run, shown as a card instead of a step. */
+  plan: { item: ChatItem; plan: ParsedPlan } | null;
 }
 
-export function groupTurns(items: ChatItem[]): Turn[] {
+const isPlanAuthor = (agent: string | null) => !agent || agent.startsWith("manager@");
+
+/**
+ * Groups a transcript into turns. While `working`, the latest turn has no answer yet: its newest
+ * text is narration between tool calls, so it stays in the steps.
+ */
+export function groupTurns(items: ChatItem[], opts: { working?: boolean } = {}): Turn[] {
   const turns: Turn[] = [];
+  const empty = (user: ChatItem | null): Turn => ({ user, steps: [], answer: null, note: null, plan: null });
   for (const item of items) {
-    if (item.role === "user") turns.push({ user: item, steps: [], answer: null });
+    if (item.role === "user") turns.push(empty(item));
     else {
-      if (turns.length === 0) turns.push({ user: null, steps: [], answer: null });
+      if (turns.length === 0) turns.push(empty(null));
       turns[turns.length - 1]?.steps.push(item);
     }
   }
-  for (const t of turns) {
-    const last = t.steps.at(-1);
-    if (last?.role === "assistant") t.answer = t.steps.pop() ?? null;
-  }
+  turns.forEach((t, i) => {
+    for (let j = t.steps.length - 1; j >= 0; j--) {
+      const s = t.steps[j];
+      if (s?.role !== "assistant" || s.isError || !isPlanAuthor(s.agent)) continue;
+      const plan = parsePlan(s.text);
+      if (plan) {
+        t.plan = { item: s, plan };
+        t.steps.splice(j, 1);
+        break;
+      }
+    }
+    if (opts.working && i === turns.length - 1) return;
+    let last = t.steps.at(-1);
+    const prev = t.steps.at(-2);
+    if (last?.role === "assistant" && /^Note from Depo:/.test(last.text) && prev?.role === "assistant") {
+      t.note = t.steps.pop() ?? null;
+      last = prev;
+    }
+    if (last?.role === "assistant" && (last.isError || describeNote(last.text).kind === "note"))
+      t.answer = t.steps.pop() ?? null;
+  });
   return turns;
 }
 
-function TurnView({ turn, working }: { turn: Turn; latest: boolean; working: boolean }) {
-  const failed = turn.answer?.isError === true;
+function TurnView({
+  turn,
+  id,
+  state,
+  live,
+  stream,
+}: {
+  turn: Turn;
+  id: string;
+  state: WorkState;
+  live: LiveStep | null;
+  stream: string | null;
+}) {
+  const working = state === "working" || state === "waiting";
+  const startedAt = turn.user?.createdAt ?? turn.steps[0]?.createdAt ?? null;
+  const endedAt = (turn.note ?? turn.answer ?? turn.steps.at(-1))?.createdAt ?? null;
   return (
     <section aria-label={`Prompt: ${turn.user?.text.slice(0, 80) ?? "task"}`} className="flex flex-col gap-3">
       {turn.user && (
@@ -293,49 +384,34 @@ function TurnView({ turn, working }: { turn: Turn; latest: boolean; working: boo
           </div>
         </div>
       )}
-      <div className={cn("flex flex-col gap-2", failed && "text-danger")}>
-        {turn.steps.length > 0 && <Process steps={turn.steps} defaultOpen={working} />}
-        {turn.answer && <Answer item={turn.answer} />}
-      </div>
-    </section>
-  );
-}
-
-function Process({ steps, defaultOpen }: { steps: ChatItem[]; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  useEffect(() => {
-    if (defaultOpen) setOpen(true);
-  }, [defaultOpen]);
-  const n = steps.filter((s) => s.role === "tool").length;
-  const failedN = steps.filter((s) => s.role === "tool" && s.isError).length;
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex items-center gap-1.5 text-xs text-muted hover:text-fg"
-      >
-        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} aria-hidden />
-        {open ? "Hide" : "Show"} the work ({n} step{n === 1 ? "" : "s"})
-        {failedN > 0 && <span className="text-danger"> · {failedN} failed</span>}
-      </button>
-      {open && (
-        <ol className="mt-2 flex flex-col gap-1.5 border-l border-border pl-3">
-          {steps.map((m) => (
-            <li key={m.id}>
-              {m.role === "tool" ? (
-                <ToolRow item={m} />
-              ) : (
-                <div className={cn("text-xs leading-relaxed", m.isError ? "text-danger" : "text-muted")}>
-                  <Markdown text={m.text} />
-                </div>
-              )}
-            </li>
-          ))}
-        </ol>
+      {turn.plan && <PlanCard plan={turn.plan.plan} />}
+      {(turn.steps.length > 0 || working) && (
+        <WorkLog
+          id={id}
+          steps={turn.steps}
+          state={state}
+          startedAt={startedAt}
+          endedAt={endedAt}
+          live={live}
+        />
       )}
-    </div>
+      {turn.answer && <Answer item={turn.answer} />}
+      {turn.note && (
+        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[13px] text-fg">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span className="whitespace-pre-wrap">{turn.note.text}</span>
+        </div>
+      )}
+      {stream && (
+        <div className="text-[13.5px] leading-relaxed text-fg">
+          <Markdown text={stream.slice(-6000)} />
+          <span
+            className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-accent align-middle"
+            aria-hidden
+          />
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -354,56 +430,6 @@ function Answer({ item }: { item: ChatItem }) {
   return (
     <div className="text-[13.5px] leading-relaxed text-fg">
       <Markdown text={item.text} />
-    </div>
-  );
-}
-
-function ToolRow({ item }: { item: ChatItem }) {
-  const firstLine = item.text.split("\n")[0] ?? "";
-  return (
-    <details className="group rounded-md border border-border bg-panel text-xs">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-muted hover:text-fg">
-        <ChevronRight className="size-3.5 shrink-0 transition-transform group-open:rotate-90" aria-hidden />
-        <Wrench
-          className={cn("size-3.5 shrink-0", item.isError ? "text-danger" : "text-subtle")}
-          aria-hidden
-        />
-        {item.agent && <span className="text-subtle">{item.agent.split("@")[0]}</span>}
-        <span className="font-mono text-fg">{item.toolName}</span>
-        <span className={cn("min-w-0 flex-1 truncate", item.isError && "text-danger")}>{firstLine}</span>
-      </summary>
-      <pre className="max-h-72 overflow-auto border-t border-border px-2.5 py-2 font-mono text-[11px] whitespace-pre-wrap text-muted">
-        {item.text}
-      </pre>
-    </details>
-  );
-}
-
-function LiveRow({ stream, step }: { stream: string | null; step: DepoEvent | null }) {
-  const style = step ? EVENT_STYLE[step.type] : null;
-  const Icon = style?.icon;
-  return (
-    <div role="status" aria-live="polite" className="flex flex-col gap-2">
-      {stream && (
-        <div className="text-[13.5px] leading-relaxed text-fg">
-          <Markdown text={stream.slice(-3000)} />
-          <span
-            className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-accent align-middle"
-            aria-hidden
-          />
-        </div>
-      )}
-      <div className="flex items-center gap-2 text-xs text-muted">
-        <Loader2 className="size-3.5 animate-spin text-accent" aria-hidden />
-        {step && Icon && style ? (
-          <>
-            <Icon className={cn("size-3.5", TONE_TEXT[style.tone])} aria-hidden />
-            <span className="truncate">{step.text}</span>
-          </>
-        ) : (
-          <span>Working…</span>
-        )}
-      </div>
     </div>
   );
 }
@@ -469,138 +495,6 @@ function ReviewBanner() {
   );
 }
 
-function Composer({ task }: { task: Task | undefined }) {
-  const connected = useEngine((s) => s.status === "open");
-  const projectId = useUi((s) => s.projectId);
-  const setTaskId = useUi((s) => s.setTaskId);
-  const qc = useQueryClient();
-  const [text, setText] = useState("");
-  const [mode, setMode] = useState<WorkMode>("single");
-  const running = isActive(task?.status);
-
-  const send = useMutation({
-    mutationFn: (body: string) =>
-      call("tasks.send", {
-        projectId: projectId ?? "",
-        text: body,
-        ...(task ? { taskId: task.id } : {}),
-        ...(!task && mode !== "single" ? { mode } : {}),
-      }),
-    onSuccess: (t) => {
-      setText("");
-      setTaskId(t.id);
-      void qc.invalidateQueries({ queryKey: ["tasks"] });
-    },
-  });
-  const stop = useMutation({
-    mutationFn: () => call("tasks.cancel", { id: task?.id ?? "" }),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
-  });
-
-  const canSend = connected && !!projectId && !running && text.trim().length > 0 && !send.isPending;
-  const submit = () => {
-    if (canSend) send.mutate(text.trim());
-  };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      submit();
-    }
-  };
-  const note = !projectId
-    ? "Open a project to start."
-    : running
-      ? "The agent is working. Stop it to send a new message."
-      : task
-        ? "Send a follow-up to continue this task in the same private copy."
-        : "Enter to send, Shift+Enter for a new line.";
-
-  return (
-    <div className="border-t border-border bg-panel px-6 py-4">
-      <div className="mx-auto max-w-3xl">
-        <label htmlFor="composer" className="sr-only">
-          Message the coding agent
-        </label>
-        <div
-          className={cn(
-            "flex items-end gap-2 rounded-xl border border-border bg-bg p-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent",
-            !projectId && "opacity-70",
-          )}
-        >
-          {!task && (
-            <div className="self-end">
-              <label htmlFor="work-mode" className="sr-only">
-                Work mode
-              </label>
-              <select
-                id="work-mode"
-                value={mode}
-                onChange={(e) => setMode(e.target.value as WorkMode)}
-                className="h-8 max-w-36 rounded-lg border border-border bg-panel px-2 text-xs text-fg outline-none focus:border-accent"
-              >
-                {MODES.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <textarea
-            id="composer"
-            rows={2}
-            value={text}
-            disabled={!projectId || !connected}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKey}
-            aria-describedby="composer-note"
-            placeholder={task ? "Ask for a follow-up change…" : "e.g. Add a /health endpoint to this API"}
-            className="min-h-10 flex-1 resize-none bg-transparent px-2 py-1 text-[13px] text-fg outline-none placeholder:text-subtle field-in-frame"
-          />
-          {running ? (
-            <button
-              type="button"
-              onClick={() => stop.mutate()}
-              disabled={stop.isPending}
-              aria-label="Stop"
-              className="flex size-8 items-center justify-center rounded-lg bg-danger text-white disabled:opacity-50"
-            >
-              <Square className="size-3.5 fill-current" aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!canSend}
-              aria-label="Send"
-              className="flex size-8 items-center justify-center rounded-lg bg-accent text-accent-fg disabled:opacity-50"
-            >
-              {send.isPending ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <ArrowUp className="size-4" aria-hidden />
-              )}
-            </button>
-          )}
-        </div>
-        <p id="composer-note" className={cn("mt-2 text-xs", send.isError ? "text-danger" : "text-subtle")}>
-          {send.isError ? (send.error as Error).message : note}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-export function formatDuration(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const sec = total % 60;
-  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
-  if (m > 0) return `${m}m ${String(sec).padStart(2, "0")}s`;
-  return `${sec}s`;
-}
-
 /** "for 1m 20s" while working, "took 3m 05s" once the latest run has finished. */
 function RunTime({ task, items }: { task: Task; items: ChatItem[] }) {
   const active = isActive(task.status);
@@ -610,12 +504,14 @@ function RunTime({ task, items }: { task: Task; items: ChatItem[] }) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [active]);
-  // The latest run starts at the latest user message; its end is the task's last status change.
+  // The latest run starts at the latest user message and ends with the last message after it
+  // (the task's own update time also moves when changes are applied later).
   const lastUser = [...items].reverse().find((m) => m.role === "user");
   const start = Date.parse(lastUser?.createdAt ?? task.createdAt);
   if (Number.isNaN(start)) return null;
   if (active) return <span className="tabular-nums">for {formatDuration(now - start)}</span>;
-  const end = Date.parse(task.updatedAt);
+  const lastItem = items.at(-1);
+  const end = Date.parse(lastItem && lastItem !== lastUser ? lastItem.createdAt : task.updatedAt);
   if (Number.isNaN(end) || end < start) return null;
   return <span className="tabular-nums">· took {formatDuration(end - start)}</span>;
 }
