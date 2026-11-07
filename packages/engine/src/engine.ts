@@ -27,8 +27,10 @@ import { McpManager } from "./mcp/manager";
 import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
+import { AutoPreview } from "./preview/auto";
 import { PreviewManager } from "./preview/manager";
 import { ProjectRegistry } from "./projects/registry";
+import { QaService, type QaServiceOptions } from "./qa/service";
 import { ModelScheduler } from "./scheduler/scheduler";
 import { SecurityService } from "./security/service";
 import { SettingsRepo } from "./settings";
@@ -56,6 +58,8 @@ export interface EngineOptions {
   downloads?: { github?: GithubEndpoints; osvBase?: string; updateApi?: string };
   /** Test hook: replaces the git runner used for clones. */
   git?: ConstructorParameters<typeof ProjectRegistry>[0]["git"];
+  /** Test hooks for page checks (a fake browser). */
+  qa?: Pick<QaServiceOptions, "open" | "axeSource" | "hasBrowser" | "timeoutMs">;
 }
 
 export interface Engine {
@@ -80,6 +84,10 @@ export interface Engine {
   readonly lab: AgentLab;
   readonly logs: LogService;
   readonly previews: PreviewManager;
+  /** Page checks in a headless browser (check_page, the Preview tab's check). */
+  readonly qa: QaService;
+  /** Starts a task's private copy when its changes are ready for review. */
+  readonly autoPreview: AutoPreview;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -234,8 +242,41 @@ export function createEngine(opts: EngineOptions): Engine {
     },
   });
   projects.beforeWorkspaceRemoved((dir) => previews.stopRoot(dir));
+  const taskRow = (id: string) =>
+    database.db
+      .select({ projectId: tasksTable.projectId, title: tasksTable.title })
+      .from(tasksTable)
+      .where(eq(tasksTable.id, id))
+      .get();
+  const qa: QaService = new QaService({
+    bus,
+    logger,
+    dataDir: path.join(dirs.root, "qa"),
+    workspaceRoot: (id): string | null => tasks.workspaceRoot(id),
+    taskProject: (id) => taskRow(id)?.projectId ?? null,
+    taskTitle: (id) => taskRow(id)?.title ?? null,
+    previews,
+    models,
+    scheduler,
+    ...opts.qa,
+  });
+  const autoPreview = new AutoPreview({
+    bus,
+    logger,
+    previews,
+    enabled: () => settings.get("preview.auto_start") !== false,
+    changeSetStatus: (id) => {
+      try {
+        return projects.getChangeSet(id).status;
+      } catch {
+        return null;
+      }
+    },
+  });
+  autoPreview.attach();
   const tasks: TaskManager = new TaskManager({
     previews,
+    qa,
     extras,
     manifest: (id) => lab.active(id),
     db: database.db,
@@ -298,6 +339,8 @@ export function createEngine(opts: EngineOptions): Engine {
     lab,
     logs,
     previews,
+    qa,
+    autoPreview,
     database,
     async start() {
       server = startApiServer({
@@ -326,6 +369,7 @@ export function createEngine(opts: EngineOptions): Engine {
           lab,
           logs,
           previews,
+          qa,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
@@ -370,6 +414,7 @@ export function createEngine(opts: EngineOptions): Engine {
       });
       indexer.stopAll();
       await tasks.cancelAll();
+      autoPreview.detach();
       await previews.stopAll();
       await mcp.stopAll();
       await server?.stop();

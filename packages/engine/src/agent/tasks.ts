@@ -16,6 +16,7 @@ import {
 import { asc, desc, eq, inArray } from "drizzle-orm";
 import "../tools/block-tools";
 import "../tools/design-tools";
+import "../tools/qa-tools";
 import { Blackboard } from "../agents/blackboard";
 import { agentTag, manifestOf } from "../agents/manifests";
 import { agentStatuses, TeamRunner } from "../agents/team";
@@ -61,6 +62,8 @@ export interface TaskManagerOptions {
   manifest?: ConstructorParameters<typeof TeamRunner>[0]["manifest"];
   /** Previews of the app agents build (start_preview, http_check, stop_preview). */
   previews?: PreviewHooks;
+  /** Page checks in a headless browser (check_page). */
+  qa?: ToolContext["qa"];
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -120,6 +123,7 @@ export class TaskManager {
       ...(o.extras ? { extras: o.extras } : {}),
       manifest: o.manifest,
       ...(o.previews ? { previews: o.previews } : {}),
+      ...(o.qa ? { qa: o.qa } : {}),
     });
   }
 
@@ -476,6 +480,7 @@ export class TaskManager {
       readPaths: new Set<string>(),
       ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
       ...(this.o.previews ? { previews: this.o.previews } : {}),
+      ...(this.o.qa ? { qa: this.o.qa } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const result = await runAgentLoop({

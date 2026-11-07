@@ -30,6 +30,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "logs.level": "info",
   /** After each finished task, remember durable facts about the project by itself (stack, commands, decisions). */
   "memory.auto": true,
+  /** When a task's changes are ready for review, start its private copy so the owner gets a link (keys are lowercase, so not autoStart). */
+  "preview.auto_start": true,
 };
 
 export class SettingsRepo {

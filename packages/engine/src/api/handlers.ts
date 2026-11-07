@@ -23,6 +23,7 @@ import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
+import type { QaService } from "../qa/service";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SecurityService } from "../security/service";
 import type { SettingsRepo } from "../settings";
@@ -51,6 +52,8 @@ export interface HandlerContext {
   /** Engine logs: search, live tail, diagnostics export, model timings. */
   logs: LogService;
   previews: PreviewManager;
+  /** Page checks in a headless browser (absent in engines built without it, e.g. some tests). */
+  qa?: QaService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -94,6 +97,11 @@ function systemInfo(ctx: HandlerContext) {
 function needLogs(ctx: HandlerContext): LogService {
   if (!ctx.logs) throw new Error("Logs are not available in this engine.");
   return ctx.logs;
+}
+
+function needQa(ctx: HandlerContext): QaService {
+  if (!ctx.qa) throw new Error("Page checks are not available in this engine.");
+  return ctx.qa;
 }
 
 export type Handlers = {
@@ -475,4 +483,18 @@ export const handlers: Handlers = {
     calls: needLogs(ctx).stats.recent(p.limit),
     models: needLogs(ctx).stats.summary(),
   }),
+  "qa.check": async (p, ctx) => ({
+    check: await needQa(ctx).check({
+      projectId: p.projectId,
+      taskId: p.taskId ?? null,
+      url: p.url,
+      widths: p.widths,
+      expectText: p.expectText,
+      by: "user",
+    }),
+  }),
+  "qa.get": (p, ctx) => ({ check: needQa(ctx).get(p.projectId, p.taskId ?? null, p.id) }),
+  "qa.list": (p, ctx) => ({ checks: needQa(ctx).list(p.projectId, p.taskId ?? null, p.limit ?? 10) }),
+  "qa.screenshot": (p, ctx) => needQa(ctx).screenshot(p.projectId, p.taskId ?? null, p.path),
+  "preview.pin": (p, ctx) => ({ preview: ctx.previews.setPinned(p.id, p.pinned) }),
 };

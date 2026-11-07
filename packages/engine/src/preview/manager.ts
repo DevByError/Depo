@@ -249,6 +249,8 @@ export class PreviewManager implements PreviewHooks {
     recipe?: RunRecipe;
     install?: boolean;
     by?: string;
+    /** Started by Depo itself when the task's changes are ready for review. */
+    auto?: boolean;
   }): Promise<{ preview: PreviewInfo; related: PreviewInfo[] }> {
     const taskId = req.taskId ?? null;
     const { root } = this.target(req.projectId, taskId);
@@ -277,6 +279,7 @@ export class PreviewManager implements PreviewHooks {
         by,
         groupId,
         backendUrl,
+        auto: !!req.auto,
       });
       if (part.role === "backend") backendUrl = `http://${PREVIEW_HOST}:${s.info.port}`;
       started.push(s);
@@ -347,6 +350,7 @@ export class PreviewManager implements PreviewHooks {
     by: string;
     groupId: string | null;
     backendUrl: string | null;
+    auto?: boolean;
   }): Promise<Session> {
     const key = this.portKey(o.projectId, o.taskId, o.recipe);
     const port = await choosePort(this.lastPorts.get(key) ?? o.recipe.port, this.usedPorts());
@@ -374,6 +378,7 @@ export class PreviewManager implements PreviewHooks {
       startedAt: new Date().toISOString(),
       readyAt: null,
       stoppedAt: null,
+      ...(o.auto ? { auto: true } : {}),
     };
     const s: Session = {
       info,
@@ -411,6 +416,8 @@ export class PreviewManager implements PreviewHooks {
       kind: s.info.kind,
       command: s.info.command,
       cwd: s.info.cwd,
+      ...(s.info.auto ? { auto: true } : {}),
+      ...(s.info.pinned ? { pinned: true } : {}),
     };
   }
 
@@ -762,6 +769,15 @@ export class PreviewManager implements PreviewHooks {
     const s = this.sessions.get(id);
     if (!s) throw new Error("That preview no longer exists.");
     return { ...s.log.since(since), state: s.info.state };
+  }
+
+  /** Keep a preview running after its task's changes are applied or discarded (or stop keeping it). */
+  setPinned(id: string, pinned: boolean): PreviewInfo {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error("That preview no longer exists.");
+    if (pinned) s.info.pinned = true;
+    else delete s.info.pinned;
+    return { ...s.info };
   }
 
   /** Wait until a preview is running, failed or stopped (tests and agents). */

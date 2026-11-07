@@ -89,6 +89,8 @@ export interface TeamHost {
   extras?(agentId: string, projectId: string, run: { taskId: string; signal: AbortSignal }): AgentExtras;
   /** Previews of the app being built (start_preview, http_check, stop_preview). */
   previews?: ToolContext["previews"];
+  /** Page checks in a headless browser (check_page). */
+  qa?: ToolContext["qa"];
 }
 
 export interface AgentExtras {
@@ -1377,6 +1379,7 @@ export class TeamRunner {
       team,
       vision: (prompt, images) => this.askVision(input, prompt, images),
       ...(this.h.previews ? { previews: this.h.previews } : {}),
+      ...(this.h.qa ? { qa: this.h.qa } : {}),
     };
   }
 
