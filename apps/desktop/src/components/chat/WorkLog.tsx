@@ -33,10 +33,14 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useId, useMemo, useState } from "react";
+import { Tokens } from "@/components/code/Tokens";
 import { Markdown } from "@/components/panels/Markdown";
 import { PageCheckStep } from "@/components/qa/PageCheckView";
 import { cn } from "@/lib/cn";
+import { type LanguageId, languageForPath } from "@/lib/highlight/languages";
+import { splitLines } from "@/lib/highlight/tokens";
+import { useDiffHighlight, useHighlight } from "@/lib/highlight/use-highlight";
 import {
   describeNote,
   diffLines,
@@ -389,8 +393,31 @@ function Output({ label, children, className }: { label: string; children: React
   );
 }
 
-function Diff({ hunk, label }: { hunk: EditHunk; label: string }) {
+/** File content written by a step, with syntax colours when the file type is known. */
+function CodeOutput({ label, code, lang }: { label: string; code: string; lang: LanguageId | null }) {
+  const hl = useHighlight(code, lang);
+  const lines = useMemo(() => splitLines(code), [code]);
+  return (
+    <Output label={label} className="text-fg">
+      {hl.lines
+        ? lines.map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: lines of fixed content
+            <Fragment key={i}>
+              {i > 0 && "\n"}
+              {line && <Tokens tokens={hl.lines?.[i]} text={line} />}
+            </Fragment>
+          ))
+        : code}
+    </Output>
+  );
+}
+
+const DIFF_MARK = { same: " ", removed: "-", added: "+" } as const;
+
+function Diff({ hunk, label, lang }: { hunk: EditHunk; label: string; lang: LanguageId | null }) {
   const rows = useMemo(() => diffLines(hunk.search, hunk.replace), [hunk]);
+  const marked = useMemo(() => rows.map((r) => ({ t: DIFF_MARK[r.type], text: r.text })), [rows]);
+  const hl = useDiffHighlight(marked, lang);
   return (
     <figure
       tabIndex={0}
@@ -426,7 +453,7 @@ function Diff({ hunk, label }: { hunk: EditHunk; label: string }) {
                 r.type === "same" ? "text-muted" : "text-fg",
               )}
             >
-              {r.text || " "}
+              <Tokens tokens={hl.tokens[i]} text={r.text} />
             </span>
           </span>
         ))}
@@ -442,6 +469,7 @@ function StepDetails({ item, summary }: { item: ChatItem; summary: StepSummary }
   const content = tool === "write_file" && typeof item.args?.content === "string" ? item.args.content : null;
   const command = tool === "run_command" && typeof item.args?.command === "string" ? item.args.command : null;
   const result = tool === "run_command" && !item.isError ? parseCommandResult(item.text) : null;
+  const lang = path ? languageForPath(path) : null;
 
   return (
     <div className="mt-0.5 mb-1.5 ml-5 overflow-hidden rounded-md border border-border bg-panel">
@@ -473,6 +501,7 @@ function StepDetails({ item, summary }: { item: ChatItem; summary: StepSummary }
               // biome-ignore lint/suspicious/noArrayIndexKey: edits of one call, in order
               key={i}
               hunk={h}
+              lang={lang}
               label={`Change ${i + 1} of ${hunks.length}${path ? ` in ${path}` : ""}`}
             />
           ))}
@@ -480,9 +509,7 @@ function StepDetails({ item, summary }: { item: ChatItem; summary: StepSummary }
       ) : tool === "check_page" && !item.isError ? (
         <PageCheckStep text={item.text} />
       ) : content !== null ? (
-        <Output label={`Content written to ${path ?? "the file"}`} className="text-fg">
-          {content}
-        </Output>
+        <CodeOutput label={`Content written to ${path ?? "the file"}`} code={content} lang={lang} />
       ) : (
         <Output label={`Output of ${tool}`}>
           {(result ? result.output.trim() : item.text.trim()) || "No output."}

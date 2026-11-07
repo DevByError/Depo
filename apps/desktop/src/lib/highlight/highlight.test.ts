@@ -234,8 +234,9 @@ describe("useHighlight", () => {
       { t: "+", text: "new */ let a = 2;" },
     ];
     const { result } = renderHook(() => useDiffHighlight(rows, "typescript"));
-    await waitFor(() => expect(result.current.every((r) => r !== null)).toBe(true));
-    const [ctx, removed, added] = result.current;
+    await waitFor(() => expect(result.current.tokens.every((r) => r !== null)).toBe(true));
+    expect(result.current.large).toBe(false);
+    const [ctx, removed, added] = result.current.tokens;
     expect(text(ctx ?? undefined)).toBe("/* start");
     expect(text(removed ?? undefined)).toBe("old */ const a = 1;");
     expect(kindOf(removed ?? undefined, "old */")).toBe("comment");

@@ -330,7 +330,10 @@ describe("diff comments", () => {
     responses["changes.list"] = () => ({ changeSets: [changeSet(null)] });
     commentStore();
     wrap(<DiffReviewPanel />);
-    expect(await screen.findByText("import sys")).toBeTruthy();
+    // Code lines are split into coloured spans, so look for the text of the whole row.
+    await waitFor(() =>
+      expect(screen.getAllByRole("row").some((r) => r.textContent?.includes("import sys"))).toBe(true),
+    );
     expect(screen.queryByRole("button", { name: /^Comment on line/ })).toBeNull();
     expect(screen.queryByTestId("review-bar")).toBeNull();
   });

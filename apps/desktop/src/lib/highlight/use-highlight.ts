@@ -4,14 +4,18 @@ import type { LanguageId } from "./languages";
 import { splitLines, type Token } from "./tokens";
 
 /**
- * plain: no known language; loading: plain text until the colours arrive; ready: highlighted;
- * large: over the size limit, shown without colours; failed: the grammar could not load.
+ * plain: no known language; loading: colours on their way; ready: highlighted; large: over the
+ * size limit, shown without colours; failed: the grammar could not load.
  */
 export type HighlightState = "plain" | "loading" | "ready" | "large" | "failed";
 
 export interface Highlighted {
   state: HighlightState;
-  /** One entry per line of the code; null until highlighted (render the plain text meanwhile). */
+  /**
+   * One entry per line of the code; null until highlighted (render the plain text meanwhile).
+   * While new code loads this keeps the previous version's colours, so a streaming block does not
+   * flicker; render through `Tokens`, which ignores a line whose text changed.
+   */
   lines: Token[][] | null;
 }
 
@@ -42,7 +46,7 @@ export function useHighlight(code: string | null | undefined, lang: LanguageId |
   if (cached) return { state: "ready", lines: cached };
   if (done?.key === job.key)
     return done.lines ? { state: "ready", lines: done.lines } : { state: "failed", lines: null };
-  return { state: "loading", lines: null };
+  return { state: "loading", lines: done?.lines ?? null };
 }
 
 /** A diff row: " " context, "-" removed, "+" added. */
@@ -54,10 +58,13 @@ export interface DiffRowText {
 /**
  * Tokens for each row of a diff hunk. The old side (context and removed lines) and the new side
  * (context and added lines) are highlighted as two pieces of code, so a comment or string that spans
- * lines keeps its colour on every row.
+ * lines keeps its colour on every row. `large` when the hunk is over the size limit.
  */
-export function useDiffHighlight(rows: DiffRowText[], lang: LanguageId | null): (Token[] | null)[] {
-  const { oldText, newText } = useMemo(
+export function useDiffHighlight(
+  rows: DiffRowText[],
+  lang: LanguageId | null,
+): { tokens: (Token[] | null)[]; large: boolean } {
+  const { oldText, newText, hasOld } = useMemo(
     () => ({
       oldText: rows
         .filter((r) => r.t !== "+")
@@ -67,13 +74,13 @@ export function useDiffHighlight(rows: DiffRowText[], lang: LanguageId | null): 
         .filter((r) => r.t !== "-")
         .map((r) => r.text)
         .join("\n"),
+      hasOld: rows.some((r) => r.t === "-"),
     }),
     [rows],
   );
-  const hasOld = rows.some((r) => r.t === "-");
   const before = useHighlight(hasOld ? oldText : null, lang);
   const after = useHighlight(newText, lang);
-  return useMemo(() => {
+  const tokens = useMemo(() => {
     let o = 0;
     let n = 0;
     return rows.map((r) => {
@@ -83,6 +90,7 @@ export function useDiffHighlight(rows: DiffRowText[], lang: LanguageId | null): 
       return after.lines?.[n++] ?? null;
     });
   }, [rows, before.lines, after.lines]);
+  return { tokens, large: before.state === "large" || after.state === "large" };
 }
 
 /** Tokens for each line of `code`, or null per line while not highlighted. */

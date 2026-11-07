@@ -6,6 +6,7 @@ import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from
 import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
+import { useComposer } from "@/store/composer";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 
@@ -123,6 +124,17 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const team = !!task && task.mode !== "single";
   const [sentNote, setSentNote] = useState(false);
   const boxRef = useRef<HTMLTextAreaElement>(null);
+  // Text another screen left for the composer ("Change this" in Files): taken once, caret placed.
+  const prefilled = useComposer((s) => s.pending);
+  const caret = useRef<number | null>(null);
+  useEffect(() => {
+    if (!prefilled) return;
+    const p = useComposer.getState().take();
+    if (!p) return;
+    caret.current = p.cursor;
+    setText(p.text);
+    if (p.mode) setMode(p.mode);
+  }, [prefilled]);
 
   // "Note sent" shows for a few seconds, then the usual hint comes back.
   useEffect(() => {
@@ -140,6 +152,11 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
     const h = Math.min(el.scrollHeight, MAX_TEXTAREA_PX);
     el.style.height = `${Math.max(h, 24)}px`;
     el.style.overflowY = el.scrollHeight > MAX_TEXTAREA_PX ? "auto" : "hidden";
+    if (caret.current !== null) {
+      el.focus();
+      el.setSelectionRange(caret.current, caret.current);
+      caret.current = null;
+    }
   }, [text]);
 
   const send = useMutation({

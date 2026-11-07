@@ -54,8 +54,11 @@ test("Open in Files switches to the Files tab and shows the file", async () => {
   openInFiles("web\\src\\lib\\cn.ts");
   expect(useUi.getState().centerTab).toBe("files");
   wrap(<FilesPanel />);
-  expect(await screen.findByRole("region", { name: "File web/src/lib/cn.ts" })).toBeTruthy();
-  expect(await screen.findByText("export const a = 1;")).toBeTruthy();
+  const viewer = await screen.findByRole("region", { name: "File web/src/lib/cn.ts" });
+  // The line is split into coloured spans once highlighted, so check the row's whole text.
+  await waitFor(() =>
+    expect(viewer.querySelector('[data-line="1"]')?.textContent).toContain("export const a = 1;"),
+  );
   expect(useNav.getState().file).toBeNull();
 });
 
