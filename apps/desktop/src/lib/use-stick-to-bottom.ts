@@ -20,7 +20,8 @@ export function useStickToBottom(
   const atBottomRef = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
-  const last = useRef({ count, key: lastKey });
+  // Starts empty so the first rows (a backlog on mount) are followed too.
+  const last = useRef<{ count: number; key: string | null }>({ count: 0, key: null });
   // Scroll events caused by our own scrolling are not the reader's choice.
   const programmatic = useRef(0);
   const scrollRef = useRef(scrollToEnd);
