@@ -28,6 +28,7 @@ import { LogService } from "./logs/service";
 import { McpManager } from "./mcp/manager";
 import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
+import { ModelWarmup } from "./models/speed";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { AutoPreview } from "./preview/auto";
 import { PreviewManager } from "./preview/manager";
@@ -296,6 +297,13 @@ export function createEngine(opts: EngineOptions): Engine {
   });
   autoPreview.attach();
   const tasks: TaskManager = new TaskManager({
+    warmup: new ModelWarmup({
+      models,
+      scheduler,
+      logger,
+      enabled: () => settings.get("models.preload") !== false,
+      paused: (id) => scheduler.status().pausedAll || (id !== null && !!safeSettings(registry, id)?.paused),
+    }),
     eta,
     previews,
     qa,
@@ -469,6 +477,8 @@ export function createEngine(opts: EngineOptions): Engine {
       });
       indexer.stopAll();
       await tasks.cancelAll();
+      // "Keep models loaded until Depo closes": unload them now (a few seconds at most).
+      await models.releaseModels().catch(() => {});
       await qa.close();
       await autoPreview.detach();
       await previews.stopAll();

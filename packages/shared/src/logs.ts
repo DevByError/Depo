@@ -56,6 +56,18 @@ export const ModelCallSchema = z.object({
   projectId: z.string().nullable(),
   taskId: z.string().nullable(),
   agent: z.string().nullable(),
+  /** Time the runtime spent loading the model for this call (Ollama reports it). */
+  loadMs: z.number().nullable().optional(),
+  /** The model was not in memory and had to be loaded (load took 500 ms or more). Null when unknown. */
+  coldLoad: z.boolean().nullable().optional(),
+  /** Time the runtime spent reading the prompt. */
+  promptMs: z.number().nullable().optional(),
+  /** Prompt reading speed (tokens/s). */
+  promptTokensPerSec: z.number().nullable().optional(),
+  /** Prompt tokens the runtime reused from its cache (llama.cpp reports it). */
+  cachedPromptTokens: z.number().nullable().optional(),
+  /** The context length requested for this call (one per model, so the runtime does not reload it). */
+  contextLength: z.number().nullable().optional(),
 });
 export type ModelCall = z.infer<typeof ModelCallSchema>;
 
@@ -68,6 +80,22 @@ export const ModelStatSchema = z.object({
   medianTtftMs: z.number().nullable(),
   lastAt: z.string(),
   lastError: z.string().nullable(),
+  /** The context length last requested for this model. */
+  contextLength: z.number().nullable().optional(),
+  /** Calls and early loads that had to load the model. */
+  coldLoads: z.number().int().optional(),
+  /** Median time of those loads. */
+  medianLoadMs: z.number().nullable().optional(),
+  /** Time spent loading this model, in total. */
+  loadMsTotal: z.number().optional(),
+  /** Time spent on this model's calls and early loads, in total (loads included). */
+  busyMsTotal: z.number().optional(),
+  /** The last calls found the model already in memory. Null when the runtime does not say. */
+  keptLoaded: z.boolean().nullable().optional(),
+  /** Average prompt reading speed (tokens/s). */
+  avgPromptTokensPerSec: z.number().nullable().optional(),
+  /** Prompt tokens reused from the runtime's cache, in total (llama.cpp reports it). */
+  cachedPromptTokens: z.number().nullable().optional(),
 });
 export type ModelStat = z.infer<typeof ModelStatSchema>;
 

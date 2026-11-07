@@ -5,3 +5,4 @@
 export * from "./autofit";
 export * from "./catalog";
 export * from "./hardware";
+export * from "./keep-alive";

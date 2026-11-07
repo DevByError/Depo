@@ -1,13 +1,17 @@
 import { ModelGatewayError } from "./errors";
 import { readLines, request, toGatewayError } from "./http";
+import { ollamaKeepAlive } from "./keep-alive";
 import type {
   ChatChunk,
   ChatMessage,
   ChatRequest,
+  LoadedModel,
   ModelInfo,
   ModelProvider,
+  PreloadOptions,
   ProviderHealth,
   PullProgress,
+  Usage,
 } from "./types";
 
 // Slow PCs: a tool call can be generated silently at ~2 tokens/s, and prompt reading can take
@@ -106,6 +110,59 @@ export class OllamaProvider implements ModelProvider {
     await request(this.url("/api/delete"), { kind: this.kind, method: "DELETE", body: { model } });
   }
 
+  /**
+   * Load a model without generating (an empty generate), with the context length and keep-alive
+   * the next calls use, so they find it ready instead of reloading it.
+   */
+  async preload(model: string, opts: PreloadOptions = {}): Promise<{ loadMs: number | null }> {
+    const body: Record<string, unknown> = { model, prompt: "", stream: false };
+    if (opts.contextLength !== undefined) body.options = { num_ctx: opts.contextLength };
+    const keepAlive = opts.keepAlive === undefined ? undefined : ollamaKeepAlive(opts.keepAlive);
+    if (keepAlive !== undefined) body.keep_alive = keepAlive;
+    const res = await request(this.url("/api/generate"), {
+      kind: this.kind,
+      signal: opts.signal,
+      body,
+      // Loading a model that does not fit in VRAM can take minutes on a slow disk.
+      timeoutMs: 600_000,
+    });
+    const json = (await res.json().catch(() => ({}))) as { load_duration?: number; error?: string };
+    if (json.error) throw new ModelGatewayError("http", `Ollama: ${json.error}`);
+    return { loadMs: typeof json.load_duration === "number" ? nsToMs(json.load_duration) : null };
+  }
+
+  /** Unload a model now (keep_alive 0). */
+  async unload(model: string, signal?: AbortSignal): Promise<void> {
+    await request(this.url("/api/generate"), {
+      kind: this.kind,
+      signal,
+      body: { model, prompt: "", stream: false, keep_alive: 0 },
+      timeoutMs: 10_000,
+    });
+  }
+
+  /** Models in memory right now, with the context length they were loaded with (newer Ollama). */
+  async loaded(signal?: AbortSignal): Promise<LoadedModel[]> {
+    const res = await request(this.url("/api/ps"), { kind: this.kind, signal, timeoutMs: 5000 });
+    const json = (await res.json()) as {
+      models?: {
+        name?: string;
+        model?: string;
+        size_vram?: number;
+        expires_at?: string;
+        context_length?: number;
+      }[];
+    };
+    return (json.models ?? [])
+      .map((m) => ({
+        name: m.name ?? m.model ?? "",
+        contextLength: typeof m.context_length === "number" ? m.context_length : null,
+        sizeVramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
+        expiresAt: m.expires_at ?? null,
+      }))
+      .filter((m) => m.name !== "");
+  }
+
   async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
     const options: Record<string, number> = {};
     if (req.temperature !== undefined) options.temperature = req.temperature;
@@ -117,6 +174,9 @@ export class OllamaProvider implements ModelProvider {
       stream: true,
       options,
     };
+    // Keep the model loaded between calls: a reload costs seconds to minutes on a small GPU.
+    const keepAlive = req.keepAlive === undefined ? undefined : ollamaKeepAlive(req.keepAlive);
+    if (keepAlive !== undefined) body.keep_alive = keepAlive;
     if (req.tools?.length) {
       body.tools = req.tools.map((t) => ({
         type: "function",
@@ -174,11 +234,7 @@ export class OllamaProvider implements ModelProvider {
           yield {
             type: "done",
             finishReason: sawTool ? "tool_calls" : j.done_reason === "length" ? "length" : "stop",
-            usage: {
-              promptTokens: j.prompt_eval_count ?? 0,
-              completionTokens: j.eval_count ?? 0,
-              ...(j.eval_duration ? { durationMs: Math.round(j.eval_duration / 1e6) } : {}),
-            },
+            usage: ollamaUsage(j),
           };
           return;
         }
@@ -196,8 +252,24 @@ interface OllamaChunk {
   done_reason?: string;
   prompt_eval_count?: number;
   eval_count?: number;
+  /** Durations are in nanoseconds. */
   eval_duration?: number;
+  load_duration?: number;
+  prompt_eval_duration?: number;
   error?: string;
+}
+
+const nsToMs = (ns: number) => Math.round(ns / 1e6);
+
+/** Token counts and timings from Ollama's final chunk. */
+function ollamaUsage(j: OllamaChunk): Usage {
+  return {
+    promptTokens: j.prompt_eval_count ?? 0,
+    completionTokens: j.eval_count ?? 0,
+    ...(j.eval_duration ? { durationMs: nsToMs(j.eval_duration) } : {}),
+    ...(typeof j.load_duration === "number" ? { loadMs: nsToMs(j.load_duration) } : {}),
+    ...(typeof j.prompt_eval_duration === "number" ? { promptMs: nsToMs(j.prompt_eval_duration) } : {}),
+  };
 }
 
 function toOllamaMessage(m: ChatMessage): Record<string, unknown> {

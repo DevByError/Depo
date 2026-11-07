@@ -8,6 +8,7 @@ import { useEngine } from "@/store/engine";
 import { type Theme, useUi } from "@/store/ui";
 import {
   MemorySetting,
+  ModelSpeedSettings,
   NotificationSetting,
   PreviewSetting,
   TeamSettings,
@@ -69,6 +70,7 @@ export function SettingsDialog() {
           </fieldset>
 
           <ParallelSetting />
+          <ModelSpeedSettings />
           <TeamSettings />
           <MemorySetting />
           <PreviewSetting />

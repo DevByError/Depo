@@ -42,6 +42,11 @@ export interface ChatRequest {
    * load the model and read the prompt, which takes minutes on a slow PC. Default 20 min.
    */
   firstByteTimeoutMs?: number;
+  /**
+   * How long the runtime should keep the model loaded after this call ("30m", "-1" = until Depo
+   * closes, "0" = unload at once). Ollama only; other runtimes ignore it or map it when harmless.
+   */
+  keepAlive?: string;
 }
 
 export interface Usage {
@@ -49,6 +54,12 @@ export interface Usage {
   completionTokens: number;
   /** Generation time reported by the runtime, when available. */
   durationMs?: number;
+  /** Time the runtime spent loading the model for this call (Ollama `load_duration`). */
+  loadMs?: number;
+  /** Time the runtime spent reading the prompt (Ollama `prompt_eval_duration`, llama.cpp `prompt_ms`). */
+  promptMs?: number;
+  /** Prompt tokens served from the runtime's cache instead of being read again (llama.cpp `cache_n`). */
+  cachedPromptTokens?: number;
 }
 
 export type ChatChunk =
@@ -86,6 +97,21 @@ export interface PullProgress {
   totalBytes: number | null;
 }
 
+/** A model the runtime holds in memory right now (Ollama `/api/ps`). */
+export interface LoadedModel {
+  name: string;
+  /** The context length it was loaded with, when the runtime says. */
+  contextLength: number | null;
+  sizeVramBytes: number | null;
+  expiresAt: string | null;
+}
+
+export interface PreloadOptions {
+  contextLength?: number;
+  keepAlive?: string;
+  signal?: AbortSignal;
+}
+
 export interface ModelProvider {
   readonly id: string;
   readonly kind: ProviderKind;
@@ -97,4 +123,10 @@ export interface ModelProvider {
   /** Only runtimes that manage their own model store (Ollama) support these. */
   pull?(model: string, onProgress: (p: PullProgress) => void, signal?: AbortSignal): Promise<void>;
   remove?(model: string): Promise<void>;
+  /** Load a model without generating, so the next call starts at once (Ollama only). */
+  preload?(model: string, opts?: PreloadOptions): Promise<{ loadMs: number | null }>;
+  /** Unload a model now (Ollama only). */
+  unload?(model: string, signal?: AbortSignal): Promise<void>;
+  /** Models loaded in memory right now (Ollama only). */
+  loaded?(signal?: AbortSignal): Promise<LoadedModel[]>;
 }

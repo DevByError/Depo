@@ -390,6 +390,31 @@ export function autoFit(
   };
 }
 
+/** Context lengths Depo may request, largest first. */
+const CONTEXT_STEPS = [131_072, 65_536, 32_768, 16_384, 8192, 4096, 2048];
+
+/**
+ * The largest context length at which this model tag fits in the PC's memory (VRAM and RAM
+ * together), or null when the tag is not in the catalog. Used to cap the one context length a
+ * model gets for every call (Ollama reloads a model whenever the context length changes).
+ */
+export function maxContextFor(
+  hw: HardwareProfile,
+  tag: string,
+  catalog: ModelCatalog = DEFAULT_CATALOG,
+): number | null {
+  const want = tag.replace(/:latest$/, "");
+  const budget = memoryBudget(hw);
+  for (const model of catalog.models) {
+    const qi = model.quantizations.find((q) => q.tag === tag || q.tag === want);
+    if (!qi) continue;
+    const steps = CONTEXT_STEPS.filter((c) => c <= model.contextMax);
+    for (const ctx of steps) if (fitOn(model, qi, ctx, budget, 1)) return ctx;
+    return steps.at(-1) ?? null;
+  }
+  return null;
+}
+
 /**
  * Scale estimates by a real measurement: predict the benchmarked model's speed with the same
  * formula and compare. Clamped so one odd run can't distort the plan wildly.

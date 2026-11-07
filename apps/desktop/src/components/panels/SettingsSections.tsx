@@ -1,3 +1,4 @@
+import { DEFAULT_KEEP_ALIVE, KEEP_ALIVE_CHOICES, SPEED_SETTINGS } from "@depo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { call } from "@/lib/engine";
@@ -22,6 +23,49 @@ function useSetting<T extends string | number | boolean>(key: string, fallback: 
 }
 
 const numberInput = "h-8 w-16 rounded-md border border-border bg-bg px-2 text-[13px] text-fg";
+
+/** Speed on a small GPU: how long models stay loaded, and loading the next one early. */
+export function ModelSpeedSettings() {
+  const keep = useSetting<string>(SPEED_SETTINGS.keepAlive, DEFAULT_KEEP_ALIVE);
+  const preload = useSetting<boolean>(SPEED_SETTINGS.preload, true);
+  const known = KEEP_ALIVE_CHOICES.some((c) => c.value === keep.value);
+  return (
+    <fieldset className="mt-5">
+      <legend className="mb-1 text-xs font-medium text-fg">Model speed</legend>
+      <div className="flex flex-col gap-3 text-[13px] text-muted">
+        <label className="flex items-center gap-2">
+          Keep models loaded for
+          <select
+            value={keep.value}
+            disabled={keep.disabled}
+            onChange={(e) => keep.set(e.target.value)}
+            className="h-8 rounded-md border border-border bg-bg px-2 text-[13px] text-fg"
+          >
+            {KEEP_ALIVE_CHOICES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+            {!known && <option value={keep.value}>Custom ({keep.value})</option>}
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={preload.value}
+            disabled={preload.disabled}
+            onChange={(e) => preload.set(e.target.checked)}
+          />
+          Load the next model early
+        </label>
+      </div>
+      <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+        Loading a model can take a minute on a small graphics card. Keeping it loaded saves that time but
+        holds memory. Loading early starts while a task gets ready.
+      </p>
+    </fieldset>
+  );
+}
 
 /** How the agent team works: plan approval, who reviews, how often work is sent back. */
 export function TeamSettings() {

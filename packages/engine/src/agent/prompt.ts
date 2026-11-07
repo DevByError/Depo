@@ -45,14 +45,26 @@ export function venvEnv(root: string): Record<string, string> {
   return { VIRTUAL_ENV: dir, [pathKey]: `${bin}${sep}${process.env[pathKey] ?? ""}` };
 }
 
+/** Case-insensitive name order (like Explorer), then exact, so ties never depend on the disk. */
+function byName(a: string, b: string): number {
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  if (x !== y) return x < y ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export function topLevelListing(root: string): string {
   try {
-    return fs
-      .readdirSync(root, { withFileTypes: true })
-      .filter((d) => !d.name.startsWith(".git") && d.name !== "node_modules" && d.name !== "__pycache__")
-      .slice(0, 60)
-      .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
-      .join("  ");
+    return (
+      fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((d) => !d.name.startsWith(".git") && d.name !== "node_modules" && d.name !== "__pycache__")
+        // A stable order on every file system, so the same folder gives the same prompt text.
+        .sort((a, b) => byName(a.name, b.name))
+        .slice(0, 60)
+        .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
+        .join("  ")
+    );
   } catch {
     return "";
   }
@@ -65,19 +77,19 @@ export function codingSystemPrompt(opts: {
   contextLength?: number;
   /** The user's request, to pick the relevant playbook topics. */
   request?: string;
+  /** Project memory is on: tell the agent to save what it learns with the remember tool. */
+  remember?: boolean;
+  /** Project memory and the repo map, placed after the project facts and before the task's topics. */
+  context?: string[];
 }): string {
   const info = detectProject(opts.root);
   const stack = detectStack(opts.root);
   const win = process.platform === "win32";
+  // Ordered for prompt caching (Ollama and llama.cpp reuse an identical prefix): what never changes
+  // first (role, how to work, rules, playbook), then the project, then what depends on the task.
   const lines = [
     "You are Depo's coding agent. You work inside a private copy of the user's project (the workspace).",
     "Nothing you do touches the user's real files. When you finish, the user reviews a diff of your changes and decides what to apply.",
-    "",
-    `Project: ${opts.projectName} (${stackSummary(stack) || info.kind}).`,
-    `Top level: ${topLevelListing(opts.root) || "(empty)"}`,
-    `Shell: commands run with ${win ? "cmd.exe on Windows (use Windows syntax; `&&` works)" : "/bin/sh"} in the project root. There is no interactive input.`,
-    ...(info.testCommand ? [`Run the tests with: ${info.testCommand}`] : []),
-    ...info.notes,
     "",
     "How to work:",
     "1. Understand first: code_map shows the modules and which files import which; then read the relevant files (only the line ranges you need) and search for related code.",
@@ -90,7 +102,20 @@ export function codingSystemPrompt(opts: {
     "Rules: read a file before editing it; never guess its contents. Do not ask the user to copy or apply anything; the review step does that. Keep replies short and plain.",
     "",
     corePrompt("coder"),
+    ...(opts.remember
+      ? [
+          "",
+          "When you learn something lasting about this project (a convention, a decision, a user preference), save it with the remember tool.",
+        ]
+      : []),
+    "",
+    `Shell: commands run with ${win ? "cmd.exe on Windows (use Windows syntax; `&&` works)" : "/bin/sh"} in the project root. There is no interactive input.`,
+    `Project: ${opts.projectName} (${stackSummary(stack) || info.kind}).`,
+    ...(info.testCommand ? [`Run the tests with: ${info.testCommand}`] : []),
+    ...info.notes,
+    `Top level: ${topLevelListing(opts.root) || "(empty)"}`,
   ];
+  for (const block of opts.context ?? []) if (block) lines.push("", block);
   const topics = autoTopicsPrompt({
     agent: "coder",
     text: opts.request ?? "",

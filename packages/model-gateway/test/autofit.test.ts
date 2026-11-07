@@ -4,6 +4,7 @@ import {
   autoFit,
   DEFAULT_CATALOG,
   type HardwareProfile,
+  maxContextFor,
   memoryBudget,
   memoryNeedGB,
   parseCatalog,
@@ -188,5 +189,20 @@ describe("Auto-Fit planner", () => {
     );
     expect(b.gpuGB).toBe(0);
     expect(b.ramGB).toBeCloseTo(28.8, 1);
+  });
+});
+
+describe("one context length per model", () => {
+  test("the largest context that fits in VRAM and RAM caps what a model is asked for", () => {
+    // 4 GB VRAM, 25 GB RAM (the owner's PC): a 7B coder fits 32k, a 32B coder only 16k.
+    expect(maxContextFor(hw(4, 25), "qwen2.5-coder:7b")).toBe(32768);
+    // Ollama lists a model pulled without a tag as name:latest.
+    expect(maxContextFor(hw(4, 25), "bge-m3:latest")).toBe(maxContextFor(hw(4, 25), "bge-m3"));
+    expect(maxContextFor(hw(4, 25), "bge-m3")).not.toBeNull();
+    expect(maxContextFor(hw(4, 25), "qwen2.5-coder:32b")).toBe(16384);
+    // Too big for the PC at any context: the smallest step, so nothing larger is requested.
+    expect(maxContextFor(hw(4, 8), "qwen2.5-coder:32b")).toBe(2048);
+    // Not in the catalog: no cap.
+    expect(maxContextFor(hw(4, 25), "my-own-model:7b")).toBeNull();
   });
 });

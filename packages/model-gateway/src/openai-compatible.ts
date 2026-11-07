@@ -1,5 +1,6 @@
 import { ModelGatewayError, providerLabel } from "./errors";
 import { parseJsonArgs, readLines, request, toGatewayError } from "./http";
+import { keepAliveSeconds } from "./keep-alive";
 import type {
   ChatChunk,
   ChatMessage,
@@ -83,6 +84,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
+    // llama.cpp: reuse the KV cache for the part of the prompt that did not change since the
+    // last call (each agent step re-sends the whole conversation).
+    if (this.kind === "llamacpp") body.cache_prompt = true;
+    // LM Studio: how long a model it loaded on demand stays loaded (seconds). Only a positive
+    // duration is sent; "until Depo closes" and "unload at once" keep LM Studio's own setting.
+    if (this.kind === "lmstudio" && req.keepAlive !== undefined) {
+      const ttl = keepAliveSeconds(req.keepAlive);
+      if (ttl !== null && ttl > 0) body.ttl = ttl;
+    }
     if (req.tools?.length) {
       body.tools = req.tools.map((t) => ({
         type: "function",
@@ -106,6 +116,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const partial = new Map<number, { id: string; name: string; args: string }>();
     let finish: Extract<ChatChunk, { type: "done" }>["finishReason"] = "unknown";
     let usage: Extract<ChatChunk, { type: "done" }>["usage"] = null;
+    let timings: LlamaTimings | null = null;
 
     try {
       for await (const line of readLines(res, {
@@ -128,6 +139,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
             completionTokens: json.usage.completion_tokens ?? 0,
           };
         }
+        if (json.timings && typeof json.timings === "object") timings = json.timings;
         const choice = json.choices?.[0];
         if (!choice) continue;
         const delta = choice.delta ?? {};
@@ -157,7 +169,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       yield { type: "tool_call", call };
     }
     if (partial.size > 0 && finish === "unknown") finish = "tool_calls";
-    yield { type: "done", finishReason: finish, usage };
+    yield { type: "done", finishReason: finish, usage: withTimings(usage, timings) };
   }
 }
 
@@ -170,6 +182,37 @@ interface OpenAIChunk {
     finish_reason?: string | null;
   }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  /** llama.cpp server adds its own timings to the last chunk. */
+  timings?: LlamaTimings;
+}
+
+interface LlamaTimings {
+  prompt_n?: number;
+  prompt_ms?: number;
+  predicted_n?: number;
+  predicted_ms?: number;
+  /** Prompt tokens reused from the cache (newer llama.cpp). */
+  cache_n?: number;
+}
+
+const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+/** Add llama.cpp's timings to the usage (or build the usage from them when there was none). */
+function withTimings(
+  usage: Extract<ChatChunk, { type: "done" }>["usage"],
+  t: LlamaTimings | null,
+): Extract<ChatChunk, { type: "done" }>["usage"] {
+  if (!t) return usage;
+  const base = usage ?? {
+    promptTokens: num(t.prompt_n) ? t.prompt_n : 0,
+    completionTokens: num(t.predicted_n) ? t.predicted_n : 0,
+  };
+  return {
+    ...base,
+    ...(num(t.predicted_ms) ? { durationMs: Math.round(t.predicted_ms) } : {}),
+    ...(num(t.prompt_ms) ? { promptMs: Math.round(t.prompt_ms) } : {}),
+    ...(num(t.cache_n) ? { cachedPromptTokens: t.cache_n } : {}),
+  };
 }
 
 function mapFinish(r: string): Extract<ChatChunk, { type: "done" }>["finishReason"] {

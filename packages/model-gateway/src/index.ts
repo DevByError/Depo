@@ -3,6 +3,7 @@ export * from "./catalog";
 export { collectChat } from "./collect";
 export { type GatewayErrorKind, ModelGatewayError, providerLabel } from "./errors";
 export * from "./hardware";
+export * from "./keep-alive";
 export { OllamaProvider, PARSE_ERROR } from "./ollama";
 export { OpenAICompatibleProvider } from "./openai-compatible";
 export { createProvider, DEFAULT_PROVIDERS, isLocalUrl, type ProviderConfig } from "./registry";
