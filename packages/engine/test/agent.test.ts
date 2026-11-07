@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ChatMessage } from "@depo/model-gateway";
 import type { DepoEvent } from "@depo/shared";
 import { startFakeOllama } from "../../../scripts/fake-ollama-lib";
-import { compressHistory } from "../src/agent/tasks";
+import { clipArgs, compressHistory } from "../src/agent/tasks";
 import { parseTextToolCalls, stripToolMarkup } from "../src/agent/textcalls";
 import { createEngine, type Engine } from "../src/engine";
 import { TEST_TOKEN, tempDir } from "./helpers";
@@ -74,6 +74,11 @@ describe("coding agent", () => {
       expect(result?.details?.passed).toBe(2);
       expect(messages.map((m) => m.role)).toContain("tool");
       expect(messages.at(-1)?.text).toContain("/health");
+      // Tool items carry their call's arguments, so the chat can summarise and diff them.
+      const edit = messages.find((m) => m.toolName === "edit_file");
+      expect(edit?.args?.path).toBe("app/main.py");
+      expect(Array.isArray(edit?.args?.edits)).toBe(true);
+      expect(messages.find((m) => m.toolName === "run_command")?.args?.command).toBe("python -m pytest -q");
 
       // Diff review: two modified files, then apply.
       const [cs] = e.projects.listChangeSets(project.id);
@@ -229,6 +234,22 @@ describe("text tool calls from small models", () => {
     expect(calls[0]?.arguments).toEqual({ path: "tests/t.py", content: "def test_a():\n    assert 1\n" });
     expect(rest).toBe("I will write the test now.");
     expect(extractTextToolCalls('{"name": "nope", "arguments": {}}', ["write_file"]).calls).toHaveLength(0);
+  });
+});
+
+describe("chat transcript", () => {
+  test("tool arguments are clipped to safe, small JSON", () => {
+    expect(clipArgs(null)).toBeNull();
+    expect(clipArgs("text")).toBeNull();
+    expect(clipArgs([1, 2])).toBeNull();
+    const got = clipArgs(
+      { path: "a.py", content: "x".repeat(50), n: Number.NaN, deep: { a: { b: { c: { d: 1 } } } } },
+      10,
+    );
+    expect(got?.path).toBe("a.py");
+    expect(got?.content).toBe(`${"x".repeat(10)}\n…`);
+    expect(got?.n).toBeNull();
+    expect(got?.deep).toEqual({ a: { b: { c: null } } });
   });
 });
 

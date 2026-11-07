@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ChatMessage } from "@depo/model-gateway";
 import {
   type ChatItem,
+  type JsonValue,
   newId,
   PlanSchema,
   type ProjectSettings,
@@ -207,10 +208,13 @@ export class TaskManager {
       .orderBy(asc(messages.createdAt), asc(messages.id))
       .all();
     const items: ChatItem[] = [];
+    // Tool results carry only the call id; the arguments live on the assistant message that made the call.
+    const callArgs = new Map<string, Record<string, JsonValue>>();
     for (const m of msgs) {
       const c = JSON.parse(m.content) as ChatMessage & { isError?: boolean; agent?: string };
       if (c.role === "system") continue;
       if (c.role === "tool") {
+        const args = callArgs.get(c.toolCallId);
         items.push({
           id: m.id,
           role: "tool",
@@ -219,8 +223,13 @@ export class TaskManager {
           isError: c.isError === true,
           agent: c.agent ?? null,
           createdAt: m.createdAt,
+          ...(args ? { args } : {}),
         });
       } else if (c.role === "assistant") {
+        for (const call of c.toolCalls ?? []) {
+          const args = clipArgs(call.arguments);
+          if (args) callArgs.set(call.id, args);
+        }
         if (c.content.trim())
           items.push({
             id: m.id,
@@ -662,6 +671,29 @@ function toTask(r: typeof tasks.$inferSelect): Task {
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   });
+}
+
+/**
+ * A tool call's arguments as JSON the chat can show: an object, long strings clipped, nesting and
+ * list lengths capped. Returns null for anything that is not an object (a call that failed to parse).
+ */
+export function clipArgs(value: unknown, maxString = 4000): Record<string, JsonValue> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const clip = (v: unknown, depth: number): JsonValue => {
+    if (v === null || typeof v === "boolean") return v;
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string") return v.length > maxString ? `${v.slice(0, maxString)}\n…` : v;
+    if (depth >= 4) return null;
+    if (Array.isArray(v)) return v.slice(0, 20).map((x) => clip(x, depth + 1));
+    if (typeof v === "object") {
+      const out: Record<string, JsonValue> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>).slice(0, 30))
+        out[k] = clip(x, depth + 1);
+      return out;
+    }
+    return null;
+  };
+  return clip(value, 0) as Record<string, JsonValue>;
 }
 
 export { compressHistory, isBadModelOutput } from "./loop";
