@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   ExternalLink,
   Laptop,
@@ -192,8 +194,8 @@ export function PreviewPanel() {
   const error = (start.error ?? stop.error ?? restart.error ?? saveCommand.error) as Error | null;
 
   return (
-    <section className="flex h-full min-h-0 flex-col" aria-label="Preview">
-      <header className="flex flex-col gap-3 border-b border-border bg-panel px-4 py-3">
+    <section className="flex h-full min-h-0 flex-col overflow-y-auto" tabIndex={0} aria-label="Preview">
+      <header className="flex shrink-0 flex-col gap-3 border-b border-border bg-panel px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <MonitorPlay className="size-5 text-accent" aria-hidden />
           <h1 className="text-[15px] font-semibold text-fg">Preview</h1>
@@ -391,7 +393,7 @@ function ApprovalInline({ id }: { id: string }) {
   return (
     <section
       aria-label="Needs your OK"
-      className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-raised px-4 py-2"
+      className="flex shrink-0 flex-wrap items-center gap-3 border-b border-warning/40 bg-raised px-4 py-2"
     >
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-fg">Depo needs your OK to install packages</p>
@@ -422,7 +424,7 @@ function LinkBar({ preview, mates }: { preview: PreviewInfo; mates: PreviewInfo[
   };
   const running = preview.state === "running";
   return (
-    <div className="flex flex-col gap-1 border-b border-border px-4 py-2.5">
+    <div className="flex shrink-0 flex-col gap-1 border-b border-border px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <a
           href={preview.url}
@@ -502,7 +504,7 @@ function Viewer({ preview, device }: { preview: PreviewInfo | null; device: Devi
   const width = DEVICE_WIDTH[device];
   const running = preview?.state === "running";
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-[22rem] flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
         <fieldset className="m-0 flex items-center gap-1 border-0 p-0">
           <legend className="sr-only">Screen width</legend>
@@ -615,13 +617,14 @@ function LogPane({ preview }: { preview: PreviewInfo | null }) {
   const lines = useLogs(preview?.id ?? null, !!preview && active(preview));
   const ref = useRef<HTMLElement>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [open, setOpen] = useState(true);
   const stick = useRef(true);
   // Follow new lines only while the reader is at the bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when lines change
   useLayoutEffect(() => {
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [lines]);
+  }, [lines, open]);
   const onScroll = () => {
     const el = ref.current;
     if (!el) return;
@@ -637,16 +640,28 @@ function LogPane({ preview }: { preview: PreviewInfo | null }) {
     setAtBottom(true);
   };
   return (
-    <div className="flex h-48 shrink-0 flex-col border-t border-border bg-panel">
-      <div className="flex items-center gap-2 px-4 py-1.5">
+    <div className={cn("flex shrink-0 flex-col border-t border-border bg-panel", open ? "h-44" : "")}>
+      <div className="flex items-center gap-2 px-4 py-1">
         <h2 className="text-xs font-semibold text-fg">Log</h2>
-        {!atBottom && (
-          <Button size="sm" variant="ghost" className="ml-auto" onClick={jump}>
+        {open && !atBottom && (
+          <Button size="sm" variant="ghost" onClick={jump}>
             <ArrowDownToLine /> Jump to the end
           </Button>
         )}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto"
+          aria-expanded={open}
+          aria-controls="preview-log"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? <ChevronDown /> : <ChevronUp />} {open ? "Hide log" : "Show log"}
+        </Button>
       </div>
       <section
+        id="preview-log"
+        hidden={!open}
         ref={ref}
         onScroll={onScroll}
         tabIndex={0}
