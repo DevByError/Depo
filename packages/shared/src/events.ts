@@ -50,6 +50,8 @@ export const SYSTEM_EVENT_TYPES = [
   "project_changed",
   "preview_started",
   "preview_stopped",
+  /** New lines of a Terminal run (ephemeral). */
+  "terminal_output",
 ] as const;
 
 export const EventTypeSchema = z.enum([...AGENT_EVENT_TYPES, ...SYSTEM_EVENT_TYPES]);

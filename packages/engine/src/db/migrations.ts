@@ -408,6 +408,43 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE code_files ADD COLUMN map_version INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    // Terminal runs and command history, and the newest diagnostics per target (round 3, worker 2).
+    // IF NOT EXISTS keeps it safe to renumber.
+    version: 12,
+    name: "terminal_diagnostics",
+    sql: `
+      CREATE TABLE IF NOT EXISTS terminal_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        task_id TEXT,
+        target TEXT NOT NULL,
+        command TEXT NOT NULL,
+        category TEXT NOT NULL,
+        state TEXT NOT NULL,
+        exit_code INTEGER,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        duration_ms INTEGER,
+        line_count INTEGER NOT NULL DEFAULT 0,
+        output_tail TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS terminal_runs_project ON terminal_runs (project_id, started_at);
+      CREATE TABLE IF NOT EXISTS terminal_history (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        command TEXT NOT NULL,
+        used_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, command)
+      );
+      CREATE TABLE IF NOT EXISTS diagnostics_latest (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        target TEXT NOT NULL,
+        at TEXT NOT NULL,
+        result TEXT NOT NULL,
+        PRIMARY KEY (project_id, target)
+      );
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

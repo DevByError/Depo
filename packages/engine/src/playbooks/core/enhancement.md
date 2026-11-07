@@ -7,6 +7,7 @@
 - High-value feature proposals are listed with value, effort and risk, separate from the changes made.
 
 ## Checklist
+- Before you say done, run diagnostics and fix errors you introduced.
 - Measure first: response time of key endpoints (p50 and p95), query count per request, bundle size, Lighthouse scores, k6 for load when a server runs.
 - Fix the largest cost first; change one thing at a time.
 - Backend: eager loading for relations, select only needed columns, connection pooling, gzip or brotli, HTTP caching headers (ETag, Cache-Control) for public data.

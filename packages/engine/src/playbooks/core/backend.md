@@ -9,6 +9,7 @@
 - A health endpoint, structured logs without secrets or tokens, and no stack traces in responses.
 
 ## Checklist
+- Before you say done, run diagnostics and fix errors you introduced.
 - Layers: routes (HTTP only) call services (business rules) which call repositories (data access).
 - Response models never expose internal fields (password_hash, tokens, internal flags).
 - Use list_blocks for login, roles, audit log, rate limiting and pagination before writing your own.

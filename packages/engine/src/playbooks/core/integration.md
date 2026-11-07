@@ -7,6 +7,7 @@
 - Contract tests pass: the API answers with the documented shapes and status codes for the main paths.
 
 ## Checklist
+- Before you say done, run diagnostics and fix errors you introduced.
 - Prefer same-origin in development (a Vite or Next.js proxy) over cross-site cookies.
 - Map the API error format once in the client, so every screen gets field errors and messages the same way.
 - Keep base URLs, ports and model names in config, never in code.

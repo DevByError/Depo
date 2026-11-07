@@ -274,6 +274,11 @@ export const CODE_MAP_AGENTS: AgentId[] = [
 for (const a of MANIFESTS)
   if (CODE_MAP_AGENTS.includes(a.id) && !a.tools.includes("code_map")) a.tools.push("code_map");
 
+/** Agents that check their work with the project's installed compilers and linters (diagnostics). */
+export const DIAGNOSTICS_AGENTS: AgentId[] = ["backend", "frontend", "integration", "testing", "enhancement"];
+for (const a of MANIFESTS)
+  if (DIAGNOSTICS_AGENTS.includes(a.id) && !a.tools.includes("diagnostics")) a.tools.push("diagnostics");
+
 export function manifestOf(id: AgentId): AgentManifest {
   const found = MANIFESTS.find((x) => x.id === id);
   if (!found) throw new Error(`Unknown agent: ${id}`);

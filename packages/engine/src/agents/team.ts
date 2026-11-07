@@ -95,6 +95,8 @@ export interface TeamHost {
   eta?: { planNote(plan: Plan, parallel: number): string | null } | undefined;
   /** Page checks in a headless browser (check_page). */
   qa?: ToolContext["qa"];
+  /** The project's installed compilers and linters (diagnostics). */
+  diagnostics?: ToolContext["diagnostics"];
 }
 
 export interface AgentExtras {
@@ -1508,6 +1510,7 @@ export class TeamRunner {
       vision: (prompt, images) => this.askVision(input, prompt, images),
       ...(this.h.previews ? { previews: this.h.previews } : {}),
       ...(this.h.qa ? { qa: this.h.qa } : {}),
+      ...(this.h.diagnostics ? { diagnostics: this.h.diagnostics } : {}),
     };
   }
 

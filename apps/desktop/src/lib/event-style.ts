@@ -84,6 +84,7 @@ export const EVENT_STYLE: Record<EventType, { icon: LucideIcon; tone: Tone; labe
   decision: { icon: Signpost, tone: "accent", label: "Decision" },
   owner_note: { icon: MessageSquarePlus, tone: "info", label: "Your note" },
   committed: { icon: GitCommit, tone: "success", label: "Commit" },
+  terminal_output: { icon: Terminal, tone: "neutral", label: "Terminal" },
 };
 
 export const TONE_TEXT: Record<Tone, string> = {

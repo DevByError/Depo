@@ -69,6 +69,8 @@ export interface TaskManagerOptions {
   eta?: EtaService;
   /** Page checks in a headless browser (check_page). */
   qa?: ToolContext["qa"];
+  /** The project's installed compilers and linters (diagnostics). */
+  diagnostics?: ToolContext["diagnostics"];
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -140,6 +142,7 @@ export class TaskManager {
       ...(o.previews ? { previews: o.previews } : {}),
       ...(o.eta ? { eta: o.eta } : {}),
       ...(o.qa ? { qa: o.qa } : {}),
+      ...(o.diagnostics ? { diagnostics: o.diagnostics } : {}),
     });
   }
 
@@ -574,6 +577,7 @@ export class TaskManager {
       ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
       ...(this.o.previews ? { previews: this.o.previews } : {}),
       ...(this.o.qa ? { qa: this.o.qa } : {}),
+      ...(this.o.diagnostics ? { diagnostics: this.o.diagnostics } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);

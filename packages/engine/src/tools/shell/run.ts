@@ -130,6 +130,15 @@ type Spawned = {
   killTree: () => void;
 };
 
+/**
+ * The shell command line for `command`: cmd.exe on Windows, /bin/sh elsewhere. With `/s /c` and
+ * verbatim arguments, cmd.exe strips exactly the outer quotes added here, so quoted paths with
+ * spaces inside the command (`"C:\My Tools\x.exe" --flag`) stay intact.
+ */
+export function shellArgv(command: string, win = process.platform === "win32"): string[] {
+  return win ? ["cmd.exe", "/d", "/s", "/c", `"${command}"`] : ["/bin/sh", "-c", command];
+}
+
 /** Start `command` in a shell with its own Job Object (Windows) or process group (elsewhere). */
 async function spawnContained(o: {
   command: string;
@@ -138,7 +147,7 @@ async function spawnContained(o: {
   memoryLimitBytes?: number;
 }): Promise<Spawned> {
   const win = process.platform === "win32";
-  const argv = win ? ["cmd.exe", "/d", "/s", "/c", `"${o.command}"`] : ["/bin/sh", "-c", o.command];
+  const argv = shellArgv(o.command, win);
   const proc = Bun.spawn(argv, {
     cwd: o.cwd,
     env: commandEnv(o.env),

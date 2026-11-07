@@ -8,6 +8,7 @@ import type { EventBus } from "../events/bus";
 import { firstLine, getLogger } from "../logger";
 import { readPlaybook } from "../playbooks";
 import { CODE_MAP_TOOLS } from "./codemap-tools";
+import { DIAGNOSTICS_TOOLS, type DiagnosticsHooks } from "./diagnostics-tools";
 import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
@@ -54,6 +55,8 @@ export interface ToolContext {
   previews?: PreviewHooks;
   /** Look at the running app in a headless browser (check_page). */
   qa?: QaHooks;
+  /** Run the project's installed compilers and linters in the workspace (diagnostics). */
+  diagnostics?: DiagnosticsHooks;
 }
 
 export interface TeamHooks {
@@ -732,3 +735,5 @@ async function runTool(name: string, rawArgs: unknown, ctx: ToolContext): Promis
 registerTools(...PREVIEW_TOOLS);
 // Code map: modules, imports, entry points and hot spots, in a few hundred tokens.
 registerTools(...CODE_MAP_TOOLS);
+// Diagnostics: the project's installed compilers and linters, run in the workspace.
+registerTools(...DIAGNOSTICS_TOOLS);
