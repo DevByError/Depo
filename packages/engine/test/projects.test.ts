@@ -45,6 +45,7 @@ async function setup(git?: GitFake) {
     memory: e.memory,
     scheduler: e.scheduler,
     indexer: e.indexer,
+    previews: e.previews,
     info: { startedAt: new Date(), dataDir: e.dirs.root, dbPath: e.database.path, schemaVersion: 3 },
   };
   return { e, work, events, ctx };
@@ -215,6 +216,7 @@ describe("projects", () => {
       commandAllow: [],
       commandDeny: [],
       maxSteps: 40,
+      previewCommand: "",
     });
     const next = handlers["projects.settings.set"](
       { id: p.id, patch: { indexEnabled: false, maxParallel: 2 } },

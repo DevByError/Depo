@@ -10,6 +10,7 @@ import {
   ListChecks,
   type LucideIcon,
   MessageSquare,
+  MonitorPlay,
   Network,
   Palette,
   Presentation,
@@ -30,6 +31,7 @@ import { ModelsPanel } from "@/components/panels/ModelsPanel";
 import { OverviewPanel } from "@/components/panels/OverviewPanel";
 import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { PlanBoard } from "@/components/panels/PlanBoard";
+import { PreviewPanel } from "@/components/panels/PreviewPanel";
 import { SecurityPanel } from "@/components/panels/SecurityPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { SlidesPanel } from "@/components/panels/SlidesPanel";
@@ -64,6 +66,7 @@ export const CENTER_TABS: TabDef[] = [
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "blocks", label: "Blocks", icon: Blocks },
   { id: "security", label: "Security", icon: ShieldCheck },
+  { id: "preview", label: "Preview", icon: MonitorPlay },
 ];
 
 /**
@@ -212,6 +215,8 @@ export function CenterTabs() {
             <SecurityPanel />
           ) : current.id === "models" ? (
             <ModelsPanel />
+          ) : current.id === "preview" ? (
+            <PreviewPanel />
           ) : (
             <PhaseNotice icon={current.icon} title={current.label} phase={current.phase ?? "a later phase"}>
               {current.blurb}

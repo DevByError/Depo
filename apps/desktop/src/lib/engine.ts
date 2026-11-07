@@ -107,6 +107,9 @@ function invalidateFor(type: string, status: string): void {
   if (type === "handoff" || type === "test_result") {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
   }
+  if (type === "preview_started" || type === "preview_stopped") {
+    void queryClient.invalidateQueries({ queryKey: ["previews"] });
+  }
 }
 
 async function onConnected() {

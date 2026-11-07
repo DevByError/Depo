@@ -1,5 +1,6 @@
 import path from "node:path";
 import { DEPO_VERSION, type HeartbeatDetails } from "@depo/shared";
+import { eq } from "drizzle-orm";
 import { TaskManager } from "./agent/tasks";
 import { AgentLab } from "./agents/lab";
 import { handlers } from "./api/handlers";
@@ -7,6 +8,7 @@ import { type ApiServer, startApiServer } from "./api/server";
 import { ApprovalCenter } from "./approvals";
 import { CodeIndexer } from "./codeindex/indexer";
 import { type OpenedDatabase, openDatabase } from "./db";
+import { projects as projectsTable, tasks as tasksTable } from "./db/schema";
 import { DesignService } from "./design/service";
 import { EventBus } from "./events/bus";
 import { OsvService } from "./knowledge/osv";
@@ -25,6 +27,7 @@ import { McpManager } from "./mcp/manager";
 import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
+import { PreviewManager } from "./preview/manager";
 import { ProjectRegistry } from "./projects/registry";
 import { ModelScheduler } from "./scheduler/scheduler";
 import { SecurityService } from "./security/service";
@@ -76,6 +79,7 @@ export interface Engine {
   readonly security: SecurityService;
   readonly lab: AgentLab;
   readonly logs: LogService;
+  readonly previews: PreviewManager;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -204,7 +208,34 @@ export function createEngine(opts: EngineOptions): Engine {
     schedule: (label, model, run, signal) =>
       scheduler.run({ projectId: null, taskId: null, model, priority: "task", label }, run, signal),
   });
-  const tasks = new TaskManager({
+  /** Previews: the app started from the project folder or a task's private copy. */
+  const previews: PreviewManager = new PreviewManager({
+    bus,
+    approvals,
+    logger,
+    projectRoot: (id) =>
+      database.db
+        .select({ root: projectsTable.rootPath })
+        .from(projectsTable)
+        .where(eq(projectsTable.id, id))
+        .get()?.root ?? null,
+    workspaceRoot: (id): string | null => tasks.workspaceRoot(id),
+    taskProject: (id) =>
+      database.db
+        .select({ projectId: tasksTable.projectId })
+        .from(tasksTable)
+        .where(eq(tasksTable.id, id))
+        .get()?.projectId ?? null,
+    tasks: (id) => tasks.list(id).map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    override: (id) => safeSettings(registry, id)?.previewCommand ?? "",
+    commandRules: (id) => {
+      const s = safeSettings(registry, id);
+      return s ? { allow: s.commandAllow, deny: s.commandDeny } : null;
+    },
+  });
+  projects.beforeWorkspaceRemoved((dir) => previews.stopRoot(dir));
+  const tasks: TaskManager = new TaskManager({
+    previews,
     extras,
     manifest: (id) => lab.active(id),
     db: database.db,
@@ -266,6 +297,7 @@ export function createEngine(opts: EngineOptions): Engine {
     security,
     lab,
     logs,
+    previews,
     database,
     async start() {
       server = startApiServer({
@@ -293,6 +325,7 @@ export function createEngine(opts: EngineOptions): Engine {
           security,
           lab,
           logs,
+          previews,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
@@ -337,6 +370,7 @@ export function createEngine(opts: EngineOptions): Engine {
       });
       indexer.stopAll();
       await tasks.cancelAll();
+      await previews.stopAll();
       await mcp.stopAll();
       await server?.stop();
       database.close();

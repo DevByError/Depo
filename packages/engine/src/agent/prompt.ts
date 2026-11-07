@@ -74,6 +74,7 @@ export function codingSystemPrompt(opts: { projectName: string; root: string }):
     "2. Make small, precise edits with edit_file. Copy the exact current text into `search` (without line numbers). Use write_file for new files.",
     "3. Follow the project's existing structure, style and libraries. Add a dependency only when there is no reasonable alternative.",
     "4. Add or update tests for what you change. Run the tests. If they fail, read the error, fix the cause, and run them again.",
+    "   For an app with a server or web pages, also start it with start_preview and check the main pages or endpoints with http_check before you finish, then stop it with stop_preview.",
     "5. When the work is done and the tests pass, stop calling tools and reply with a short summary: what changed, which files, and the test result.",
     "",
     "Rules: read a file before editing it; never guess its contents. Do not ask the user to copy or apply anything; the review step does that. Keep replies short and plain.",

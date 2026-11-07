@@ -9,6 +9,7 @@ import { firstLine, getLogger } from "../logger";
 import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
+import { PREVIEW_TOOLS, type PreviewHooks } from "./preview-tools";
 import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
@@ -46,6 +47,8 @@ export interface ToolContext {
   vision?: (prompt: string, images: string[]) => Promise<string | null>;
   /** Called after each test run; may return text to add to what the model sees (lessons learned). */
   onTestResult?: (r: { command: string; passed: boolean; output: string }) => string | undefined;
+  /** Start, check and stop the app from the workspace (start_preview, http_check, stop_preview). */
+  previews?: PreviewHooks;
 }
 
 export interface TeamHooks {
@@ -691,3 +694,6 @@ async function runTool(name: string, rawArgs: unknown, ctx: ToolContext): Promis
     return { content: `${name} failed: ${msg}`, isError: true };
   }
 }
+
+// Previews: start the app, smoke-test it over HTTP on 127.0.0.1, stop it.
+registerTools(...PREVIEW_TOOLS);

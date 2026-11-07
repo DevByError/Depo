@@ -1,10 +1,13 @@
+import type { PreviewInfo } from "@depo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Hourglass, Loader2, Pause, Play, UserRound } from "lucide-react";
+import { ExternalLink, Hourglass, Loader2, MonitorPlay, Pause, Play, UserRound } from "lucide-react";
 import { useEffect } from "react";
 import { call } from "@/lib/engine";
+import { openExternal } from "@/lib/open-url";
 import { selectProject } from "@/lib/projects";
 import { queryClient } from "@/lib/query";
 import { useEngine } from "@/store/engine";
+import { usePreviewUi } from "@/store/preview";
 import { useUi } from "@/store/ui";
 
 /**
@@ -37,6 +40,12 @@ export function RunningSection() {
   useEffect(() => {
     if (enabled && count >= 0) void queryClient.invalidateQueries({ queryKey: ["scheduler"] });
   }, [count, enabled]);
+  const previews = useQuery({
+    queryKey: ["previews", "list", "all"],
+    queryFn: () => call("preview.list", {}),
+    enabled,
+    refetchInterval: 5000,
+  });
   const toggle = useMutation({
     mutationFn: (pause: boolean) => call(pause ? "scheduler.pause" : "scheduler.resume", {}),
     onSuccess: (s) => queryClient.setQueryData(["scheduler"], s),
@@ -46,13 +55,59 @@ export function RunningSection() {
   const running = active.data?.tasks ?? [];
   const s = scheduler.data;
   const queuedTasks = new Set((s?.queued ?? []).map((j) => j.taskId));
+  const live = (previews.data?.previews ?? []).filter((p) => p.state === "starting" || p.state === "running");
+  const openPreview = (p: PreviewInfo) => {
+    if (useUi.getState().projectId !== p.projectId) selectProject(p.projectId);
+    usePreviewUi.getState().show({ projectId: p.projectId, taskId: p.taskId, previewId: p.id });
+    setCenterTab("preview");
+  };
 
   return (
     <div>
+      {live.length > 0 && (
+        <ul className="mb-0.5 flex flex-col gap-0.5" aria-label="Running previews">
+          {live.map((p) => (
+            <li key={p.id} className="mx-1 flex items-start gap-1">
+              <button
+                type="button"
+                onClick={() => openPreview(p)}
+                className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1 text-left text-xs text-muted hover:bg-hover hover:text-fg"
+              >
+                {p.state === "running" ? (
+                  <MonitorPlay className="mt-0.5 size-3.5 shrink-0 text-success" aria-label="Running" />
+                ) : (
+                  <Loader2
+                    className="mt-0.5 size-3.5 shrink-0 animate-spin text-accent"
+                    aria-label="Starting"
+                  />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-[11px] text-accent">{p.url}</span>
+                  <span className="block truncate text-[10px] text-subtle">
+                    {names.get(p.projectId) ?? "Project"} · {p.taskId ? "task copy" : "project folder"}
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Open ${p.url} in your browser`}
+                title="Open in browser"
+                disabled={p.state !== "running"}
+                onClick={() => void openExternal(p.url).catch(() => {})}
+                className="mt-0.5 rounded p-1 text-subtle hover:bg-hover hover:text-fg disabled:opacity-40"
+              >
+                <ExternalLink className="size-3.5" aria-hidden />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {running.length === 0 ? (
-        <div className="mx-1 flex items-center gap-2 px-2 py-1 text-xs text-subtle">
-          <Play className="size-3.5" aria-hidden /> Nothing running
-        </div>
+        live.length > 0 ? null : (
+          <div className="mx-1 flex items-center gap-2 px-2 py-1 text-xs text-subtle">
+            <Play className="size-3.5" aria-hidden /> Nothing running
+          </div>
+        )
       ) : (
         <ul className="flex flex-col gap-0.5" aria-label="Running tasks">
           {running.map((t) => {

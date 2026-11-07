@@ -80,6 +80,63 @@ class OutputBuffer {
  */
 export async function runShell(o: RunOptions): Promise<RunResult> {
   const started = performance.now();
+  const { proc, job, containment, killTree } = await spawnContained(o);
+
+  let timedOut = false;
+  let cancelled = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killTree();
+  }, o.timeoutMs ?? 120_000);
+  const onAbort = () => {
+    cancelled = true;
+    killTree();
+  };
+  if (o.signal?.aborted) onAbort();
+  o.signal?.addEventListener("abort", onAbort, { once: true });
+
+  const buf = new OutputBuffer(o.maxOutputBytes ?? 200_000);
+  const onChunk = (s: string) => {
+    buf.push(s);
+    o.onOutput?.(s);
+  };
+  // Output pipes stay open while grandchildren hold them; once the shell exits and the tree is
+  // gone they close. Wait for exit first, then give the pipes a moment to drain.
+  const pumps = Promise.all([pump(proc.stdout, onChunk), pump(proc.stderr, onChunk)]);
+  const exitCode = await proc.exited;
+  clearTimeout(timer);
+  o.signal?.removeEventListener("abort", onAbort);
+  // Anything the command left running in the background is stopped with it.
+  killTree();
+  job?.close();
+  await Promise.race([pumps, Bun.sleep(2000)]);
+  const { output, truncated } = buf.text();
+  return {
+    exitCode: timedOut || cancelled ? null : exitCode,
+    output: output.replace(/\r\n/g, "\n"),
+    truncated,
+    timedOut,
+    cancelled,
+    durationMs: Math.round(performance.now() - started),
+    containment,
+  };
+}
+
+type Spawned = {
+  proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+  job: JobHandle | null;
+  containment: RunResult["containment"];
+  /** Kill the whole process tree. Synchronous, safe to call more than once. */
+  killTree: () => void;
+};
+
+/** Start `command` in a shell with its own Job Object (Windows) or process group (elsewhere). */
+async function spawnContained(o: {
+  command: string;
+  cwd: string;
+  env?: Record<string, string>;
+  memoryLimitBytes?: number;
+}): Promise<Spawned> {
   const win = process.platform === "win32";
   const argv = win ? ["cmd.exe", "/d", "/s", "/c", `"${o.command}"`] : ["/bin/sh", "-c", o.command];
   const proc = Bun.spawn(argv, {
@@ -99,9 +156,6 @@ export async function runShell(o: RunOptions): Promise<RunResult> {
     job = await attachJob(proc.pid, o.memoryLimitBytes);
     if (job) containment = "job";
   }
-
-  let timedOut = false;
-  let cancelled = false;
   const killTree = () => {
     if (job) job.terminate(1);
     else if (win) Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(proc.pid)], { windowsHide: true });
@@ -109,54 +163,69 @@ export async function runShell(o: RunOptions): Promise<RunResult> {
       try {
         process.kill(-proc.pid, "SIGKILL");
       } catch {
-        proc.kill("SIGKILL");
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
       }
     }
   };
-  const timer = setTimeout(() => {
-    timedOut = true;
-    killTree();
-  }, o.timeoutMs ?? 120_000);
-  const onAbort = () => {
-    cancelled = true;
-    killTree();
-  };
-  if (o.signal?.aborted) onAbort();
-  o.signal?.addEventListener("abort", onAbort, { once: true });
+  return { proc, job, containment, killTree };
+}
 
-  const buf = new OutputBuffer(o.maxOutputBytes ?? 200_000);
-  const pump = async (stream: ReadableStream<Uint8Array>) => {
-    const decoder = new TextDecoder();
+async function pump(stream: ReadableStream<Uint8Array>, onChunk: (s: string) => void): Promise<void> {
+  const decoder = new TextDecoder();
+  try {
     for await (const chunk of stream) {
       const s = decoder.decode(chunk, { stream: true });
-      if (!s) continue;
-      buf.push(s);
-      o.onOutput?.(s);
+      if (s) onChunk(s);
     }
-    const rest = decoder.decode();
-    if (rest) {
-      buf.push(rest);
-      o.onOutput?.(rest);
-    }
+  } catch {
+    // the pipe broke when the tree was killed
+  }
+  const rest = decoder.decode();
+  if (rest) onChunk(rest);
+}
+
+export interface ShellProcess {
+  pid: number;
+  containment: RunResult["containment"];
+  /** Resolves with the exit code once the shell has exited and its tree is gone (null when killed). */
+  exited: Promise<number | null>;
+  /** Kill the whole process tree now. Synchronous; safe to call more than once. */
+  kill(): void;
+}
+
+/**
+ * Start a long-running command (a dev server) without waiting for it: same shell, environment
+ * and containment as `runShell`, with stdout and stderr delivered separately. The caller must
+ * call `kill()` when done; anything the command leaves behind is killed when it exits.
+ */
+export async function startShell(o: {
+  command: string;
+  cwd: string;
+  env?: Record<string, string>;
+  memoryLimitBytes?: number;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+}): Promise<ShellProcess> {
+  const { proc, job, containment, killTree } = await spawnContained(o);
+  let killed = false;
+  const kill = () => {
+    killed = true;
+    killTree();
   };
-  // Output pipes stay open while grandchildren hold them; once the shell exits and the tree is
-  // gone they close. Wait for exit first, then give the pipes a moment to drain.
-  const pumps = Promise.all([pump(proc.stdout), pump(proc.stderr)]);
-  const exitCode = await proc.exited;
-  clearTimeout(timer);
-  o.signal?.removeEventListener("abort", onAbort);
-  // Anything the command left running in the background is stopped with it.
-  killTree();
-  job?.close();
-  await Promise.race([pumps, Bun.sleep(2000)]);
-  const { output, truncated } = buf.text();
-  return {
-    exitCode: timedOut || cancelled ? null : exitCode,
-    output: output.replace(/\r\n/g, "\n"),
-    truncated,
-    timedOut,
-    cancelled,
-    durationMs: Math.round(performance.now() - started),
-    containment,
-  };
+  const pumps = Promise.all([
+    pump(proc.stdout, (s) => o.onStdout?.(s.replace(/\r\n/g, "\n"))),
+    pump(proc.stderr, (s) => o.onStderr?.(s.replace(/\r\n/g, "\n"))),
+  ]);
+  const exited = (async () => {
+    const code = await proc.exited;
+    killTree();
+    job?.close();
+    await Promise.race([pumps, Bun.sleep(2000)]);
+    return killed ? null : code;
+  })();
+  return { pid: proc.pid, containment, exited, kill };
 }

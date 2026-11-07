@@ -44,6 +44,8 @@ export const SYSTEM_EVENT_TYPES = [
   "model_benchmark",
   "indexing",
   "project_changed",
+  "preview_started",
+  "preview_stopped",
 ] as const;
 
 export const EventTypeSchema = z.enum([...AGENT_EVENT_TYPES, ...SYSTEM_EVENT_TYPES]);

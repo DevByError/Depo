@@ -20,6 +20,7 @@ import type { LogService } from "../logs/service";
 import type { McpManager } from "../mcp/manager";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
+import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SecurityService } from "../security/service";
@@ -48,6 +49,7 @@ export interface HandlerContext {
   lab: AgentLab;
   /** Engine logs: search, live tail, diagnostics export, model timings. */
   logs: LogService;
+  previews: PreviewManager;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -64,7 +66,9 @@ async function schedulerStatus(ctx: HandlerContext) {
   return ctx.scheduler.status(paused);
 }
 
-function removeProject(id: string, ctx: HandlerContext) {
+async function removeProject(id: string, ctx: HandlerContext) {
+  // Running previews hold the folders open (Windows) and must not outlive their project.
+  await ctx.previews.stopProject(id);
   ctx.registry.delete(id);
   ctx.indexer.forget(id);
   ctx.scheduler.refresh();
@@ -304,6 +308,19 @@ export const handlers: Handlers = {
     return ctx.lab.importBundle(parsed);
   },
   "team.get": (p, ctx) => ctx.tasks.teamState(p.taskId),
+  "preview.targets": (p, ctx) => ({ targets: ctx.previews.targets(p.projectId) }),
+  "preview.detect": (p, ctx) => ctx.previews.detect(p.projectId, p.taskId),
+  "preview.start": (p, ctx) =>
+    ctx.previews.start({
+      projectId: p.projectId,
+      taskId: p.taskId ?? null,
+      ...(p.recipe ? { recipe: p.recipe } : {}),
+      install: p.install ?? false,
+    }),
+  "preview.stop": async (p, ctx) => ({ stopped: await ctx.previews.stop(p.id) }),
+  "preview.restart": async (p, ctx) => ({ preview: await ctx.previews.restart(p.id) }),
+  "preview.list": (p, ctx) => ({ previews: ctx.previews.list(p.projectId) }),
+  "preview.logs": (p, ctx) => ctx.previews.logs(p.id, p.since ?? 0),
   "skills.list": (_p, ctx) => ({ skills: ctx.skills.list() }),
   "skills.get": (p, ctx) => {
     const i = ctx.skills.instructions(p.id);

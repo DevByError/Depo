@@ -16,7 +16,8 @@ export type CenterTab =
   | "models"
   | "knowledge"
   | "security"
-  | "blocks";
+  | "blocks"
+  | "preview";
 export type BottomTab = "terminal" | "problems" | "tests" | "engine" | "logs";
 export type RightTab = "activity" | "agents";
 

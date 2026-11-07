@@ -69,6 +69,8 @@ export interface TeamHost {
   repoMap(projectId: string): string;
   /** Extra prompt text and tools for an agent (skills, MCP servers, knowledge packs). */
   extras?(agentId: string, projectId: string, run: { taskId: string; signal: AbortSignal }): AgentExtras;
+  /** Previews of the app being built (start_preview, http_check, stop_preview). */
+  previews?: ToolContext["previews"];
 }
 
 export interface AgentExtras {
@@ -1110,6 +1112,7 @@ export class TeamRunner {
       onFileChanged: (f) => files.add(f),
       team,
       vision: (prompt, images) => this.askVision(input, prompt, images),
+      ...(this.h.previews ? { previews: this.h.previews } : {}),
     };
   }
 

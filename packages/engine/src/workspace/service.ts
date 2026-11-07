@@ -149,7 +149,7 @@ export class ProjectService {
     const cps = this.db.select().from(checkpoints).where(eq(checkpoints.projectId, id)).all();
     this.db.delete(projects).where(eq(projects.id, id)).run();
     for (const t of taskRows) {
-      if (t.workspacePath) removeShadow(t.workspacePath);
+      if (t.workspacePath) this.removeWorkspaceDir(t.workspacePath);
     }
     for (const c of cps) fs.rmSync(path.join(this.dirs.checkpoints, c.id), { recursive: true, force: true });
     this.bus.emit({
@@ -220,10 +220,28 @@ export class ProjectService {
 
   // ---- workspaces ------------------------------------------------------------------------
 
+  private readonly removalHooks: ((dir: string) => void)[] = [];
+
+  /** Called just before a shadow workspace folder is deleted (previews running from it stop). */
+  beforeWorkspaceRemoved(hook: (dir: string) => void): void {
+    this.removalHooks.push(hook);
+  }
+
+  private removeWorkspaceDir(dir: string): void {
+    for (const h of this.removalHooks) {
+      try {
+        h(dir);
+      } catch (err) {
+        this.logger.warn("workspace removal hook failed", { error: String(err) });
+      }
+    }
+    removeShadow(dir);
+  }
+
   /** Copy the project into a fresh shadow workspace for one task. */
   createWorkspace(projectRoot: string, key: string): Workspace {
     const dir = path.join(this.dirs.workspaces, key);
-    if (fs.existsSync(dir)) removeShadow(dir);
+    if (fs.existsSync(dir)) this.removeWorkspaceDir(dir);
     const root = path.join(dir, "tree");
     const t0 = performance.now();
     const { manifest, linked, bytes } = createShadow(projectRoot, root);
@@ -248,7 +266,7 @@ export class ProjectService {
   }
 
   discardWorkspace(dir: string): void {
-    if (fs.existsSync(dir)) removeShadow(dir);
+    if (fs.existsSync(dir)) this.removeWorkspaceDir(dir);
   }
 
   // ---- change sets -----------------------------------------------------------------------
