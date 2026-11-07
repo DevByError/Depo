@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { ApprovalCard } from "@/components/chat/ApprovalCard";
 import { Composer } from "@/components/chat/Composer";
 import { PlanCard } from "@/components/chat/PlanCard";
+import { MessageReferences } from "@/components/chat/References";
 import { SteerNote } from "@/components/chat/SteerNote";
 import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
 import { RunningAppLink } from "@/components/qa/RunningAppLink";
@@ -286,6 +287,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
             <li key={t.user?.id ?? `turn-${i}`}>
               <TurnView
                 turn={t}
+                taskId={task.id}
                 id={t.user?.id ?? `${task.id}:${i}`}
                 state={state}
                 live={latest && active ? live.step : null}
@@ -372,12 +374,14 @@ export function groupTurns(items: ChatItem[], opts: { working?: boolean } = {}):
 
 function TurnView({
   turn,
+  taskId,
   id,
   state,
   live,
   stream,
 }: {
   turn: Turn;
+  taskId: string;
   id: string;
   state: WorkState;
   live: LiveStep | null;
@@ -401,6 +405,9 @@ function TurnView({
               Sent while the task worked, so it continues with it
             </span>
           )}
+          {turn.user.references?.length ? (
+            <MessageReferences taskId={taskId} items={turn.user.references} />
+          ) : null}
         </div>
       )}
       {turn.plan && <PlanCard plan={turn.plan.plan} />}

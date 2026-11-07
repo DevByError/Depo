@@ -7,6 +7,7 @@ import {
   newId,
   PlanSchema,
   type ProjectSettings,
+  type ReferenceInput,
   type Task,
   TaskSchema,
   type TaskStatus,
@@ -34,6 +35,7 @@ import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelWarmup } from "../models/speed";
 import type { ReadinessHooks } from "../readiness/service";
+import type { ReferenceService } from "../references/service";
 import { ReviewStore } from "../review/comments";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
@@ -78,6 +80,8 @@ export interface TaskManagerOptions {
   readiness?: ReadinessHooks;
   /** The project's installed compilers and linters (diagnostics). */
   diagnostics?: ToolContext["diagnostics"];
+  /** Pictures and links the owner sends as design references (studied before the agents start). */
+  references?: ReferenceService;
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -151,6 +155,7 @@ export class TaskManager {
       ...(o.qa ? { qa: o.qa } : {}),
       ...(o.readiness ? { readiness: o.readiness } : {}),
       ...(o.diagnostics ? { diagnostics: o.diagnostics } : {}),
+      ...(o.references ? { references: o.references } : {}),
     });
   }
 
@@ -303,6 +308,7 @@ export class TaskManager {
       .orderBy(asc(messages.createdAt), asc(messages.id))
       .all();
     const items: ChatItem[] = [];
+    const refs = this.o.references?.list(id) ?? [];
     // Tool results carry only the call id; the arguments live on the assistant message that made the call.
     const callArgs = new Map<string, Record<string, JsonValue>>();
     for (const m of msgs) {
@@ -337,6 +343,8 @@ export class TaskManager {
           });
       } else {
         const steer = (c as Partial<StoredNote>).steer;
+        const refIds = (c as { references?: string[] }).references ?? [];
+        const mine = refIds.length ? refs.filter((r) => refIds.includes(r.id)) : [];
         items.push({
           id: m.id,
           role: "user",
@@ -352,6 +360,7 @@ export class TaskManager {
                   steer.state === "queued" && !this.inboxes.has(id) ? { ...steer, state: "dropped" } : steer,
               }
             : {}),
+          ...(mine.length ? { references: mine } : {}),
         });
       }
     }
@@ -390,22 +399,33 @@ export class TaskManager {
   }
 
   /** Start a new task, or continue an existing one with a follow-up message. */
-  send(projectId: string, text: string, taskId?: string, mode?: WorkMode): Task {
+  send(
+    projectId: string,
+    text: string,
+    taskId?: string,
+    mode?: WorkMode,
+    references: ReferenceInput[] = [],
+  ): Task {
+    if (references.length && !this.o.references) throw new Error("Design references are not available.");
     const project = this.o.db.select().from(projects).where(eq(projects.id, projectId)).get();
     if (!project) throw new Error(`Unknown project: ${projectId}`);
     if (!fs.existsSync(project.rootPath))
       throw new Error(`The project folder is missing: ${project.rootPath}`);
     const now = new Date().toISOString();
     let id = taskId;
+    let refIds: string[] = [];
     if (id) {
       const row = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get();
       if (!row || row.projectId !== projectId) throw new Error(`Unknown task: ${id}`);
       if (this.running.has(id)) throw new Error("This task is still working. Wait for it or stop it first.");
+      refIds = this.saveReferences(id, references);
       if (mode && mode !== row.mode) {
         this.o.db.update(tasks).set({ mode }).where(eq(tasks.id, id)).run();
       }
     } else {
       id = newId("tsk");
+      // Checked and stored before the task exists, so a bad picture never leaves an empty task.
+      refIds = this.saveReferences(id, references);
       const title = text.trim().split("\n")[0]?.slice(0, 80) ?? "Task";
       this.o.db
         .insert(tasks)
@@ -421,9 +441,39 @@ export class TaskManager {
         })
         .run();
     }
-    this.addMessage(id, { role: "user", content: text });
+    this.addMessage(id, {
+      role: "user",
+      content: text,
+      ...(refIds.length ? { references: refIds } : {}),
+    } as ChatMessage);
     this.launch(id, projectId, taskId ? "task continued" : "task started", mode);
     return this.get(id).task;
+  }
+
+  private saveReferences(taskId: string, inputs: ReferenceInput[]): string[] {
+    if (!inputs.length || !this.o.references) return [];
+    return this.o.references.save(taskId, inputs).map((r) => r.id);
+  }
+
+  /**
+   * Before the agents start: study new design references (colours, styles, the vision model's
+   * notes) and copy their pictures into the private copy. Failures are shown, never fatal.
+   */
+  private async prepareReferences(
+    taskId: string,
+    projectId: string,
+    root: string,
+    agent: string,
+    signal: AbortSignal,
+  ) {
+    const refs = this.o.references;
+    if (!refs) return;
+    if (refs.pending(taskId)) await refs.study({ taskId, projectId, agent, signal });
+    try {
+      refs.copyInto(taskId, root);
+    } catch (err) {
+      this.log.warn("could not copy design references into the private copy", { taskId, err });
+    }
   }
 
   /** Start a run of the task (its newest user message is the request). */
@@ -546,6 +596,18 @@ export class TaskManager {
     }
 
     this.setStatus(taskId, "running");
+    await this.prepareReferences(
+      taskId,
+      project.id,
+      ws.root,
+      row.mode === "single" ? CODER_AGENT : agentTag("manager"),
+      signal,
+    );
+    if (signal.aborted) {
+      this.setStatus(taskId, "cancelled");
+      emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
+      return;
+    }
     if (row.mode !== "single") {
       await this.runTeam(row, project, ws, signal);
       return;
@@ -592,6 +654,7 @@ export class TaskManager {
       ...(this.o.previews ? { previews: this.o.previews } : {}),
       ...(this.o.qa ? { qa: this.o.qa } : {}),
       ...(this.o.diagnostics ? { diagnostics: this.o.diagnostics } : {}),
+      ...(this.o.references ? { references: this.o.references } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);
@@ -656,16 +719,20 @@ export class TaskManager {
     const lastUser = latestRequest(this.get(taskId).messages);
     this.o.indexer?.ensure(project.id);
     emit({ type: "planning", text: `Team mode "${mode}": ${row.title}`, status: "started" });
+    // The owner's design references: one brief for every agent, also kept on the blackboard.
+    const brief = this.o.references?.brief(taskId) ?? "";
+    if (brief) this.blackboard.write(project.id, "design-reference.md", brief, "engine", taskId);
+    const asked = lastUser
+      ? lastUser.fromNotes
+        ? `${row.prompt}\n\n${lastUser.text}`
+        : lastUser.text
+      : row.prompt;
     const res = await this.team.run({
       taskId,
       projectId: project.id,
       projectName: project.name,
       // A turn made only of late notes (or a declined plan's reason) keeps the original request.
-      text: lastUser
-        ? lastUser.fromNotes
-          ? `${row.prompt}\n\n${lastUser.text}`
-          : lastUser.text
-        : row.prompt,
+      text: brief ? `${asked}\n\n${brief}` : asked,
       mode,
       ws,
       signal,
@@ -832,6 +899,7 @@ export class TaskManager {
 
   private loadHistory(taskId: string): ChatMessage[] {
     const out: ChatMessage[] = [];
+    let withRefs = -1;
     for (const m of this.o.db
       .select()
       .from(messages)
@@ -841,16 +909,27 @@ export class TaskManager {
       const {
         isError: _e,
         steer,
+        references,
         ...c
       } = JSON.parse(m.content) as ChatMessage & {
         isError?: boolean;
         steer?: StoredNote["steer"];
+        references?: string[];
       };
       // Steering notes: read ones as the agent saw them, ones that became a turn as plain
       // requests; queued and unread notes are not part of the conversation.
       if (steer?.state === "delivered") out.push({ role: "user", content: steerPrompt([c.content]) });
-      else if (!steer || steer.state === "followup") out.push(c as ChatMessage);
+      else if (!steer || steer.state === "followup") {
+        if (references?.length) withRefs = out.length;
+        out.push(c as ChatMessage);
+      }
     }
+    // The design brief goes with the newest message that brought references. It is the same text
+    // on every run, so the prompt prefix stays reusable.
+    const brief = withRefs >= 0 ? (this.o.references?.brief(taskId) ?? "") : "";
+    const target = out[withRefs];
+    if (brief && target?.role === "user")
+      out[withRefs] = { ...target, content: `${target.content}\n\n${brief}` };
     return out;
   }
 

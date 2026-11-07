@@ -76,3 +76,7 @@ A screenshot pass then shortened the Terminal status, fixed the Test results wor
 
 Depo now plans with a team you can watch and steer, builds from strong starting points, runs and checks what it builds in a real browser, answers "is it ready?" in one card, and lets the owner review, comment, undo and commit like a pull request, all on the owner's PC with local models. What remains is proof with real models on the owner's hardware: prompt tuning for small models, the real speed gain of keep-alive and prefix reuse, and Windows-specific checks (Job Objects for the Terminal, path quirks in the parsers).
 
+## After the rounds: design references
+
+The owner asked to give Depo a picture or a link and say "the same UI/UX and theme". Depo now measures the colours from the picture's pixels, opens a pasted link in its headless browser (public addresses only) to read fonts, sizes, corners, the main button and the CSS colour variables, adds a vision model's notes when one is set up, and hands the agents a brief plus a `compare_to_reference` tool to check their page against the reference.
+

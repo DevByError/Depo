@@ -43,6 +43,7 @@ import { LogMethods } from "./logs";
 import { PreviewMethods } from "./preview";
 import { QaMethods } from "./qa";
 import { ReadinessMethods } from "./readiness";
+import { DesignReferenceSchema, ReferenceInputsSchema, ReferenceMethods } from "./references";
 import { ReviewMethods } from "./review";
 import { SearchMethods } from "./search";
 import { SteerInfoSchema, SteerMethods } from "./steer";
@@ -335,6 +336,8 @@ export const ChatItemSchema = z.object({
   args: z.record(z.string(), JsonValueSchema).optional(),
   /** User items only: a note sent while the task worked (steering), and who has read it. */
   steer: SteerInfoSchema.optional(),
+  /** User items only: pictures and links sent as design references, and what Depo read from them. */
+  references: z.array(DesignReferenceSchema).optional(),
 });
 export type ChatItem = z.infer<typeof ChatItemSchema>;
 
@@ -355,6 +358,8 @@ const TaskMethods = {
         taskId: z.string().optional(),
         /** How to work: "single" (one coding agent, the default) or a team mode. */
         mode: WorkModeSchema.optional(),
+        /** Pictures or links whose look the owner wants (design references). */
+        references: ReferenceInputsSchema.optional(),
       })
       .strict(),
     result: TaskSchema,
@@ -1176,6 +1181,7 @@ export const ApiSchema = {
   ...QaMethods,
   ...CodeMapMethods,
   ...ReadinessMethods,
+  ...ReferenceMethods,
   ...TerminalMethods,
   ...DiagnosticsMethods,
   ...blueprintMethods(ProjectSchema),

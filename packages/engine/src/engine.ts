@@ -36,6 +36,7 @@ import { PreviewManager } from "./preview/manager";
 import { ProjectRegistry } from "./projects/registry";
 import { QaService, type QaServiceOptions } from "./qa/service";
 import { type ReadinessHooks, ReadinessService } from "./readiness/service";
+import { ReferenceService, type ReferenceServiceOptions } from "./references/service";
 import { ModelScheduler } from "./scheduler/scheduler";
 import { SearchService } from "./search/service";
 import { SecurityService } from "./security/service";
@@ -67,6 +68,8 @@ export interface EngineOptions {
   git?: ConstructorParameters<typeof ProjectRegistry>[0]["git"];
   /** Test hooks for page checks (a fake browser). */
   qa?: Pick<QaServiceOptions, "open" | "axeSource" | "hasBrowser" | "timeoutMs">;
+  /** Test hooks for design references (a browser, which requests an outside page may make). */
+  references?: Pick<ReferenceServiceOptions, "open" | "hasBrowser" | "gate">;
 }
 
 export interface Engine {
@@ -103,6 +106,8 @@ export interface Engine {
   readonly terminal: TerminalService;
   /** Installed compilers and linters; `latest(projectId, taskId)` feeds the readiness report. */
   readonly diagnostics: DiagnosticsService;
+  /** Pictures and links the owner sends as design references. */
+  readonly references: ReferenceService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -327,6 +332,15 @@ export function createEngine(opts: EngineOptions): Engine {
     previews,
     qa,
   });
+  /** Design references: pictures and links whose look the owner wants (studied before agents start). */
+  const references = new ReferenceService({
+    dataDir: path.join(dirs.root, "references"),
+    bus,
+    logger,
+    models,
+    scheduler,
+    ...opts.references,
+  });
   const autoPreview = new AutoPreview({
     bus,
     logger,
@@ -356,6 +370,7 @@ export function createEngine(opts: EngineOptions): Engine {
       paused: (id) => scheduler.status().pausedAll || (id !== null && !!safeSettings(registry, id)?.paused),
     }),
     readiness: readinessHooks,
+    references,
     eta,
     previews,
     qa,
@@ -479,6 +494,7 @@ export function createEngine(opts: EngineOptions): Engine {
     readiness,
     terminal,
     diagnostics,
+    references,
     database,
     async start() {
       server = startApiServer({
@@ -513,6 +529,7 @@ export function createEngine(opts: EngineOptions): Engine {
           readiness,
           terminal,
           diagnostics,
+          references,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,

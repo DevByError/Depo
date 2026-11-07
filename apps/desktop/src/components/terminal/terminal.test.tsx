@@ -452,8 +452,9 @@ test("Problems: Check now, groups by file with counts, opens a file, runtime and
   responses["diagnostics.latest"] = () => ({ result: latest });
   responses["diagnostics.runtime"] = () => ({ problems: [crash] });
   responses["diagnostics.run"] = () => {
-    latest = checked;
-    return { result: checked };
+    // "Checked just now" is relative to the clock, so the run is stamped now.
+    latest = { ...checked, at: new Date().toISOString() };
+    return { result: latest };
   };
   responses["files.read"] = () => ({
     path: "src/a.ts",

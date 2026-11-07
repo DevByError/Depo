@@ -10,6 +10,7 @@ interface WireMessage {
   content: string;
   tool_calls?: unknown[];
   tool_name?: string;
+  images?: string[];
 }
 
 const enc = new TextEncoder();
@@ -320,6 +321,39 @@ function jsonReply(value: unknown, timing: Timing = {}): Response {
   );
 }
 
+/** A plain streamed text answer. */
+function textReply(text: string, timing: Timing = {}): Response {
+  const parts = text.split(/(?<=\n)/);
+  return new Response(
+    new ReadableStream({
+      async start(ctl) {
+        for (const p of parts) {
+          ctl.enqueue(line({ message: { role: "assistant", content: p } }));
+          await Bun.sleep(5);
+        }
+        ctl.enqueue(
+          line({ done: true, prompt_eval_count: 900, eval_count: 120, eval_duration: 2e9, ...timing }),
+        );
+        ctl.close();
+      },
+    }),
+  );
+}
+
+/** What a vision model says about a design reference (one picture) or a comparison (two). */
+export const FAKE_VISION_STUDY = [
+  "- Left sidebar navigation with icons and labels; the main area is a wide content column",
+  "- Comfortable density: 24px padding inside cards, 16px gaps between them",
+  "- Sans-serif type; semibold page titles, regular body text, small muted labels",
+  "- Rounded corners about 12px on cards and buttons; thin 1px borders, no heavy shadows",
+  "- Components: stat cards with large numbers, a data table with zebra rows, pill badges",
+  "- Calm, professional mood with one bright accent colour for actions",
+].join("\n");
+export const FAKE_VISION_COMPARE = [
+  "- The page background is lighter than the reference; use the dark navy background",
+  "- Buttons need the 12px radius and the accent colour of the reference",
+].join("\n");
+
 export interface FakeOllamaOptions {
   /** Delay before each scripted agent step, so concurrent tasks overlap in tests. */
   stepDelayMs?: number;
@@ -441,6 +475,9 @@ export function startFakeOllama(
           const timing = load(raw);
           const body = raw as unknown as { messages: WireMessage[]; tools?: unknown[] };
           if (body.tools?.length) return scriptedChat(body.messages, opts.stepDelayMs ?? 0, timing);
+          // A vision model looking at a design reference (one picture) or comparing two.
+          const pictures = body.messages.reduce((n, m) => n + (m.images?.length ?? 0), 0);
+          if (pictures > 0) return textReply(pictures > 1 ? FAKE_VISION_COMPARE : FAKE_VISION_STUDY, timing);
           // Depo's automatic memory asks for durable items as JSON after a task.
           const sys = body.messages.find((m) => m.role === "system")?.content ?? "";
           if (sys.includes("Depo's durable memory")) return memoryReply(timing);

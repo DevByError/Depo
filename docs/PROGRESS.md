@@ -1,8 +1,16 @@
 # Progress
 
-**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look (round 1), then steering, pull-request review, visual QA, the code map, the Project home, team replay, time estimates, universal search and git commits (round 2), then speed on a modest PC, a real Terminal with Test results and Problems, blueprints, the readiness report and syntax highlighting with line actions (round 3). Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
+**Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look (round 1), then steering, pull-request review, visual QA, the code map, the Project home, team replay, time estimates, universal search and git commits (round 2), then speed on a modest PC, a real Terminal with Test results and Problems, blueprints, the readiness report and syntax highlighting with line actions (round 3), and design references: a picture or a link the agents copy the look of. Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
 
 _Last updated: 2026-11-07_
+
+## Design references (2026-11-07): "make it look like this"
+
+- **In the chat:** paste, drop or pick a picture (up to 4), or add a website link (up to 2) from the paperclip, or click "Copy the look of <site>" when a link is typed. With nothing written, the message is "Use the same UI/UX and theme as the attached reference."
+- **What Depo reads:** exact colours with their roles (background, surface, border, text, muted, primary, accent, success, warning, danger) measured from the pixels; from a link also the fonts, heading and body sizes, corner radii, the main button and the site's CSS colour variables, with a desktop and a phone screenshot; with a vision model, notes on layout, typography and shapes. Under the sent message: the picture, the colours and "What Depo saw".
+- **What agents do with it:** a brief in the message and on the team blackboard (tokens first, then build, then check), the picture in the private copy under `.depo/references/`, and the `compare_to_reference` tool to compare a screenshot of their page with the reference and fix the differences.
+- **Privacy:** a pasted link is the only time Depo goes online; every request of that page must resolve to a public address, never the local network (ADR-0056). Pictures never leave the PC.
+- **Verified:** engine 549 tests (15 new, including real Chromium studies of a picture and a page), UI 347 (9 new), browser e2e 18 (1 new: paste a picture, see its colours, notes and the full-size view); lint and types clean; the chips, cards and dialog checked in dark, light and a narrow window, axe clean.
 
 ## Upgrade round 3 (2026-11-07): faster on a modest PC, run and fix, strong starting points, ready or not
 

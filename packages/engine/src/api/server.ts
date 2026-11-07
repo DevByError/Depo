@@ -130,7 +130,8 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
     },
     websocket: {
-      maxPayloadLength: opts.maxPayloadBytes ?? 1024 * 1024,
+      // Room for design reference pictures (up to 5 MB each, sent as base64 with the message).
+      maxPayloadLength: opts.maxPayloadBytes ?? 16 * 1024 * 1024,
       idleTimeout: 120,
       sendPings: true,
       open(ws) {

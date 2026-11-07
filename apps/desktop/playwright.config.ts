@@ -57,6 +57,8 @@ export default defineConfig({
         DEPO_ENGINE_TOKEN: E2E_TOKEN,
         DEPO_ENGINE_PORT: String(E2E_ENGINE_PORT),
         DEPO_DATA_DIR: dataDir,
+        // Design references read pictures in a headless browser; use the same one as the tests.
+        ...(process.env.PW_CHROMIUM_PATH ? { DEPO_BROWSER: process.env.PW_CHROMIUM_PATH } : {}),
       },
       // A normal stop, so the engine also stops the previews it started (they run in their own
       // process group and would outlive a killed engine on macOS and Linux).

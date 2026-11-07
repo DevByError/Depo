@@ -108,6 +108,8 @@ export interface TeamHost {
   readiness?: Pick<ReadinessHooks, "reviewBrief" | "releaseLine"> | undefined;
   /** The project's installed compilers and linters (diagnostics). */
   diagnostics?: ToolContext["diagnostics"];
+  /** The owner's design references for the task (compare_to_reference). */
+  references?: ToolContext["references"];
 }
 
 export interface AgentExtras {
@@ -1554,6 +1556,7 @@ export class TeamRunner {
       ...(this.h.previews ? { previews: this.h.previews } : {}),
       ...(this.h.qa ? { qa: this.h.qa } : {}),
       ...(this.h.diagnostics ? { diagnostics: this.h.diagnostics } : {}),
+      ...(this.h.references ? { references: this.h.references } : {}),
     };
   }
 

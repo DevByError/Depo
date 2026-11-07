@@ -234,6 +234,11 @@ export interface PageReport {
   failedRequestCount: number;
 }
 
+export interface PageOptions {
+  /** Requests the page may make (an outside design reference); default: this computer only. */
+  gate?: (url: string) => boolean | Promise<boolean>;
+}
+
 /** One tab, attached in flat mode. Collects console errors and failed requests while it lives. */
 export class CdpPage {
   private readonly off: (() => void)[] = [];
@@ -250,11 +255,19 @@ export class CdpPage {
   /** HTTP status of each main-frame document, by loader id (the answer can come before Page.navigate's). */
   private readonly documents = new Map<string, number | null>();
 
+  /**
+   * For an outside design reference only: which requests may load (public sites). Without it the
+   * page may load this computer's addresses only, like every page check.
+   */
+  private readonly gate: ((url: string) => boolean | Promise<boolean>) | null;
+
   constructor(
     readonly conn: CdpConnection,
     readonly sessionId: string,
     readonly targetId: string,
+    opts: PageOptions = {},
   ) {
+    this.gate = opts.gate ?? null;
     const mine =
       (fn: (p: Json) => void): Listener =>
       (p, sid) => {
@@ -312,14 +325,24 @@ export class CdpPage {
     on("Fetch.requestPaused", (p) => {
       const requestId = String(p.requestId ?? "");
       const url = String(((p.request ?? {}) as { url?: string }).url ?? "");
-      if (isLocalResource(url)) {
-        void conn.send("Fetch.continueRequest", { requestId }, { sessionId }).catch(() => {});
-      } else {
+      const decide = (ok: boolean) => {
+        if (ok) {
+          void conn.send("Fetch.continueRequest", { requestId }, { sessionId }).catch(() => {});
+          return;
+        }
         if (typeof p.networkId === "string") this.blocked.add(p.networkId);
         void conn
           .send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, { sessionId })
           .catch(() => {});
+      };
+      const gate = this.gate;
+      if (!gate) {
+        decide(isLocalResource(url));
+        return;
       }
+      void Promise.resolve()
+        .then(() => gate(url))
+        .then(decide, () => decide(false));
     });
     on("Runtime.consoleAPICalled", (p) => {
       if (p.type !== "error" && p.type !== "assert") return;
@@ -446,7 +469,8 @@ export class CdpPage {
     url: string,
     timeoutMs = 20_000,
   ): Promise<{ loaded: boolean; status: number | null; error: string | null }> {
-    if (!loopbackUrl(url)) throw new CdpError(`Refused: ${url} is not a local address.`);
+    if (this.gate ? !(await this.gate(url)) : !loopbackUrl(url))
+      throw new CdpError(`Refused: ${url} is not ${this.gate ? "an allowed" : "a local"} address.`);
     const load = this.waitEvent("Page.loadEventFired", timeoutMs);
     let nav: { loaderId?: string; errorText?: string };
     try {
@@ -630,13 +654,13 @@ export interface BrowserSession {
   readonly conn: CdpConnection;
   /** The temporary profile folder (deleted on close). Empty for a session without one. */
   readonly profileDir: string;
-  newPage(): Promise<CdpPage>;
+  newPage(opts?: PageOptions): Promise<CdpPage>;
   /** Close the browser, kill what is left of it and delete the temporary profile. Never throws. */
   close(): Promise<void>;
 }
 
 /** Open a page on an existing connection (tests use this with a fake DevTools server). */
-export async function openPage(conn: CdpConnection): Promise<CdpPage> {
+export async function openPage(conn: CdpConnection, opts: PageOptions = {}): Promise<CdpPage> {
   const t = await conn.send<{ targetId?: string }>("Target.createTarget", { url: "about:blank" });
   if (!t.targetId) throw new CdpError("The browser did not open a tab.");
   const a = await conn.send<{ sessionId?: string }>("Target.attachToTarget", {
@@ -644,7 +668,7 @@ export async function openPage(conn: CdpConnection): Promise<CdpPage> {
     flatten: true,
   });
   if (!a.sessionId) throw new CdpError("Could not attach to the browser tab.");
-  const page = new CdpPage(conn, a.sessionId, t.targetId);
+  const page = new CdpPage(conn, a.sessionId, t.targetId, opts);
   await page.init();
   return page;
 }
@@ -654,7 +678,7 @@ export function sessionFor(conn: CdpConnection): BrowserSession {
   return {
     conn,
     profileDir: "",
-    newPage: () => openPage(conn),
+    newPage: (opts) => openPage(conn, opts),
     async close() {
       try {
         await conn.send("Browser.close", {}, { timeoutMs: 2000 });
@@ -853,7 +877,7 @@ export async function launchBrowser(
   return {
     conn: c,
     profileDir: profile,
-    newPage: () => openPage(c),
+    newPage: (opts) => openPage(c, opts),
     close,
   };
 }

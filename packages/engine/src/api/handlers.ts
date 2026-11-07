@@ -28,6 +28,7 @@ import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
 import type { QaService } from "../qa/service";
 import type { ReadinessService } from "../readiness/service";
+import type { ReferenceService } from "../references/service";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SearchService } from "../search/service";
 import type { SecurityService } from "../security/service";
@@ -74,6 +75,8 @@ export interface HandlerContext {
   terminal?: TerminalService;
   /** Installed compilers and linters, runtime problems (Problems tab, diagnostics tool). */
   diagnostics?: DiagnosticsService;
+  /** Pictures and links sent as design references. */
+  references?: ReferenceService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -306,7 +309,11 @@ export const handlers: Handlers = {
   "tasks.list": (p, ctx) => ({ tasks: ctx.tasks.list(p.projectId) }),
   "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
-  "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode),
+  "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode, p.references ?? []),
+  "references.image": (p, ctx) => {
+    if (!ctx.references) throw new Error("Design references are not available.");
+    return ctx.references.image(p.taskId, p.id);
+  },
   ...steerReviewHandlers,
   ...readinessHandlers,
   ...terminalHandlers,

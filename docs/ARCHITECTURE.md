@@ -75,6 +75,7 @@ All methods have Zod schemas for params (validated by the engine) and results (v
 | `diagnostics.run` / `.latest` / `.runtime` | Compiler and linter checks with the tools already installed, the newest result, crashes from previews and page checks |
 | `blueprints.list` / `.get` / `.create` | Production-grade starting points; create a new project folder from one |
 | `readiness.get` / `readiness.run` | The readiness report for a task's latest change set; run its tests, page check or security scan again |
+| `references.image` | The stored picture of a design reference (an owner's picture, or the screenshot of a linked page); `tasks.send` takes `references` (up to 4 pictures and 2 links) and transcript user items carry what Depo read from them |
 
 Server push: `{"jsonrpc":"2.0","method":"event","params": DepoEvent}` for every event.
 
@@ -101,6 +102,7 @@ db\depo.db            app database (WAL)
 db\backups\           automatic backups taken before migrations
 logs\engine.log       JSON lines, rotated at 5 MB (engine.1.log … engine.5.log kept)
 workspaces\ agents\ skills\ knowledge\ models\   created now, used from Phase 1+
+references\<taskId>\  design references: refs.json plus the pictures and screenshots
 ```
 
 Tables in Phase 0: `schema_migrations`, `settings`, `events`. The rest of the Section 18 model arrives with the features that use it, each as a new numbered migration.
@@ -291,3 +293,13 @@ Models stay loaded: every call carries the `models.keep_alive` setting (default 
 ## Code reading (round 3)
 
 `lib/highlight/` colours code with highlight.js 11 in a module Web Worker (idle time on the main thread if no worker starts). The core and each grammar load on first use; results are cached by language and content hash; above 300 KB or 8000 lines nothing is coloured ("Large file: shown without colours"). Tokens are rendered as text, never HTML. `styles/syntax.css` defines 15 token colours per theme, each at least 4.5:1 on every code background including added and removed lines (unit test). Highlighting is used in Files, Diff Review (per hunk, old and new sides apart), the work log, History and chat code blocks (language label, Copy). The Files tree opens to any file requested through `requestFile`; the viewer has a "Line N" gutter (click, Shift+click, drag, keyboard), flashes the requested line, and a "Selected lines" toolbar offers "Ask about this" (an ask-mode task with the quoted code), "Change this" (a new task with the composer prefilled through `store/composer.ts`) and "Copy path:line".
+
+## Design references
+
+The owner can paste, drop or pick a picture (PNG, JPEG, WebP, GIF; up to 4, 5 MB each, bigger ones shrunk in the UI to 2400 px) or add a link (up to 2) and ask for the same look. `tasks.send` carries them as `references`; the WebSocket accepts messages up to 16 MB for this. `references/service.ts` checks each picture's bytes against its type, saves it under `references/<taskId>/`, and studies it when the task starts running:
+
+- **Pictures:** the headless browser draws the picture on a canvas (640 px, no smoothing, so flat colours stay exact) and returns the pixels. `palette.ts` buckets and merges them (CIE Lab, ΔE < 5), keeps the main colours, a text colour or two and the saturated accents, and guesses roles: background, surface, border, text, muted, primary, accent, success, warning, danger.
+- **Links:** `url.ts` adds `https://`, allows only http(s) without credentials and refuses hosts on the local network; a page on this PC (localhost) uses the usual local rules. `capture.ts` opens the page through `CdpPage` with a gate (`OutsideRequestGate`) that lets each request through only when its host resolves to a public address, denies downloads, waits for the network to settle, reads computed styles (fonts, heading and body sizes, corner radii, the main button, CSS colour variables, content width) and takes a desktop and a phone screenshot. Opening a pasted link is the only time Depo goes online.
+- **Vision:** when a model is assigned to the vision role, it gets the picture with the measured palette and returns short notes about layout, typography and shapes, plus role corrections ("Role: #14b8a6 is the primary"). Without one, only colours and styles are used and the reference says so.
+
+`brief(taskId)` turns what was read into a deterministic text (theme, colours with roles, fonts, sizes, corners, the main button, tokens, notes, then a work order: set the tokens first, check the page, compare). It is appended to the user message that carried the references in the model's history, and in a team written to the blackboard as `design-reference.md` and added to the request. The pictures are copied into the task's private copy under `.depo/references/` (never part of a change set). The `compare_to_reference` tool (ui-ux-design, frontend, integration, enhancement agents and the single coder) compares a screenshot of the agent's page with the reference: measured colour differences and, with a vision model, what looks different and how to fix it. UI: a paperclip menu (Picture…, Website link…), paste and drop on the composer, a "Copy the look of <host>" offer for a typed link, chips before sending, and under the sent message a card per reference with the picture, colours with their roles and "What Depo saw".

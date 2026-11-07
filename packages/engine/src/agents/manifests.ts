@@ -279,6 +279,12 @@ export const DIAGNOSTICS_AGENTS: AgentId[] = ["backend", "frontend", "integratio
 for (const a of MANIFESTS)
   if (DIAGNOSTICS_AGENTS.includes(a.id) && !a.tools.includes("diagnostics")) a.tools.push("diagnostics");
 
+/** Agents that compare their screens with the owner's design reference (the single coder gets every tool). */
+export const REFERENCE_AGENTS: AgentId[] = ["ui-ux-design", "frontend", "integration", "enhancement"];
+for (const a of MANIFESTS)
+  if (REFERENCE_AGENTS.includes(a.id) && !a.tools.includes("compare_to_reference"))
+    a.tools.push("compare_to_reference");
+
 /** Agents that can start an empty project from a blueprint (the single coder gets every tool). */
 export const BLUEPRINT_AGENTS: AgentId[] = ["thinking", "backend", "frontend", "integration"];
 for (const a of MANIFESTS)

@@ -244,3 +244,7 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Decision:** Problems come from compilers and linters already on the PC (tsc, Biome, ESLint, ruff, compileall, mypy, pyright, go vet, cargo check), planned from the project's files, run through the command policy with caches kept out of the project.
 - **Reason:** Installing tools changes the owner's machine and needs the internet; real findings from the project's own setup are what its CI would say.
 
+## ADR-0056: A pasted link is the only reason Depo goes online, and only to public addresses
+- **Decision:** A design reference link is opened in the headless browser only after the owner sends it, with every request (page, styles, fonts, images) checked against a gate that resolves the host and allows public addresses only; downloads are denied and the page gets 25 s. Pictures are read by drawing them on a browser canvas and measuring pixels, so colours are exact without any model; the only model call is the optional vision role, which runs locally like every other role.
+- **Reason:** "Make it look like this site" needs the site, and the owner asked for it by pasting the link, but a page must not be able to reach the owner's router, NAS or other machines on the local network through Depo. A DNS answer that changes between the check and the browser's own lookup (rebinding) is a remaining risk; the gate checks every request again, which narrows it to a single short window.
+

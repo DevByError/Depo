@@ -14,6 +14,7 @@ import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
 import { PREVIEW_TOOLS, type PreviewHooks } from "./preview-tools";
 import type { QaHooks } from "./qa-tools";
+import { REFERENCE_TOOLS, type ReferenceHooks } from "./reference-tools";
 import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
@@ -57,6 +58,8 @@ export interface ToolContext {
   qa?: QaHooks;
   /** Run the project's installed compilers and linters in the workspace (diagnostics). */
   diagnostics?: DiagnosticsHooks;
+  /** The owner's design references for this task (compare_to_reference). */
+  references?: ReferenceHooks;
 }
 
 export interface TeamHooks {
@@ -737,3 +740,5 @@ registerTools(...PREVIEW_TOOLS);
 registerTools(...CODE_MAP_TOOLS);
 // Diagnostics: the project's installed compilers and linters, run in the workspace.
 registerTools(...DIAGNOSTICS_TOOLS);
+// Design references: compare a screenshot with the picture or site the owner sent.
+registerTools(...REFERENCE_TOOLS);
