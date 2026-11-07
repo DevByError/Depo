@@ -170,7 +170,12 @@ export class CodeMapService {
 
   // ---- queries -------------------------------------------------------------------------------
 
-  async get(projectId: string, level: CodeMapLevel, focus?: string): Promise<CodeMap> {
+  async get(
+    projectId: string,
+    level: CodeMapLevel,
+    focus?: string,
+    opts: { module?: string; limit?: number } = {},
+  ): Promise<CodeMap> {
     const root = this.rootOf(projectId);
     await this.withChurn(projectId, root);
     const c = this.cached(projectId);
@@ -178,6 +183,8 @@ export class CodeMapService {
       projectId,
       level,
       focus: focus ?? null,
+      ...(opts.module !== undefined ? { module: opts.module } : {}),
+      ...(opts.limit !== undefined ? { max: opts.limit } : {}),
       indexing: this.o.indexing(projectId),
       updatedAt: c.updatedAt,
     });

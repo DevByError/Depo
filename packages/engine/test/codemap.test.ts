@@ -512,6 +512,20 @@ describe("code map service", () => {
     expect(zoom.nodes.filter((n) => !n.outside).map((n) => n.id)).toEqual(
       expect.arrayContaining(["web/src/App.tsx", "web/src/lib/cn.ts"]),
     );
+
+    // A module's files: exactly the ones the module level counts, with outside neighbours marked.
+    for (const m of map.nodes.filter((n) => !n.outside)) {
+      const files = await e.indexer.map.get(project.id, "file", undefined, { module: m.id });
+      const inside = files.nodes.filter((n) => !n.outside);
+      expect(inside.length).toBe(m.files);
+      expect(inside.every((n) => n.module === m.id)).toBe(true);
+      expect(files.summary.files).toBe(m.files);
+    }
+    const busiest = [...map.nodes].sort((a, b) => b.files - a.files)[0];
+    if (!busiest) throw new Error("no modules");
+    const one = await e.indexer.map.get(project.id, "file", undefined, { module: busiest.id, limit: 1 });
+    expect(one.nodes.filter((n) => !n.outside)).toHaveLength(1);
+    expect(one.truncated).toBe(busiest.files > 1);
   }, 20_000);
 
   test("the watcher keeps edges current, and new targets resolve old imports", async () => {
@@ -662,6 +676,18 @@ describe("code map RPC", () => {
       expect(map.nodes.length).toBeGreaterThan(2);
       if (hasGit) expect(map.hotSpots.churn[0]).toMatchObject({ path: "web/src/lib/cn.ts", value: 2 });
       await ok("codemap.get", { projectId: project.id, level: "file", focus: "web/src/App.tsx" });
+      const mod = map.nodes[0]?.id ?? "";
+      const listed = (await ok("codemap.get", {
+        projectId: project.id,
+        level: "file",
+        module: mod,
+        limit: 300,
+      })) as {
+        nodes: { module: string | null; outside: boolean }[];
+      };
+      expect(listed.nodes.filter((n) => !n.outside).every((n) => n.module === mod)).toBe(true);
+      const tooMany = await c.call("codemap.get", { projectId: project.id, level: "file", limit: 5000 });
+      expect("error" in tooMany).toBe(true);
       const file = (await ok("codemap.file", { projectId: project.id, path: "web/src/lib/cn.ts" })) as {
         churn: number | null;
       };

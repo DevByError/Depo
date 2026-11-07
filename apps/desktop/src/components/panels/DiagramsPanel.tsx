@@ -16,6 +16,9 @@ const TEMPLATES: Record<string, string> = {
   State: "stateDiagram-v2\n  [*] --> Open\n  Open --> Done: complete\n  Done --> [*]\n",
 };
 
+/** Where "Save a copy" puts the code map diagram Depo draws by itself. */
+const AUTO_COPY_PATH = "docs/diagrams/code-map.mmd";
+
 /** A .md diagram file keeps its Mermaid in a fenced block. */
 function mermaidSource(content: string): string {
   const m = /```mermaid\s*\n([\s\S]*?)```/.exec(content);
@@ -74,6 +77,9 @@ export function DiagramsPanel() {
     return <Empty text="Open a project to see its diagrams." />;
   }
   const dirty = current ? draft !== current.content : draft.trim().length > 0;
+  // The code map diagram lives in Depo's data folder; saving puts a copy into the project.
+  const auto = !newName && current?.source === "auto";
+  const savePath = auto ? AUTO_COPY_PATH : (newName ?? current?.path ?? "");
   return (
     <div className="flex h-full min-h-0">
       <nav aria-label="Diagrams" className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
@@ -116,7 +122,11 @@ export function DiagramsPanel() {
               >
                 <span className="truncate text-fg">{d.path.split("/").pop()}</span>
                 <span className="text-[11px] text-subtle">
-                  {d.source === "workspace" ? "In the task copy, not applied yet" : "In the project"}
+                  {d.source === "workspace"
+                    ? "In the task copy, not applied yet"
+                    : d.source === "auto"
+                      ? "Drawn from the code, updates by itself"
+                      : "In the project"}
                 </span>
               </button>
             </li>
@@ -136,10 +146,10 @@ export function DiagramsPanel() {
           <Button
             size="sm"
             variant="primary"
-            disabled={!dirty || save.isPending || !(newName ?? current?.path)}
-            onClick={() => save.mutate({ path: newName ?? current?.path ?? "", content: draft })}
+            disabled={(!dirty && !auto) || save.isPending || !savePath}
+            onClick={() => save.mutate({ path: savePath, content: draft })}
           >
-            <Save aria-hidden /> Save to project
+            <Save aria-hidden /> {auto ? "Save a copy to the project" : "Save to project"}
           </Button>
         </div>
         {save.isError && <p className="px-4 pt-2 text-xs text-danger">{(save.error as Error).message}</p>}

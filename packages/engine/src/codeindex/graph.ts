@@ -302,6 +302,8 @@ export interface ViewOptions {
   focus: string | null;
   /** Most modules (module level) or files (file level) to show. */
   max?: number;
+  /** File level: exactly the files of this module (as the unfocused module level groups them). */
+  module?: string | null;
   indexing: boolean;
   updatedAt: string | null;
 }
@@ -558,7 +560,19 @@ function fileView(
   let core: string[];
   let context: string[] = [];
   let truncated = false;
-  if (focus && g.files.has(focus)) {
+  const module = o.module ?? null;
+  if (module !== null) {
+    const pool = all.filter((p) => globalModules.get(p) === module);
+    truncated = pool.length > max;
+    core = [...pool].sort((a, b) => degree(b) - degree(a) || a.localeCompare(b)).slice(0, max);
+    const inside = new Set(pool);
+    const near = new Set<string>();
+    for (const p of core) {
+      for (const t of g.out.get(p) ?? []) if (!inside.has(t)) near.add(t);
+      for (const s of g.in.get(p) ?? []) if (!inside.has(s)) near.add(s);
+    }
+    context = [...near].sort((a, b) => degree(b) - degree(a)).slice(0, 20);
+  } else if (focus && g.files.has(focus)) {
     core = [focus];
     const near = [...(g.out.get(focus) ?? []), ...(g.in.get(focus) ?? [])];
     context = [...new Set(near)].sort((a, b) => degree(b) - degree(a));
@@ -597,15 +611,15 @@ function fileView(
         cycle: runtime && cp !== undefined && cp === g.cycleOf.get(t),
       });
     }
-  const folder = focus && !g.files.has(focus) ? focus : null;
+  const folder = module !== null ? module || null : focus && !g.files.has(focus) ? focus : null;
   const nodes: CodeMapNode[] = [...shown].map((p) => {
     const f = g.files.get(p);
-    const module = globalModules.get(p) ?? dirOf(p);
+    const mod = globalModules.get(p) ?? dirOf(p);
     return {
       id: p,
       label: folder && p.startsWith(`${folder}/`) ? p.slice(folder.length + 1) : p,
       kind: "file",
-      area: areaOf(module, [p]),
+      area: areaOf(mod, [p]),
       files: 1,
       lines: f?.lines ?? 0,
       symbols: f?.symbols ?? 0,
@@ -614,12 +628,19 @@ function fileView(
       importedBy: g.in.get(p)?.size ?? 0,
       inCycle: g.cycleOf.has(p),
       entry: entrySet.has(p),
-      module,
+      module: mod,
       outside: !coreSet.has(p),
     };
   });
   nodes.sort((a, b) => Number(a.outside) - Number(b.outside) || a.id.localeCompare(b.id));
-  const scope = folder ? all.filter((p) => under(p, folder)) : core.length === 1 && focus ? core : all;
+  const scope =
+    module !== null
+      ? all.filter((p) => globalModules.get(p) === module)
+      : folder
+        ? all.filter((p) => under(p, folder))
+        : core.length === 1 && focus
+          ? core
+          : all;
   return {
     projectId: o.projectId,
     level: "file",

@@ -1,15 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, File, Folder, FolderTree } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
+import { useOpenFile } from "@/lib/open-file";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 
 /** Read-only project browser. Agents work on a copy; this always shows the real files. */
 export function FilesPanel() {
   const projectId = useUi((s) => s.projectId);
-  const [selected, setSelected] = useState<string | null>(null);
+  const requested = useOpenFile((s) => s.path);
+  const [selected, setSelected] = useState<string | null>(requested);
+  // Another tab asked to show a file (the code map's "Open in Files").
+  useEffect(() => {
+    if (!requested) return;
+    setSelected(requested);
+    useOpenFile.getState().clear();
+  }, [requested]);
   if (!projectId) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">

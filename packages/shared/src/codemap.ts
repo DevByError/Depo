@@ -173,6 +173,10 @@ export const CodeMapMethods = {
         level: CodeMapLevelSchema,
         /** A folder to zoom into (module or file level) or a file to centre on (file level). */
         focus: z.string().max(500).optional(),
+        /** File level: exactly the files of this module (an id from the module level). */
+        module: z.string().max(500).optional(),
+        /** Most nodes to return (default 40 modules or 60 files). */
+        limit: z.number().int().min(1).max(500).optional(),
       })
       .strict(),
     result: CodeMapSchema,

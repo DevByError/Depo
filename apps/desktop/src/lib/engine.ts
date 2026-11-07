@@ -103,6 +103,8 @@ function invalidateFor(type: string, status: string): void {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
   } else if (type === "indexing" && status !== "running") {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    void queryClient.invalidateQueries({ queryKey: ["codemap"] });
+    void queryClient.invalidateQueries({ queryKey: ["diagrams"] });
   }
   if (type === "handoff" || type === "test_result") {
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
