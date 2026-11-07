@@ -170,14 +170,10 @@ export function LogsPanel() {
     overscan: 16,
     getItemKey: (i) => view.lines[i]?.id ?? i,
   });
-  const stick = useStickToBottom(
-    view.lines.length,
-    view.lines.at(-1)?.id ?? null,
-    () => {
-      if (view.lines.length > 0) virtualizer.scrollToIndex(view.lines.length - 1, { align: "end" });
-    },
-    live,
-  );
+  // Follows new lines (live, or after a new search) only while the reader is at the bottom.
+  const stick = useStickToBottom(view.lines.length, view.lines.at(-1)?.id ?? null, () => {
+    if (view.lines.length > 0) virtualizer.scrollToIndex(view.lines.length - 1, { align: "end" });
+  });
   stickReset.current = stick.reset;
 
   const loadOlder = async () => {
@@ -542,9 +538,10 @@ function RecordLevel() {
       title="Lines the engine writes to its log files"
       value={value}
       disabled={!connected}
-      onChange={async (e) => {
-        await call("settings.set", { key: "logs.level", value: e.target.value });
-        void setting.refetch();
+      onChange={(e) => {
+        call("settings.set", { key: "logs.level", value: e.target.value })
+          .then(() => setting.refetch())
+          .catch(() => {});
       }}
       className="h-6 rounded-md border border-border bg-bg px-1.5 text-[11px] text-fg"
     >
