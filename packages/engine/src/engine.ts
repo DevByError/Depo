@@ -11,7 +11,16 @@ import { DesignService } from "./design/service";
 import { EventBus } from "./events/bus";
 import { OsvService } from "./knowledge/osv";
 import { KnowledgeService } from "./knowledge/service";
-import { createLogger, type Logger, type LogLevel } from "./logger";
+import {
+  createLogger,
+  getDefaultLogger,
+  isLogLevel,
+  type Logger,
+  type LogLevel,
+  setDefaultLogger,
+} from "./logger";
+import { ModelCallStats } from "./logs/model-calls";
+import { LogService } from "./logs/service";
 import { McpManager } from "./mcp/manager";
 import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
@@ -29,8 +38,11 @@ export interface EngineOptions {
   dataRoot: string;
   token: string;
   port?: number;
+  /** Overrides the `logs.level` setting (DEPO_LOG_LEVEL). */
   logLevel?: LogLevel;
   logToStderr?: boolean;
+  /** Test hook: what "Open logs folder" runs. */
+  openFolder?: (dir: string) => void;
   /** Overrides the `engine.heartbeat_ms` setting (tests). */
   heartbeatMs?: number;
   /** Test hooks for the model manager (fake hardware, fake providers). */
@@ -63,6 +75,7 @@ export interface Engine {
   readonly osv: OsvService;
   readonly security: SecurityService;
   readonly lab: AgentLab;
+  readonly logs: LogService;
   readonly database: OpenedDatabase;
   start(): Promise<{ port: number }>;
   stop(reason?: string): Promise<void>;
@@ -82,12 +95,34 @@ export function createEngine(opts: EngineOptions): Engine {
     level: opts.logLevel ?? "info",
     stderr: opts.logToStderr ?? false,
   });
-  const database = openDatabase({ file: path.join(dirs.db, "depo.db"), backupsDir: dirs.backups, logger });
-  const bus = new EventBus(database.db, logger);
+  setDefaultLogger(logger);
+  const database = openDatabase({
+    file: path.join(dirs.db, "depo.db"),
+    backupsDir: dirs.backups,
+    logger: logger.child({ component: "db" }),
+  });
+  const bus = new EventBus(database.db, logger.child({ component: "events" }));
   const settings = new SettingsRepo(database.db);
-  const models = new ModelManager({ settings, bus, logger, ...opts.models });
+  // Log level: DEPO_LOG_LEVEL wins, else the `logs.level` setting (changes apply at once).
+  const levelSetting = settings.get("logs.level");
+  if (!opts.logLevel && isLogLevel(levelSetting)) logger.setLevel(levelSetting);
+  bus.subscribe((e) => {
+    if (e.type !== "settings_changed" || e.details?.key !== "logs.level" || opts.logLevel) return;
+    const next = e.details.value;
+    if (isLogLevel(next)) {
+      logger.setLevel(next);
+      logger.info("log level changed", { level: next });
+    }
+  });
+  const callStats = new ModelCallStats();
+  const logs = new LogService({
+    logger,
+    stats: callStats,
+    ...(opts.openFolder ? { openFolder: opts.openFolder } : {}),
+  });
+  const models = new ModelManager({ settings, bus, logger, callStats, ...opts.models });
   const approvals = new ApprovalCenter(bus);
-  const projects = new ProjectService(database.db, bus, logger, dirs);
+  const projects = new ProjectService(database.db, bus, logger.child({ component: "workspace" }), dirs);
   const memory = new MemoryStore(database.db, bus, dirs.projects);
   const registry = new ProjectRegistry({
     db: database.db,
@@ -99,6 +134,7 @@ export function createEngine(opts: EngineOptions): Engine {
   });
   const scheduler = new ModelScheduler({
     bus,
+    logger,
     maxParallel: () => {
       const v = settings.get("scheduler.max_parallel");
       return typeof v === "number" && v >= 1 ? Math.floor(v) : 1;
@@ -229,6 +265,7 @@ export function createEngine(opts: EngineOptions): Engine {
     osv,
     security,
     lab,
+    logs,
     database,
     async start() {
       server = startApiServer({
@@ -255,6 +292,7 @@ export function createEngine(opts: EngineOptions): Engine {
           osv,
           security,
           lab,
+          logs,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
@@ -303,6 +341,8 @@ export function createEngine(opts: EngineOptions): Engine {
       await server?.stop();
       database.close();
       logger.info("engine stopped", { reason });
+      logger.flush();
+      if (getDefaultLogger() === logger) setDefaultLogger(null);
     },
   };
 }

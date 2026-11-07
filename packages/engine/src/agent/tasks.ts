@@ -23,7 +23,7 @@ import type { CodeIndexer } from "../codeindex/indexer";
 import type { AppDb } from "../db";
 import { messages, projects, tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
-import type { Logger } from "../logger";
+import { type Logger, withLogContext } from "../logger";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelScheduler } from "../scheduler/scheduler";
@@ -283,7 +283,10 @@ export class TaskManager {
     const ctl = new AbortController();
     this.running.set(id, ctl);
     const taskId_ = id;
-    const run = this.run(taskId_, ctl.signal)
+    const started = performance.now();
+    this.log.info(taskId ? "task continued" : "task started", { taskId: id, projectId, mode: mode ?? null });
+    // Everything logged while the task runs carries its id and project.
+    const run = withLogContext({ taskId: taskId_, projectId }, () => this.run(taskId_, ctl.signal))
       .catch((err: unknown) => {
         this.log.error("task crashed", { taskId: taskId_, err });
         this.fail(taskId_, projectId, err instanceof Error ? err.message : String(err));
@@ -291,6 +294,13 @@ export class TaskManager {
       .finally(() => {
         this.running.delete(taskId_);
         this.done.delete(taskId_);
+        const status = this.o.db.select().from(tasks).where(eq(tasks.id, taskId_)).get()?.status ?? null;
+        this.log[status === "failed" ? "warn" : "info"]("task finished", {
+          taskId: taskId_,
+          projectId,
+          status,
+          durationMs: Math.round(performance.now() - started),
+        });
       });
     this.done.set(id, run);
     return this.get(id).task;

@@ -35,6 +35,7 @@ import { z } from "zod";
 import type { EventBus } from "../events/bus";
 import { diskFreeGB, profileHardware } from "../hardware/profiler";
 import type { Logger } from "../logger";
+import { instrumentProvider, type ModelCallStats } from "../logs/model-calls";
 import type { SettingsRepo } from "../settings";
 
 const KEY_PROVIDERS = "models.providers";
@@ -57,6 +58,8 @@ export interface ModelManagerOptions {
   providerFactory?: (cfg: ProviderConfigDto) => ModelProvider;
   /** Where Ollama stores models, for the free-space check. */
   ollamaModelsDir?: string;
+  /** Recent model call timings (Engine panel). */
+  callStats?: ModelCallStats;
 }
 
 interface Job {
@@ -103,7 +106,8 @@ export class ModelManager {
     const cfg = this.providerConfigs().find((p) => p.id === id);
     if (!cfg) throw new Error(`Unknown model provider: ${id}`);
     if (!cfg.enabled) throw new Error(`Model provider ${id} is turned off.`);
-    return (this.o.providerFactory ?? createProvider)(cfg);
+    // Every chat call is timed and logged (tokens/s, time to first token, errors).
+    return instrumentProvider((this.o.providerFactory ?? createProvider)(cfg), this.log, this.o.callStats);
   }
 
   async providerStatus(): Promise<ProviderStatus[]> {

@@ -90,15 +90,21 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
     const schema = ApiSchema[method];
     const p = schema.params.safeParse(params ?? {});
     if (!p.success) {
+      log.warn("invalid params", { method, issues: p.error.issues.slice(0, 5).map((i) => i.message) });
       return fail(id, { code: RpcErrorCode.InvalidParams, message: "Invalid params", data: p.error.issues });
     }
+    const started = performance.now();
     try {
       // The handler map is keyed by method; TypeScript cannot correlate the union here.
       const handler = opts.handlers[method] as (params: unknown, ctx: HandlerContext) => unknown;
       const result = await handler(p.data, opts.context);
+      // The Logs view polls logs.tail; logging those calls would only feed the view itself.
+      if (!method.startsWith("logs.") && method !== "system.ping") {
+        log.debug("api call", { method, durationMs: Math.round(performance.now() - started) });
+      }
       return { jsonrpc: "2.0", id, result };
     } catch (err) {
-      log.error("handler failed", { method, err });
+      log.error("handler failed", { method, durationMs: Math.round(performance.now() - started), err });
       return fail(id, {
         code: RpcErrorCode.InternalError,
         message: err instanceof Error ? err.message : "Internal error",

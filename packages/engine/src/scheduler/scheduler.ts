@@ -1,6 +1,7 @@
 import { ModelGatewayError } from "@depo/model-gateway";
 import { newId, type SchedulerJob, type SchedulerPriority, type SchedulerStatus } from "@depo/shared";
 import type { EventBus } from "../events/bus";
+import type { Logger } from "../logger";
 
 const PRIORITY_RANK: Record<SchedulerPriority, number> = { chat: 0, task: 1, background: 2 };
 /** A job that has waited this long ignores the "stay on the loaded model" preference. */
@@ -27,6 +28,8 @@ export interface SchedulerOptions {
   projectCap: (projectId: string) => number;
   isProjectPaused: (projectId: string) => boolean;
   now?: () => number;
+  /** Queue and run times go to the engine log (component "scheduler"). */
+  logger?: Logger;
 }
 
 /**
@@ -41,6 +44,7 @@ export class ModelScheduler {
   private readonly lastGrant = new Map<string, number>();
   private pausedAll = false;
   private resident: string | null = null;
+  private readonly startedAt = new Map<string, number>();
 
   constructor(private readonly o: SchedulerOptions) {}
 
@@ -87,7 +91,13 @@ export class ModelScheduler {
   }
 
   release(jobId: string): void {
+    const job = this.running.get(jobId);
     if (!this.running.delete(jobId)) return;
+    const began = this.startedAt.get(jobId);
+    this.startedAt.delete(jobId);
+    if (job && began !== undefined) {
+      this.o.logger?.debug("model job finished", { ...this.logFields(job), durationMs: this.now() - began });
+    }
     this.pump();
     this.notifyQueue();
   }
@@ -175,8 +185,28 @@ export class ModelScheduler {
       this.resident = next.model;
       this.lastGrant.set(next.projectId ?? "", this.now());
       this.clearWaitNotice(next);
+      this.startedAt.set(next.id, this.now());
+      const queueMs = this.now() - next.enqueuedAt;
+      // Waits of a second or more are worth seeing at the default level.
+      this.o.logger?.[queueMs >= 1000 ? "info" : "debug"]("model job started", {
+        ...this.logFields(next),
+        queueMs,
+        queued: this.queue.length,
+      });
       next.start();
     }
+  }
+
+  private logFields(j: SchedulerJob) {
+    return {
+      component: "scheduler",
+      projectId: j.projectId,
+      taskId: j.taskId,
+      model: j.model,
+      priority: j.priority,
+      label: j.label,
+      running: this.running.size,
+    };
   }
 
   /** Tell each waiting task why it waits (its own feed only). */

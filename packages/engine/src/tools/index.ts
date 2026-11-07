@@ -5,6 +5,7 @@ import { type JsonValue, newId, type SearchHit } from "@depo/shared";
 import { z } from "zod";
 import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
+import { firstLine, getLogger } from "../logger";
 import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
@@ -95,6 +96,7 @@ export function tool<S extends z.ZodType>(t: AgentTool<S>): AgentTool<z.ZodType>
 }
 
 const MAX_TOOL_OUTPUT = 24_000;
+const log = getLogger({ component: "tools" });
 
 function emit(ctx: ToolContext, e: Omit<Parameters<EventBus["emit"]>[0], "agent">) {
   return ctx.bus.emit({ projectId: ctx.projectId, taskId: ctx.taskId, ...e, agent: ctx.agent });
@@ -366,6 +368,18 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       pending = "";
       const summary = isTest ? summarizeTests(res.output) : null;
       const ok = res.exitCode === 0;
+      log[ok || res.cancelled ? "info" : "warn"]("command finished", {
+        projectId: ctx.projectId,
+        taskId: ctx.taskId,
+        agent: ctx.agent,
+        command: a.command,
+        category: verdict.category,
+        exitCode: res.exitCode,
+        timedOut: res.timedOut,
+        cancelled: res.cancelled,
+        durationMs: res.durationMs,
+        lastLine: firstLine(res.output.trimEnd().split("\n").at(-1) ?? ""),
+      });
       const tail = res.output.slice(-MAX_TOOL_OUTPUT);
       const details: Record<string, JsonValue> = {
         command: a.command,
@@ -630,6 +644,23 @@ export function toolDefinitions(names?: string[], extra: AgentTool<z.ZodType>[] 
  * failures come back as an error result the model can read and react to.
  */
 export async function executeTool(name: string, rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const started = performance.now();
+  const res = await runTool(name, rawArgs, ctx);
+  const fields = {
+    projectId: ctx.projectId,
+    taskId: ctx.taskId,
+    agent: ctx.agent,
+    tool: name,
+    ok: !res.isError,
+    durationMs: Math.round(performance.now() - started),
+    result: firstLine(res.content),
+  };
+  if (res.isError) log.warn("tool call failed", fields);
+  else log.info("tool call", fields);
+  return res;
+}
+
+async function runTool(name: string, rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
   const all = [...TOOLS, ...(ctx.extraTools ?? [])];
   const t = all.find((x) => x.name === name);
   if (!t)
@@ -649,6 +680,13 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ToolConte
   } catch (err) {
     if (err instanceof ToolError) return { content: err.message, isError: true };
     const msg = err instanceof Error ? err.message : String(err);
+    log.error("tool crashed", {
+      projectId: ctx.projectId,
+      taskId: ctx.taskId,
+      agent: ctx.agent,
+      tool: name,
+      err,
+    });
     emit(ctx, { type: "error", text: `${name} failed: ${msg}`, details: { tool: name }, status: "failed" });
     return { content: `${name} failed: ${msg}`, isError: true };
   }
