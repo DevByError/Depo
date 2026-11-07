@@ -8,10 +8,11 @@ import type { EventBus } from "../events/bus";
 import { firstLine, getLogger } from "../logger";
 import { readPlaybook } from "../playbooks";
 import { CODE_MAP_TOOLS } from "./codemap-tools";
+import { DEVDB_TOOLS, type DevDbHooks } from "./devdb-tools";
 import { DIAGNOSTICS_TOOLS, type DiagnosticsHooks } from "./diagnostics-tools";
 import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
-import { ToolError } from "./paths";
+import { resolveInside, ToolError } from "./paths";
 import { PREVIEW_TOOLS, type PreviewHooks } from "./preview-tools";
 import type { QaHooks } from "./qa-tools";
 import { REFERENCE_TOOLS, type ReferenceHooks } from "./reference-tools";
@@ -60,6 +61,8 @@ export interface ToolContext {
   diagnostics?: DiagnosticsHooks;
   /** The owner's design references for this task (compare_to_reference). */
   references?: ReferenceHooks;
+  /** The project's test MySQL database (dev_database). */
+  devdb?: DevDbHooks;
 }
 
 export interface TeamHooks {
@@ -264,6 +267,11 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         .max(20),
     }),
     async run(a, ctx) {
+      // resolveInside refuses bad paths with a clear message before anything else.
+      if (!fs.existsSync(resolveInside(ctx.root, a.path).abs))
+        throw new ToolError(
+          `${a.path} does not exist yet, so there is nothing to edit. Create it with write_file (path and the whole content).`,
+        );
       mustHaveRead(ctx, a.path, "editing");
       const r = editFileTool(
         ctx.root,
@@ -308,9 +316,20 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     schema: z.object({
       command: z.string().min(1).max(4000),
       timeout_seconds: z.number().int().min(1).max(1800).default(300),
+      cwd: z
+        .string()
+        .max(300)
+        .optional()
+        .describe("Sub-folder to run in, relative to the project root, e.g. fe or be/api"),
     }),
     async run(a, ctx) {
-      let verdict = classifyCommand(a.command, ctx.root);
+      const sub = a.cwd?.trim() ?? "";
+      const cwd = sub && sub !== "." ? resolveInside(ctx.root, sub).abs : ctx.root;
+      if (cwd !== ctx.root && !fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory())
+        throw new ToolError(
+          `The folder ${a.cwd} does not exist. Create it first (write_file creates folders).`,
+        );
+      let verdict = classifyCommand(a.command, cwd);
       const rules = ctx.commandRules;
       if (rules?.deny.some((r) => matchesRule(a.command, r)))
         verdict = { ...verdict, decision: "deny", reason: "blocked by this project's command rules" };
@@ -378,7 +397,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       };
       const res = await runShell({
         command: a.command,
-        cwd: ctx.root,
+        cwd,
         timeoutMs: a.timeout_seconds * 1000,
         ...(ctx.signal ? { signal: ctx.signal } : {}),
         memoryLimitBytes: 8 * 1024 ** 3,
@@ -637,6 +656,14 @@ export function stripLineNumbers(s: string, of = s): string {
     .join("\n");
 }
 
+/** Extra help when a model gets a tool's arguments wrong (small models mix up the file tools). */
+const ARGUMENT_HINTS: Record<string, string> = {
+  edit_file:
+    'edit_file needs {"path", "edits": [{"search": exact current text, "replace": new text}]}. To create a new file or replace a whole file, use write_file with path and content.',
+  write_file: 'write_file needs {"path": "relative/path", "content": "the whole file"}.',
+  run_command: 'run_command needs {"command": "..."}; add "cwd": "sub/folder" to run it in a sub-folder.',
+};
+
 function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {
   if (!ctx.readPaths) return;
   const norm = rel.replace(/\\/g, "/").replace(/^\.\//, "");
@@ -715,7 +742,8 @@ async function runTool(name: string, rawArgs: unknown, ctx: ToolContext): Promis
     const issues = parsed.error.issues
       .map((i) => `${i.path.join(".") || "(arguments)"}: ${i.message}`)
       .join("; ");
-    return { content: `Invalid arguments for ${name}: ${issues}`, isError: true };
+    const hint = ARGUMENT_HINTS[name] ? ` ${ARGUMENT_HINTS[name]}` : "";
+    return { content: `Invalid arguments for ${name}: ${issues}.${hint}`, isError: true };
   }
   try {
     return { content: await t.run(parsed.data, ctx), isError: false };
@@ -742,3 +770,5 @@ registerTools(...CODE_MAP_TOOLS);
 registerTools(...DIAGNOSTICS_TOOLS);
 // Design references: compare a screenshot with the picture or site the owner sent.
 registerTools(...REFERENCE_TOOLS);
+// Test database: a MySQL-compatible database Depo runs on 127.0.0.1 for the project.
+registerTools(...DEVDB_TOOLS);

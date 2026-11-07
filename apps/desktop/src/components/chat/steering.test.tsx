@@ -148,6 +148,20 @@ describe("notes in the transcript", () => {
     expect(turns[1]?.user?.id).toBe("n2");
   });
 
+  it("keep the agent's answer as the answer when Depo adds its run report and a note", () => {
+    const turns = groupTurns([
+      item("u1", "user", "Build it"),
+      item("t1", "tool", "run_command"),
+      item("a1", "assistant", "Done. 2 passed."),
+      item("r1", "assistant", "Depo ran the app.\nRunning now: Next.js app in fe http://127.0.0.1:3000/"),
+      item("x1", "assistant", "Note from Depo: the last test run (bun test) failed."),
+    ]);
+    expect(turns[0]?.answer?.id).toBe("a1");
+    expect(turns[0]?.run?.id).toBe("r1");
+    expect(turns[0]?.note?.id).toBe("x1");
+    expect(turns[0]?.steps.map((s) => s.id)).toEqual(["t1"]);
+  });
+
   it("show queued, read (and by whom) and not read", () => {
     expect(noteStatus(item("n", "user", "x", steer("queued")))).toBe("Will be read at the next step");
     expect(noteStatus(item("n", "user", "x", steer("delivered", ["coder@1.0.0"])))).toBe(
@@ -214,6 +228,20 @@ describe("approval card", () => {
     );
   });
 
+  it("a command can be allowed for the rest of the task or the whole project", async () => {
+    responses["approvals.respond"] = () => ({ ok: true });
+    wrap(<ApprovalCard approval={approval({ command: "bun install" })} />);
+    expect(screen.getByRole("button", { name: "Allow for this task" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Allow all in this project" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "approvals.respond")?.params).toEqual({
+        id: "req_1",
+        approve: true,
+        scope: "project",
+      }),
+    );
+  });
+
   it("a plan asks what should change, and Allow still takes one click", async () => {
     responses["approvals.respond"] = () => ({ ok: true });
     wrap(
@@ -225,6 +253,8 @@ describe("approval card", () => {
         }}
       />,
     );
+    // A plan is a one-off decision: no standing "yes" for it.
+    expect(screen.queryByRole("button", { name: "Allow for this task" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Tell Depo why" }));
     expect(
       screen.getByLabelText(/What should change\? The Manager plans again with your note\./),

@@ -26,6 +26,7 @@ import {
 import { ProjectHeader } from "@/components/overview/ProjectHeader";
 import { ProjectSettingsSection } from "@/components/overview/ProjectSettingsForm";
 import { Card, Empty } from "@/components/overview/parts";
+import { TestDatabaseCard } from "@/components/overview/TestDatabaseCard";
 import { Button } from "@/components/ui/button";
 import { ErrorText } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
@@ -180,6 +181,7 @@ function Home({ overview: o, onOpenMap }: { overview: ApiResult<"projects.overvi
         <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
           <TasksCard overview={o} />
           <PreviewsCard projectId={p.id} />
+          <TestDatabaseCard projectId={p.id} />
           <DecisionsCard projectId={p.id} />
           <MemoryCard overview={o} />
         </div>

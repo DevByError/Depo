@@ -3,13 +3,14 @@ import path from "node:path";
 import type { BlueprintDetail, BlueprintSummary } from "@depo/shared";
 import { FASTAPI_SERVICE } from "./fastapi-service";
 import { FULLSTACK } from "./fullstack";
+import { NEXT_BUN_MYSQL } from "./next-bun-mysql";
 import { REACT_WEB_APP } from "./react-web-app";
 import type { Blueprint, BlueprintFile, BlueprintVars } from "./types";
 
 export type { Blueprint, BlueprintFile, BlueprintManifest, BlueprintVars } from "./types";
 
 /** The blueprints, the most complete first. */
-export const BLUEPRINTS: Blueprint[] = [FULLSTACK, FASTAPI_SERVICE, REACT_WEB_APP];
+export const BLUEPRINTS: Blueprint[] = [FULLSTACK, NEXT_BUN_MYSQL, FASTAPI_SERVICE, REACT_WEB_APP];
 
 export function findBlueprint(id: string): Blueprint | undefined {
   return BLUEPRINTS.find((b) => b.id === id.trim().toLowerCase());

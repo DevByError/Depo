@@ -19,20 +19,24 @@ export function ApprovalCard({ approval }: { approval: PendingApprovalDto }) {
   const inputId = useId();
   const whyId = useId();
   const respond = useMutation({
-    mutationFn: (v: { approve: boolean; reason?: string }) =>
+    mutationFn: (v: { approve: boolean; reason?: string; scope?: "once" | "task" | "project" }) =>
       call("approvals.respond", {
         id: approval.id,
         approve: v.approve,
         ...(v.reason ? { reason: v.reason } : {}),
+        ...(v.scope ? { scope: v.scope } : {}),
       }),
-    onSettled: () => {
+    onSettled: (_r, _e, v) => {
       void qc.invalidateQueries({ queryKey: ["approvals"] });
       void qc.invalidateQueries({ queryKey: ["tasks"] });
+      if (v.scope === "project") void qc.invalidateQueries({ queryKey: ["projectSettings"] });
     },
   });
   const command = approval.details?.command;
   const planText = approval.details?.plan;
   const isPlan = typeof planText === "string";
+  // A command can be allowed for longer, like "don't ask again" in a terminal.
+  const canWiden = approval.kind === "command" && !isPlan;
   const close = () => {
     setAsking(false);
     setReason("");
@@ -73,6 +77,26 @@ export function ApprovalCard({ approval }: { approval: PendingApprovalDto }) {
         >
           <Check aria-hidden /> Allow
         </Button>
+        {canWiden && approval.taskId && (
+          <Button
+            size="sm"
+            disabled={respond.isPending}
+            title="Allow this and every other command this task asks for"
+            onClick={() => respond.mutate({ approve: true, scope: "task" })}
+          >
+            Allow for this task
+          </Button>
+        )}
+        {canWiden && approval.projectId && (
+          <Button
+            size="sm"
+            disabled={respond.isPending}
+            title="Turn on full access: agents install, build and start servers in this project without asking. Blocked commands stay blocked; switch it off in Project settings."
+            onClick={() => respond.mutate({ approve: true, scope: "project" })}
+          >
+            Allow all in this project
+          </Button>
+        )}
         {!asking && (
           <>
             <Button size="sm" disabled={respond.isPending} onClick={decline}>

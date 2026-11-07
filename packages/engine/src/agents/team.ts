@@ -110,6 +110,8 @@ export interface TeamHost {
   diagnostics?: ToolContext["diagnostics"];
   /** The owner's design references for the task (compare_to_reference). */
   references?: ToolContext["references"];
+  /** The project's test MySQL database (dev_database). */
+  devdb?: ToolContext["devdb"];
 }
 
 export interface AgentExtras {
@@ -1557,6 +1559,7 @@ export class TeamRunner {
       ...(this.h.qa ? { qa: this.h.qa } : {}),
       ...(this.h.diagnostics ? { diagnostics: this.h.diagnostics } : {}),
       ...(this.h.references ? { references: this.h.references } : {}),
+      ...(this.h.devdb ? { devdb: this.h.devdb } : {}),
     };
   }
 

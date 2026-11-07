@@ -51,7 +51,33 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 // Ctrl+Break / console close on Windows.
 process.on("SIGBREAK", () => void shutdown("SIGBREAK"));
+/**
+ * A socket that a runtime or an app dropped mid-stream (ECONNRESET and the like) must not take the
+ * whole engine down with every task in it: log it and carry on. Anything else, or a storm of them,
+ * still stops the engine (the desktop app restarts it).
+ */
+const NETWORK_ERRORS = new Set([
+  "ECONNRESET",
+  "EPIPE",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ERR_STREAM_PREMATURE_CLOSE",
+]);
+const stray: number[] = [];
+function isStrayNetworkError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && NETWORK_ERRORS.has(code);
+}
 process.on("uncaughtException", (err) => {
+  if (isStrayNetworkError(err)) {
+    const now = Date.now();
+    stray.push(now);
+    while (stray.length && now - (stray[0] ?? now) > 60_000) stray.shift();
+    if (stray.length <= 20) {
+      engine.logger.warn("network error outside a request, ignored", { err });
+      return;
+    }
+  }
   engine.logger.error("uncaught exception", { err });
   void shutdown("uncaughtException", 1);
 });

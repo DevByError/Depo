@@ -18,6 +18,7 @@ const TEAM = ["bb_read", "bb_write", "send_message", "remember"];
 const SHOTS = ["render_screenshot", "review_screenshot"];
 const PREVIEW = ["start_preview", "http_check", "stop_preview"];
 const QA = ["check_page"];
+const DB = ["dev_database"];
 const RUN_APP =
   "After building, prove it end to end: start the app with start_preview and smoke-test the main endpoints or pages with http_check (unit tests alone are not enough), then stop it with stop_preview.";
 
@@ -150,7 +151,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You design and build the server: REST API with an OpenAPI 3.1 contract first, business logic, authentication, validation, background jobs, file storage, configuration and Dockerfiles, in the stack the project uses.",
     `${CODE_RULES}\nWrite or update openapi.yaml on the blackboard before you code routes, then build the routes from it. Validate every input, return consistent errors, hash passwords with a modern algorithm (Argon2id or bcrypt), never log secrets, read configuration from the environment. Add tests for each route.\n${RUN_APP}`,
-    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW, ...DB],
     ["reasoning", "security"],
     ["openapi.yaml", "schema/", "decisions.md"],
     "Server code, OpenAPI specification, tests",
@@ -175,8 +176,8 @@ export const MANIFESTS: AgentManifest[] = [
     "builders",
     "coder",
     "You do data modelling, indexes, constraints, migrations, seed data, query tuning and multi-tenancy across relational, document, search and vector databases.",
-    `${CODE_RULES}\nWrite the schema as migrations plus a readable description in schema/ on the blackboard (tables, columns, types, keys, indexes, relations). Use constraints, not application checks, for integrity. Provide seed data for development. Never put secrets in seed files.`,
-    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS],
+    `${CODE_RULES}\nWrite the schema as migrations plus a readable description in schema/ on the blackboard (tables, columns, types, keys, indexes, relations). Use constraints, not application checks, for integrity. Provide seed data for development. Never put secrets in seed files. When the app uses MySQL or MariaDB, run it for real: dev_database start (Depo runs a local test database and writes DATABASE_URL into .env), then run the migrations and the seed, and check the rows with dev_database sql.`,
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...DB],
     ["reasoning"],
     ["schema/", "decisions.md"],
     "Schema, migrations, seeds, ERD input",
@@ -189,7 +190,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You own the contracts between layers: OpenAPI, shared types, environment variables, CORS and the whole authentication flow. You generate typed API clients and prove the UI, API and database path with contract tests.",
     `${CODE_RULES}\nCompare openapi.yaml with the implemented routes and the frontend calls; fix mismatches at their source or report them to the owner with send_message. Document every environment variable in .env.example.\n${RUN_APP}`,
-    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW, ...QA],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...BLOCK_TOOLS, ...PREVIEW, ...QA, ...DB],
     ["reasoning", "security"],
     ["openapi.yaml", "decisions.md"],
     "Typed clients, wiring, contract test results",
@@ -215,7 +216,7 @@ export const MANIFESTS: AgentManifest[] = [
     "coder",
     "You write and run unit, integration, API, end-to-end and load tests and drive the build, test and fix loop. You never weaken or delete a test to make it pass.",
     `${CODE_RULES}\nFind how the project runs its tests (package.json scripts, pytest, etc.), run the whole suite, and for every failure find the cause and fix the code (or the test only if the test itself is wrong, and say so). Add tests for untested behaviour in the acceptance criteria. Finish only when the full suite passes; if it cannot, say exactly what fails and why.\n${RUN_APP}`,
-    [...READ, ...WRITE, ...RUN, ...TEAM, ...PREVIEW, ...QA],
+    [...READ, ...WRITE, ...RUN, ...TEAM, ...PREVIEW, ...QA, ...DB],
     ["reasoning"],
     ["reviews/test-report.md"],
     "Test suites, coverage, flaky test report",

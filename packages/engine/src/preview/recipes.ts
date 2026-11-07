@@ -50,8 +50,8 @@ const SKIP_DIRS = new Set([
 /** A folder holding one of these is a project of its own (a monorepo part). */
 const PROJECT_MARKERS = ["package.json", "pyproject.toml", "requirements.txt", "manage.py", "setup.py"];
 const VENV_DIRS = [".venv", "venv", "env"];
-const FRONTEND_NAMES = /^(frontend|client|web|webapp|ui|site|www|app|spa|dashboard)$/i;
-const BACKEND_NAMES = /^(backend|server|api|service|services)$/i;
+const FRONTEND_NAMES = /^(frontend|fe|client|web|webapp|ui|site|www|app|spa|dashboard)$/i;
+const BACKEND_NAMES = /^(backend|be|server|api|service|services)$/i;
 
 const PREFERRED_PORT: Record<RecipeKind, number> = {
   next: 3000,
@@ -163,6 +163,21 @@ function nodeMissing(
   };
 }
 
+/** The PORT an app's own .env (or its example) asks for, so it starts where its README says. */
+function envPort(dir: string): number | null {
+  for (const f of [".env", ".env.example", ".env.sample"]) {
+    let text = "";
+    try {
+      text = fs.readFileSync(path.join(dir, f), "utf8");
+    } catch {
+      continue;
+    }
+    const n = Number(/^PORT\s*=\s*["']?(\d{2,5})["']?\s*$/m.exec(text)?.[1]);
+    if (n >= 1024 && n <= 65535) return n;
+  }
+  return null;
+}
+
 function detectNode(root: string, rel: string, name: string): RunRecipeBase[] {
   const dir = path.join(root, rel);
   const pkg = readJson(path.join(dir, "package.json"));
@@ -186,7 +201,7 @@ function detectNode(root: string, rel: string, name: string): RunRecipeBase[] {
     command,
     cwd: rel,
     env: { ...baseEnv(), ...env },
-    port: PREFERRED_PORT[kind],
+    port: kind === "next" || kind === "vite" ? PREFERRED_PORT[kind] : (envPort(dir) ?? PREFERRED_PORT[kind]),
     readyPath: "/",
     role: hint ?? role,
     missing,

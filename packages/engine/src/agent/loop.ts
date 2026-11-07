@@ -10,6 +10,7 @@ import {
 import { newId } from "@depo/shared";
 import type { EventBus } from "../events/bus";
 import { getLogger, withLogContext } from "../logger";
+import { fallOf, smallerContext, waitForRuntime } from "../models/revive";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
 import { type Repetition, RepetitionGuard } from "./repetition";
@@ -60,6 +61,11 @@ export interface LoopParams {
    * only between steps (before each model call, and before a final answer is accepted).
    */
   inbox?: () => ChatMessage[];
+  /**
+   * Called when the model says it is done (after the test checks): Depo runs the work. `retry`
+   * sends the problems back to the model; `append` adds lines to the final answer.
+   */
+  beforeFinish?: (o: { changed: string[] }) => Promise<{ retry: string } | { append: string } | null>;
 }
 
 export interface LoopResult {
@@ -112,7 +118,11 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   let lastTest = null as { command: string; passed: boolean } | null;
   let editedSinceTest = false;
   let finishNudges = 0;
+  let doItNudges = 0;
   let loops = 0;
+  const canEdit = p.toolNames.includes("write_file") || p.toolNames.includes("edit_file");
+  // Lowered when the runtime crashes twice (a context too big for the GPU's memory).
+  const runtime = { contextLength: p.contextLength, crashes: 0 };
 
   const ctx: ToolContext = {
     ...p.ctx,
@@ -132,7 +142,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     steps++;
     // A step boundary: the previous tool calls have all finished, so the owner's notes fit here.
     for (const note of p.inbox?.() ?? []) history.push(note);
-    compressHistory(history, p.contextLength);
+    compressHistory(history, runtime.contextLength);
     const messageId = newId("msg");
     // Runtimes send nothing while they read the prompt; say so, since it can take minutes.
     emit({
@@ -158,7 +168,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
           model: p.model,
           messages: history,
           tools,
-          contextLength: p.contextLength,
+          contextLength: runtime.contextLength,
           signal: stop.signal,
           maxTokens: p.maxReplyTokens ?? MAX_REPLY_TOKENS,
           ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
@@ -181,6 +191,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
             });
           }
         },
+        runtime,
       );
     } finally {
       signal.removeEventListener("abort", relay);
@@ -288,6 +299,21 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         history.push(...notes);
         continue;
       }
+      // Small models often hand the owner a list of steps instead of doing them.
+      if (canEdit && doItNudges < 2 && describesStepsForOwner(res.text, changed.size)) {
+        doItNudges++;
+        emit({
+          type: "retrying",
+          text: "The model described steps instead of doing them. Asking it to do the work.",
+          status: "running",
+        });
+        history.push({
+          role: "user",
+          content:
+            "Do not tell the owner what to do: do it yourself with your tools. Create every file with write_file, run installs, builds and tests with run_command (set cwd to run in a sub-folder such as fe or be), and fix what fails. Finish only when the work is built and checked, then say briefly what you did.",
+        });
+        continue;
+      }
       const nudge =
         finishNudges >= 2
           ? null
@@ -302,7 +328,27 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         history.push({ role: "user", content: nudge });
         continue;
       }
+      let appended = "";
+      if (p.beforeFinish && !signal.aborted) {
+        const r = await p.beforeFinish({ changed: [...changed] });
+        if (signal.aborted) break;
+        if (r && "retry" in r && steps < p.maxSteps) {
+          emit({
+            type: "retrying",
+            text: "Depo ran the app and found problems. Asking the model to fix them.",
+            status: "running",
+          });
+          history.push({ role: "user", content: r.retry });
+          p.persist({ role: "user", content: r.retry });
+          continue;
+        }
+        if (r && "append" in r) appended = r.append;
+      }
       finalText = res.text.trim();
+      if (appended) {
+        finalText += `\n\n${appended}`;
+        p.persist({ role: "assistant", content: appended });
+      }
       if (lastTest && !lastTest.passed) {
         const note = `Note from Depo: the last test run (${lastTest.command}) failed. Check the changes before you approve them.`;
         finalText += `\n\n${note}`;
@@ -349,6 +395,22 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   };
 }
 
+/**
+ * A final answer that hands the work to the owner ("Create a file with the following content",
+ * "Navigate to fe and run…") instead of doing it.
+ */
+export function describesStepsForOwner(text: string, changedFiles: number): boolean {
+  const codeInText =
+    /\b(create|add|make) (a|an|the|this) [`'"]?[\w./-]+[`'"]? file\b[^\n]*\b(with|containing)\b|\bwith the following (content|code)\b/i.test(
+      text,
+    );
+  if (codeInText) return true;
+  if (changedFiles > 0) return false;
+  return /\b(navigate to|open a terminal|run the following|follow these steps|here are the steps|you can (now )?(run|create|start|add|use)|initiali[sz]e (a|the) new|you (will )?need to (run|create|install))\b/i.test(
+    text,
+  );
+}
+
 /** The same call twice in one reply (same tool, same arguments) runs once. */
 export function uniqueCalls(calls: ToolCall[]): ToolCall[] {
   const seen = new Set<string>();
@@ -364,6 +426,7 @@ async function chatWithRetry(
   p: LoopParams,
   req: Parameters<ModelProvider["chat"]>[0],
   onText: (d: string) => void,
+  runtime: { contextLength: number; crashes: number } = { contextLength: req.contextLength ?? 0, crashes: 0 },
 ): Promise<ChatResult | { badOutput: string } | null> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -389,13 +452,36 @@ async function chatWithRetry(
         throw err;
       }
       log.warn("model call retry", { model: req.model, attempt: attempt + 1, of: MODEL_RETRIES, err });
+      const fall = fallOf(err);
+      if (fall === "dropped" || fall === "crashed") runtime.crashes++;
+      // A second crash: ask for half the context, so the model fits in the GPU's memory.
+      if (runtime.crashes >= 2 && runtime.contextLength > 4096) {
+        const smaller = smallerContext(runtime.contextLength);
+        if (smaller < runtime.contextLength) {
+          log.warn("smaller context after runtime crashes", { from: runtime.contextLength, to: smaller });
+          runtime.contextLength = smaller;
+          req.contextLength = smaller;
+          compressHistory(req.messages, smaller);
+          runtime.crashes = 0;
+          p.emit({
+            type: "retrying",
+            text: `The model runtime crashed twice, so Depo now asks for a smaller context (${smaller.toLocaleString("en-US")} tokens).`,
+            details: { contextLength: smaller },
+            status: "running",
+          });
+        }
+      }
       p.emit({
         type: "retrying",
-        text: `${(err as Error).message} Retrying…`,
-        details: { attempt: attempt + 1 },
+        text: `${(err as Error).message} ${fall ? "Waiting for it to answer again, then retrying…" : "Retrying…"}`,
+        details: { attempt: attempt + 1, ...(fall ? { fall } : {}) },
         status: "running",
       });
-      await Bun.sleep(p.retryDelayMs ?? (RETRY_BACKOFF[attempt] ?? 15) * 1000);
+      if (fall && p.retryDelayMs === undefined) {
+        const back = await waitForRuntime(p.provider, { ...(req.signal ? { signal: req.signal } : {}) });
+        if (!back && !req.signal?.aborted)
+          log.warn("model runtime did not come back in time", { model: req.model });
+      } else await Bun.sleep(p.retryDelayMs ?? (RETRY_BACKOFF[attempt] ?? 15) * 1000);
       if (req.signal?.aborted) return null;
     }
   }

@@ -471,7 +471,8 @@ h1 { font-family: "Display Serif", serif; font-size: 40px; }
     const brief = svc.brief("tsk_3");
     expect(brief).toContain("background #0b1220");
     expect(brief).toContain("primary #14b8a6");
-    expect(brief).toContain(`.depo/references/${ref?.id}.png`);
+    // No .depo path: small models took it for the project folder and wrote their files there.
+    expect(brief).not.toContain(".depo");
     expect(brief).toContain("compare_to_reference");
     expect(svc.brief("tsk_3")).toBe(brief); // the same text every time
 

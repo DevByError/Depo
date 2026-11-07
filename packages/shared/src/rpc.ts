@@ -25,6 +25,7 @@ import {
 } from "./agents";
 import { blueprintMethods } from "./blueprints";
 import { CodeMapMethods } from "./codemap";
+import { DevDbMethods } from "./devdb";
 import { DiagnosticsMethods } from "./diagnostics";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
 import {
@@ -177,6 +178,11 @@ export const ProjectSettingsSchema = z.object({
   maxSteps: z.number().int().min(5).max(200).default(40),
   /** The owner's own start command for previews ("" = let Depo detect it). `{port}` is the chosen port. */
   previewCommand: z.string().max(2000).default(""),
+  /**
+   * Full access: commands that would ask (installs, network, servers) run without asking in this
+   * project. Commands the policy or commandDeny blocks stay blocked.
+   */
+  fullAccess: z.boolean().default(false),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 
@@ -1038,7 +1044,13 @@ const ApprovalMethods = {
   "approvals.respond": {
     /** reason: optional, for a decline; Depo remembers it as a preference (memory.auto). */
     params: z
-      .object({ id: z.string(), approve: z.boolean(), reason: z.string().trim().max(500).optional() })
+      .object({
+        id: z.string(),
+        approve: z.boolean(),
+        reason: z.string().trim().max(500).optional(),
+        /** For an approval: just this once, for the rest of this task, or for this project (full access). */
+        scope: z.enum(["once", "task", "project"]).optional(),
+      })
       .strict(),
     result: z.object({ ok: z.boolean() }),
   },
@@ -1184,6 +1196,7 @@ export const ApiSchema = {
   ...ReferenceMethods,
   ...TerminalMethods,
   ...DiagnosticsMethods,
+  ...DevDbMethods,
   ...blueprintMethods(ProjectSchema),
 } as const;
 

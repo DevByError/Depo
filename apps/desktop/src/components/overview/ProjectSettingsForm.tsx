@@ -82,6 +82,12 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
           checked={draft.paused}
           onChange={(v) => setDraft({ ...draft, paused: v })}
         />
+        <Toggle
+          label="Full access"
+          hint="Agents install packages, build and start servers without asking. Blocked commands stay blocked, and changes still wait for your review."
+          checked={draft.fullAccess}
+          onChange={(v) => setDraft({ ...draft, fullAccess: v })}
+        />
         <Field
           label="Tasks at once"
           hint="How many of this project's tasks may use the model at the same time."

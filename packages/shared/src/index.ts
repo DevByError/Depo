@@ -1,6 +1,7 @@
 export * from "./agents";
 export * from "./blueprints";
 export * from "./codemap";
+export * from "./devdb";
 export * from "./diagnostics";
 export * from "./events";
 export * from "./extensions";

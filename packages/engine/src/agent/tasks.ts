@@ -41,7 +41,10 @@ import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
 import { TOOLS, type ToolContext } from "../tools/index";
 import type { PreviewHooks } from "../tools/preview-tools";
+import { computeChanges } from "../workspace/changes";
 import type { ProjectService, Workspace } from "../workspace/service";
+import { type FinishDeps, finishSummary, problemsPrompt, runFinishLine } from "./finish";
+import { kickstart } from "./kickstart";
 import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
 import { SteerInbox, type StoredNote, steerPrompt } from "./steer";
@@ -82,7 +85,14 @@ export interface TaskManagerOptions {
   diagnostics?: ToolContext["diagnostics"];
   /** Pictures and links the owner sends as design references (studied before the agents start). */
   references?: ReferenceService;
+  /** The project's test MySQL database (dev_database). */
+  devdb?: ToolContext["devdb"];
+  /** Install, start the database, start and check the app when an agent says it is done. */
+  finishLine?: Omit<FinishDeps, "projectName">;
 }
+
+/** Rounds of "Depo ran it and found problems" before the answer is accepted as it is. */
+const FINISH_ROUNDS = 2;
 
 /** Budgets (characters) for what is added to the system prompt. */
 const MEMORY_BUDGET = 5000;
@@ -156,6 +166,7 @@ export class TaskManager {
       ...(o.readiness ? { readiness: o.readiness } : {}),
       ...(o.diagnostics ? { diagnostics: o.diagnostics } : {}),
       ...(o.references ? { references: o.references } : {}),
+      ...(o.devdb ? { devdb: o.devdb } : {}),
     });
   }
 
@@ -465,15 +476,100 @@ export class TaskManager {
     root: string,
     agent: string,
     signal: AbortSignal,
-  ) {
+  ): Promise<boolean> {
     const refs = this.o.references;
-    if (!refs) return;
-    if (refs.pending(taskId)) await refs.study({ taskId, projectId, agent, signal });
+    if (!refs) return false;
+    const fresh = refs.pending(taskId);
+    if (fresh) await refs.study({ taskId, projectId, agent, signal });
     try {
       refs.copyInto(taskId, root);
     } catch (err) {
       this.log.warn("could not copy design references into the private copy", { taskId, err });
     }
+    return fresh;
+  }
+
+  /** Run the finish line, with a start and an end in the activity feed. Never throws. */
+  private async finish(
+    ctx: ToolContext,
+    deps: FinishDeps,
+    signal: AbortSignal,
+    emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => void,
+  ): Promise<Awaited<ReturnType<typeof runFinishLine>>> {
+    emit({ type: "testing", text: "Depo is installing, starting and checking the app", status: "started" });
+    const t0 = performance.now();
+    try {
+      const r = await runFinishLine(ctx, deps, signal);
+      emit({
+        type: "test_result",
+        text: r.problems.length
+          ? `The app does not run yet: ${r.problems[0]?.split("\n")[0] ?? ""}`
+          : r.running.length
+            ? `The app runs: ${r.running.map((p) => p.url).join(", ")}`
+            : "Nothing to start for this work",
+        details: { problems: r.problems.length, running: r.running.map((p) => p.url) },
+        durationMs: Math.round(performance.now() - t0),
+        status: r.problems.length ? "failed" : "succeeded",
+      });
+      return r;
+    } catch (err) {
+      this.log.warn("finish line failed", { taskId: ctx.taskId, err });
+      return { problems: [], running: [], notes: [] };
+    }
+  }
+
+  /**
+   * Before the agents start: the blueprint for the requested stack (empty projects only) and the
+   * reference's colours in its design tokens, done by Depo itself. Returns the note for the
+   * agents' prompt ("" when nothing was done). Failures are logged, never fatal.
+   */
+  private kickstart(
+    row: typeof tasks.$inferSelect,
+    project: typeof projects.$inferSelect,
+    ws: Workspace,
+    newReferences: boolean,
+    emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => void,
+  ): string {
+    const mode = WorkModeSchema.parse(row.mode);
+    const text = requestText(row.prompt, this.loadHistory(row.id));
+    let r: ReturnType<typeof kickstart>;
+    try {
+      r = kickstart({
+        mode,
+        text,
+        root: ws.root,
+        projectName: project.name,
+        references: this.o.references?.list(row.id) ?? [],
+        newReferences,
+      });
+    } catch (err) {
+      this.log.warn("could not start from a blueprint", { taskId: row.id, err });
+      return "";
+    }
+    if (!r) return "";
+    if (r.blueprint) {
+      emit({
+        type: "writing_file",
+        text: `Started from Depo's ${r.blueprint.title} blueprint (${r.files.length} files, tested)`,
+        details: { blueprint: r.blueprint.id, files: r.files.length },
+        status: "succeeded",
+      });
+      this.o.memory?.add(
+        project.id,
+        "decision",
+        `Started from Depo's ${r.blueprint.title} blueprint (${r.blueprint.id}). Run: ${r.blueprint.runCommand}. Test: ${r.blueprint.testCommand}.`,
+        "system",
+      );
+    }
+    if (r.themed.length && r.tokens) {
+      emit({
+        type: "writing_file",
+        text: `Applied the reference's colours to ${r.themed.join(", ")} (primary ${r.tokens.primary}, background ${r.tokens.bg})`,
+        details: { files: r.themed, primary: r.tokens.primary, background: r.tokens.bg },
+        status: "succeeded",
+      });
+    }
+    return r.note;
   }
 
   /** Start a run of the task (its newest user message is the request). */
@@ -596,7 +692,7 @@ export class TaskManager {
     }
 
     this.setStatus(taskId, "running");
-    await this.prepareReferences(
+    const newReferences = await this.prepareReferences(
       taskId,
       project.id,
       ws.root,
@@ -608,8 +704,9 @@ export class TaskManager {
       emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
       return;
     }
+    const startNote = this.kickstart(row, project, ws, newReferences, emit);
     if (row.mode !== "single") {
-      await this.runTeam(row, project, ws, signal);
+      await this.runTeam(row, project, ws, signal, startNote);
       return;
     }
     emit({
@@ -634,6 +731,8 @@ export class TaskManager {
     } else {
       history[0] = sys;
     }
+    if (startNote && history[0]?.role === "system")
+      history[0].content += `\n\n# Already done by Depo\n${startNote}`;
 
     const lessons = this.lessonTracker(project.id);
     const extras = this.coderExtras(project.id, taskId, signal);
@@ -655,9 +754,24 @@ export class TaskManager {
       ...(this.o.qa ? { qa: this.o.qa } : {}),
       ...(this.o.diagnostics ? { diagnostics: this.o.diagnostics } : {}),
       ...(this.o.references ? { references: this.o.references } : {}),
+      ...(this.o.devdb ? { devdb: this.o.devdb } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);
+    const finishLine = this.o.settings?.get("agent.finish_line") === false ? undefined : this.o.finishLine;
+    let finishRounds = 0;
+    const beforeFinish = finishLine
+      ? async ({ changed }: { changed: string[] }) => {
+          if (!changed.length) return null;
+          const r = await this.finish(ctx, { ...finishLine, projectName: project.name }, signal, emit);
+          if (r.problems.length && finishRounds < FINISH_ROUNDS) {
+            finishRounds++;
+            return { retry: problemsPrompt(r) };
+          }
+          const text = finishSummary(r);
+          return text ? { append: text } : null;
+        }
+      : undefined;
     const result = await runAgentLoop({
       provider,
       model,
@@ -674,6 +788,7 @@ export class TaskManager {
       persist: (m) => this.addMessage(taskId, m as ChatMessage),
       lessons,
       inbox,
+      ...(beforeFinish ? { beforeFinish } : {}),
     });
     let finalText = result.finalText;
 
@@ -709,6 +824,7 @@ export class TaskManager {
     project: typeof projects.$inferSelect,
     ws: Workspace,
     signal: AbortSignal,
+    startNote = "",
   ): Promise<void> {
     const taskId = row.id;
     const mode = WorkModeSchema.parse(row.mode) as Exclude<WorkMode, "single">;
@@ -720,7 +836,9 @@ export class TaskManager {
     this.o.indexer?.ensure(project.id);
     emit({ type: "planning", text: `Team mode "${mode}": ${row.title}`, status: "started" });
     // The owner's design references: one brief for every agent, also kept on the blackboard.
-    const brief = this.o.references?.brief(taskId) ?? "";
+    const brief = [startNote && `Already done by Depo:\n${startNote}`, this.o.references?.brief(taskId) ?? ""]
+      .filter(Boolean)
+      .join("\n\n");
     if (brief) this.blackboard.write(project.id, "design-reference.md", brief, "engine", taskId);
     const asked = lastUser
       ? lastUser.fromNotes
@@ -754,6 +872,37 @@ export class TaskManager {
       this.setStatus(taskId, "done");
       emit({ type: "handoff", text: "Plan declined: nothing was built", status: "cancelled" });
       return;
+    }
+    if (
+      this.o.finishLine &&
+      this.o.settings?.get("agent.finish_line") !== false &&
+      computeChanges(project.rootPath, ws.root, ws.manifest).length > 0
+    ) {
+      const settings = this.o.projectSettings?.(project.id);
+      const ctx: ToolContext = {
+        root: ws.root,
+        bus: this.o.bus,
+        approvals: this.o.approvals,
+        projectId: project.id,
+        taskId,
+        agent: agentTag("integration"),
+        signal,
+        env: venvEnv(ws.root),
+        ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
+      };
+      const r = await this.finish(ctx, { ...this.o.finishLine, projectName: project.name }, signal, emit);
+      const extra = finishSummary(r);
+      if (extra) {
+        this.addMessage(taskId, { role: "assistant", content: extra }, undefined, agentTag("manager"));
+        this.o.db
+          .update(tasks)
+          .set({
+            summary: `${res.finalText}\n\n${extra}`.slice(0, 4000),
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(tasks.id, taskId))
+          .run();
+      }
     }
     const cs = this.finishChanges(project.id, taskId, ws, row.title, emit, (c) => (c ? "review" : "done"));
     this.autoMemory?.afterTask({

@@ -16,8 +16,12 @@ export function extractTextToolCalls(text: string, toolNames: string[]): { calls
   for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g))
     if (m[1]) candidates.push({ raw: m[0], json: m[1] });
   if (candidates.length === 0) {
-    for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?)\s*```/g))
-      if (m[1]) candidates.push({ raw: m[0], json: m[1] });
+    // A fenced block may hold several calls, one JSON object after another.
+    for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?)\s*```/g)) {
+      const objs = m[1] ? jsonObjects(m[1]) : [];
+      if (objs.length > 1) for (const o of objs) candidates.push({ raw: o, json: o });
+      else if (m[1]) candidates.push({ raw: m[0], json: m[1] });
+    }
   }
   if (candidates.length === 0) {
     // Bare JSON objects, possibly with prose around them: {"name": ..., "arguments": ...}
@@ -26,18 +30,46 @@ export function extractTextToolCalls(text: string, toolNames: string[]): { calls
   }
   const calls: ToolCall[] = [];
   let rest = text;
+  // Small models often "cd" before a command, as if in a terminal: carry it into run_command's cwd.
+  let dir: string[] = [];
   for (const c of candidates) {
     const j = parseLoose(c.json);
     if (!j || typeof j !== "object") continue;
     const o = j as Record<string, unknown>;
     const name = typeof o.name === "string" ? o.name : typeof o.tool === "string" ? o.tool : null;
-    if (!name || !known.has(name)) continue;
     let args = o.arguments ?? o.args ?? o.parameters ?? o.input ?? {};
     if (typeof args === "string") args = parseLoose(args) ?? args;
+    if (name && CD_TOOLS.has(name) && known.has("run_command")) {
+      dir = changeDir(dir, args);
+      rest = rest.replace(c.raw, "");
+      continue;
+    }
+    if (!name || !known.has(name)) continue;
+    if (name === "run_command" && dir.length && args && typeof args === "object") {
+      const a = args as Record<string, unknown>;
+      if (!a.cwd) args = { ...a, cwd: dir.join("/") };
+    }
     calls.push({ id: `text_${calls.length + 1}`, name, arguments: args, rawArguments: JSON.stringify(args) });
     rest = rest.replace(c.raw, "");
   }
+  if (calls.length) rest = rest.replace(/```(?:json|tool_call)?\s*```/g, "");
   return { calls, rest: calls.length ? rest.trim() : text };
+}
+
+const CD_TOOLS = new Set(["cd", "chdir", "change_directory", "change_dir"]);
+
+/** The folder after a pretend `cd` call, as path parts below the project root. */
+function changeDir(dir: string[], args: unknown): string[] {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const raw = [a.dir, a.path, a.directory, a.folder].find((v) => typeof v === "string") as string | undefined;
+  if (!raw) return dir;
+  const out = raw.replace(/\\/g, "/").startsWith("/") ? [] : [...dir];
+  for (const part of raw.replace(/\\/g, "/").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out;
 }
 
 /** JSON.parse, then again after escaping raw newlines and tabs inside strings (a common slip). */

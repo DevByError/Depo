@@ -139,7 +139,12 @@ describe("the blueprint library", () => {
       const onDisk = walk(path.join(filesDir, folder)).map((f) => f.replace(/\.tpl$/, ""));
       expect(Object.keys(map).sort()).toEqual(onDisk);
     }
-    expect(BLUEPRINTS.map((b) => b.id)).toEqual(["fullstack", "fastapi-service", "react-web-app"]);
+    expect(BLUEPRINTS.map((b) => b.id)).toEqual([
+      "fullstack",
+      "next-bun-mysql",
+      "fastapi-service",
+      "react-web-app",
+    ]);
     for (const b of BLUEPRINTS) {
       expect(b.title.length).toBeGreaterThan(3);
       expect(b.summary.length).toBeGreaterThan(20);
@@ -530,6 +535,8 @@ describe("blueprints in plans", () => {
     fs.mkdirSync(proj);
     folder(proj);
     const project = await e.projects.open(proj);
+    const events: string[] = [];
+    e.bus.subscribe((ev) => events.push(ev.text));
     const task = e.tasks.send(project.id, text, undefined, "full");
     const deadline = Date.now() + 20_000;
     while (e.approvals.list().length === 0 && Date.now() < deadline) await Bun.sleep(20);
@@ -537,24 +544,22 @@ describe("blueprints in plans", () => {
     const [req] = e.approvals.list();
     e.approvals.respond(req?.id ?? "", false);
     await e.tasks.settled(task.id);
-    return plan;
+    const board = e.tasks.blackboard.read(project.id, "design-reference.md")?.content ?? "";
+    return Object.assign(plan ?? { nodes: [], summary: "" }, { events, board, ok: !!plan });
   }
 
-  test("a build plan on an empty project starts from the blueprint and names it", async () => {
+  test("a build on an empty project: Depo writes the blueprint before the team plans, and says so", async () => {
     const plan = await planFor(
       (dir) => fs.writeFileSync(path.join(dir, "README.md"), "# Shop\n"),
       "build an online shop with login",
     );
-    expect(plan).toBeTruthy();
-    const step = plan?.nodes.find((n) => n.id === BLUEPRINT_STEP);
-    expect(step?.title).toBe("Start from the Full stack app blueprint");
-    expect(step?.owner).toBe("integration");
-    expect(step?.review).toBe(false);
-    expect(plan?.summary).toMatch(/blueprint/i);
-    expect(plan?.summary).toMatch(/full ?stack/i);
-    // Every task that writes code waits for the blueprint.
-    for (const n of plan?.nodes ?? [])
-      if (["backend", "testing"].includes(n.owner)) expect(n.deps).toContain(BLUEPRINT_STEP);
+    expect(plan.ok).toBe(true);
+    expect(
+      plan.events.some((t) => /^Started from Depo's Full stack app blueprint \(\d+ files, tested\)$/.test(t)),
+    ).toBe(true);
+    // The agents extend it instead of planning a blueprint step of their own.
+    expect(plan.nodes.some((n) => n.id === BLUEPRINT_STEP)).toBe(false);
+    expect(plan.board).toContain("Depo already wrote the Full stack app starting project");
   }, 60_000);
 
   test("a build plan on a project with code does not mention a blueprint", async () => {
@@ -563,9 +568,10 @@ describe("blueprints in plans", () => {
       fs.mkdirSync(path.join(dir, "src"));
       fs.writeFileSync(path.join(dir, "src", "index.ts"), "export {};\n");
     }, "build an online shop with login");
-    expect(plan).toBeTruthy();
-    expect(plan?.nodes.some((n) => /blueprint/i.test(`${n.id} ${n.title}`))).toBe(false);
-    expect(plan?.summary).not.toMatch(/blueprint/i);
+    expect(plan.ok).toBe(true);
+    expect(plan.nodes.some((n) => /blueprint/i.test(`${n.id} ${n.title}`))).toBe(false);
+    expect(plan.summary).not.toMatch(/blueprint/i);
+    expect(plan.events.some((t) => t.startsWith("Started from Depo's"))).toBe(false);
   }, 60_000);
 });
 
@@ -579,7 +585,12 @@ describe("blueprint RPCs over WebSocket", () => {
     const list = await rpc(port, "blueprints.list", {});
     const listed = (list.result as { blueprints: { id: string; fileCount: number; features: string[] }[] })
       .blueprints;
-    expect(listed.map((b) => b.id)).toEqual(["fullstack", "fastapi-service", "react-web-app"]);
+    expect(listed.map((b) => b.id)).toEqual([
+      "fullstack",
+      "next-bun-mysql",
+      "fastapi-service",
+      "react-web-app",
+    ]);
     expect(listed.every((b) => b.fileCount > 10 && b.features.length > 0)).toBe(true);
 
     const got = await rpc(port, "blueprints.get", { id: "react-web-app" });

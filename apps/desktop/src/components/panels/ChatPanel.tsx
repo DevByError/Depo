@@ -1,6 +1,22 @@
-import type { ChatItem, DepoEvent, Task, TaskStatus } from "@depo/shared";
+import {
+  type ChatItem,
+  type DepoEvent,
+  isRunReport,
+  RUN_REPORT_HEADING,
+  type Task,
+  type TaskStatus,
+} from "@depo/shared";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, FileDiff, FlaskConical, HardDrive, Plus, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowDown,
+  CircleCheck,
+  FileDiff,
+  FlaskConical,
+  HardDrive,
+  Plus,
+  ShieldCheck,
+} from "lucide-react";
 import { useMemo } from "react";
 import { ApprovalCard } from "@/components/chat/ApprovalCard";
 import { Composer } from "@/components/chat/Composer";
@@ -320,6 +336,8 @@ export interface Turn {
   answer: ChatItem | null;
   /** "Note from Depo: …", added after the answer (for example when the last test run failed). */
   note: ChatItem | null;
+  /** "Depo ran the app.": what Depo did after the answer (installed, started, checked) and the links. */
+  run?: ChatItem | null;
   /** The Manager's plan in a team run, shown as a card instead of a step. */
   plan: { item: ChatItem; plan: ParsedPlan } | null;
   /** Notes the owner sent while this turn worked (queued, read, or not read). */
@@ -366,6 +384,11 @@ export function groupTurns(items: ChatItem[], opts: { working?: boolean } = {}):
       t.note = t.steps.pop() ?? null;
       last = prev;
     }
+    // Depo's run report follows the agent's own answer, so the answer stays the answer.
+    if (last?.role === "assistant" && isRunReport(last.text) && t.steps.at(-2)?.role === "assistant") {
+      t.run = t.steps.pop() ?? null;
+      last = t.steps.at(-1);
+    }
     if (last?.role === "assistant" && (last.isError || describeNote(last.text).kind === "note"))
       t.answer = t.steps.pop() ?? null;
   });
@@ -389,7 +412,7 @@ function TurnView({
 }) {
   const working = state === "working" || state === "waiting";
   const startedAt = turn.user?.createdAt ?? turn.steps[0]?.createdAt ?? null;
-  const endedAt = (turn.note ?? turn.answer ?? turn.steps.at(-1))?.createdAt ?? null;
+  const endedAt = (turn.note ?? turn.run ?? turn.answer ?? turn.steps.at(-1))?.createdAt ?? null;
   // Notes already read sit after the work; ones still waiting for the next step stay at the end.
   const readNotes = (turn.notes ?? []).filter((n) => n.steer?.state !== "queued");
   const queuedNotes = (turn.notes ?? []).filter((n) => n.steer?.state === "queued");
@@ -425,6 +448,7 @@ function TurnView({
         <SteerNote key={n.id} item={n} />
       ))}
       {turn.answer && <Answer item={turn.answer} />}
+      {turn.run && <RunReport item={turn.run} />}
       {turn.note && (
         <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[13px] text-fg">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
@@ -463,6 +487,30 @@ function Answer({ item }: { item: ChatItem }) {
     <div className="text-[13.5px] leading-relaxed text-fg">
       <Markdown text={item.text} />
     </div>
+  );
+}
+
+/** What Depo did once the agent said it was done: the running app, the test database, the page check. */
+function RunReport({ item }: { item: ChatItem }) {
+  const body = item.text.trimStart().slice(RUN_REPORT_HEADING.length).trim();
+  const trouble = /^Still not working:/m.test(body);
+  const Icon = trouble ? AlertTriangle : CircleCheck;
+  return (
+    <section
+      aria-label="Depo ran the app"
+      className={cn(
+        "flex gap-2.5 rounded-lg border px-3.5 py-2.5 text-[13px]",
+        trouble ? "border-warning/40 bg-warning/10" : "border-success/40 bg-success/10",
+      )}
+    >
+      <Icon className={cn("mt-0.5 size-4 shrink-0", trouble ? "text-warning" : "text-success")} aria-hidden />
+      <div className="min-w-0 flex-1 text-fg">
+        <p className="font-medium">{RUN_REPORT_HEADING}</p>
+        <div className="break-words [&_p]:my-0.5">
+          <Markdown text={body} />
+        </div>
+      </div>
+    </section>
   );
 }
 

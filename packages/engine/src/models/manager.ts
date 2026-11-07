@@ -340,7 +340,8 @@ export class ModelManager {
   }
 
   /** Start a download in the background. Progress arrives as `model_download` events. */
-  startPull(ref: { providerId: string; model: string }, dataDir: string): PullJob {
+  startPull(input: { providerId: string; model: string }, dataDir: string): PullJob {
+    const ref = { ...input, model: cleanModelName(input.model) };
     const provider = this.provider(ref.providerId);
     if (!provider.pull) {
       throw new Error(
@@ -541,4 +542,20 @@ function describeProgress(j: PullJob): string {
     return `${pct}% of ${(j.totalBytes / 1e9).toFixed(1)} GB`;
   }
   return j.status;
+}
+
+/**
+ * The name to download, from what the owner typed: people paste the whole command from a model
+ * page ("ollama pull qwen2.5-coder:3b", "ollama run llama3.2"), so take the name out of it.
+ */
+export function cleanModelName(raw: string): string {
+  const text = raw.trim().replace(/^[`'"]+|[`'"]+$/g, "");
+  const cmd = /^ollama(?:\.exe)?\s+(\S+)\s*(.*)$/i.exec(text);
+  if (!cmd) return text;
+  const verb = (cmd[1] ?? "").toLowerCase();
+  const rest = (cmd[2] ?? "").trim().split(/\s+/)[0] ?? "";
+  if ((verb === "pull" || verb === "run") && rest) return rest;
+  throw new Error(
+    `"${text}" is an Ollama command, not a model name. Type only the model's name here, for example qwen2.5-coder:7b.`,
+  );
 }

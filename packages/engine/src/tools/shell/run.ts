@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { attachJob, type JobHandle } from "./winjob";
 
 export interface RunOptions {
@@ -28,9 +32,64 @@ export interface RunResult {
 
 const HIDDEN_ENV = /^(DEPO_ENGINE_TOKEN|DEPO_.*SECRET.*|.*_TOKEN|.*_SECRET|.*_PASSWORD|.*API_KEY.*)$/i;
 
+let shimDir: string | null | undefined;
+
+/**
+ * When Bun is not installed, Depo's engine (a compiled Bun) stands in for it: small `bun` and
+ * `bunx` launchers that run the engine with BUN_BE_BUN=1, in a folder put first on PATH. So
+ * `bun install`, `bun run dev` and `bunx` work on a PC that only has Depo. Null when a real Bun is
+ * on PATH (or the engine is not a compiled Bun).
+ */
+export function bunShimDir(): string | null {
+  if (shimDir !== undefined && (shimDir === null || fs.existsSync(shimDir))) return shimDir;
+  const exe = process.execPath;
+  const isBun = /[\\/]bun(-[a-z0-9-]+)?(\.exe)?$/i.test(exe);
+  if (Bun.which("bun")) shimDir = null;
+  else if (isBun)
+    shimDir = path.dirname(exe); // a real Bun that is not on PATH (tests, dev)
+  else if (!/depo-engine/i.test(path.basename(exe))) shimDir = null;
+  else {
+    const dir = path.join(
+      os.tmpdir(),
+      `depo-bun-${createHash("sha256").update(exe).digest("hex").slice(0, 10)}`,
+    );
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      if (process.platform === "win32") {
+        fs.writeFileSync(path.join(dir, "bun.cmd"), `@echo off\r\nset BUN_BE_BUN=1\r\n"${exe}" %*\r\n`);
+        fs.writeFileSync(path.join(dir, "bunx.cmd"), `@echo off\r\nset BUN_BE_BUN=1\r\n"${exe}" x %*\r\n`);
+      } else {
+        const q = exe.replace(/'/g, "'\\''");
+        fs.writeFileSync(path.join(dir, "bun"), `#!/bin/sh\nBUN_BE_BUN=1 exec '${q}' "$@"\n`, {
+          mode: 0o755,
+        });
+        fs.writeFileSync(path.join(dir, "bunx"), `#!/bin/sh\nBUN_BE_BUN=1 exec '${q}' x "$@"\n`, {
+          mode: 0o755,
+        });
+      }
+      shimDir = dir;
+    } catch {
+      shimDir = null;
+    }
+  }
+  return shimDir;
+}
+
+/** The environment with the Bun launchers' folder first on PATH (when they are needed). */
+function withBun(env: Record<string, string>): Record<string, string> {
+  const dir = bunShimDir();
+  if (!dir) return env;
+  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const sep = process.platform === "win32" ? ";" : ":";
+  const parts = (env[key] ?? "").split(sep);
+  if (parts.includes(dir)) return env;
+  return { ...env, [key]: [dir, ...parts].filter(Boolean).join(sep) };
+}
+
 export function commandEnv(extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !HIDDEN_ENV.test(k)) env[k] = v;
+  for (const [k, v] of Object.entries(withBun(process.env as Record<string, string>)))
+    if (v !== undefined && !HIDDEN_ENV.test(k)) env[k] = v;
   return {
     ...env,
     CI: "1",

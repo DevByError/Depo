@@ -252,3 +252,27 @@ Short ADRs: decision, reason, alternatives. Newest last.
 - **Decision:** Each agent step has a reply limit (8192 tokens) and a repetition guard on the stream. A looping reply is cut after a few identical copies, its tool calls run once, and the model is told; three such replies in a row fail the task with a reason that suggests a larger model.
 - **Reason:** On the owner's PC, qwen2.5-coder:3b wrote the same four edit calls for 55 minutes, because Ollama generates without limit and nothing watched the stream. Stopping early costs nothing when the model is fine, and turns an hour of nothing into a few seconds and a clear next step.
 
+
+## ADR-0058: Approvals can cover a task or a whole project, but applying changes always asks
+- **Decision:** Approval cards offer "Allow once", "Allow for this task" and "Allow all in this project". The last sets the project's `fullAccess`, which approves commands, installs and downloads inside the private copy without asking. Applying changes to the owner's files always asks.
+- **Reason:** The owner asked for the way Claude asks: one question, then the work continues. Everything an agent does happens in a private copy, so the only step that touches the real project keeps its question.
+
+## ADR-0059: The starting project and the reference's colours are written by Depo, not by the model
+- **Decision:** For an empty project whose request matches a blueprint, Depo writes the blueprint and the picture's theme tokens into the copy before any agent runs, and tells the agent what is already there.
+- **Reason:** A 7B model on a 4 GB GPU spends most of its time (and most of its mistakes) on scaffolding. Doing the predictable part deterministically turns an hour of fragile work into a second and leaves the model the part that needs it.
+
+## ADR-0060: Depo runs a test MySQL database itself, bound to 127.0.0.1, and downloads it only after asking
+- **Decision:** Each project can have a MariaDB (or an installed MySQL) database run by Depo on 127.0.0.1 with a random password, in Depo's data folder. On Windows without one, Depo downloads the portable MariaDB zip from archive.mariadb.org after a command approval and checks its SHA-256.
+- **Reason:** The owner wants to test apps with real data without installing a database. Binding to 127.0.0.1, a generated password and a folder per project keep it private and disposable; the download is the only network use and the owner approves it.
+
+## ADR-0061: "Done" means Depo ran it; problems go back to the model twice at most
+- **Decision:** When an agent finishes with changes, Depo installs the packages, starts the database and seeds it, starts the app and opens it in a browser. Problems go back to the model up to two times; after that the owner gets the report with what still fails.
+- **Reason:** Small models declare success early and tell the owner to run things. Checking the way the owner would, and feeding the real errors back, is what makes "come back later and find it working" true; the limit keeps a model that cannot fix it from looping.
+
+## ADR-0062: Without Bun installed, Depo's own engine stands in for it
+- **Decision:** When `bun` is not on PATH, commands run with `bun` and `bunx` launchers that start the engine exe with `BUN_BE_BUN=1`.
+- **Reason:** The engine is a compiled Bun program, so it already contains Bun. Using it avoids a download and a PATH change on the owner's PC while keeping the app's scripts unchanged.
+
+## ADR-0063: A crashed model runtime is waited for, restarted and given a smaller context
+- **Decision:** A refused, dropped or crashed model call waits for Ollama's health check (starting `ollama serve` when it is local and not running) and retries; after two crashes the task halves its context. Stray socket errors are logged and no longer end the engine.
+- **Reason:** On a 4 GB GPU a long context is the usual cause of Ollama dropping a request (ECONNRESET). A task should survive a runtime restart, and one broken socket should not take the engine and every other task down with exit code 1.

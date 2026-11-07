@@ -174,3 +174,13 @@ export const PreviewMethods = {
     }),
   },
 } as const;
+
+/**
+ * First line of the report Depo adds after an agent's answer once it has installed, started and
+ * checked the app itself (the finish line). The chat shows that message as its own card.
+ */
+export const RUN_REPORT_HEADING = "Depo ran the app.";
+
+export function isRunReport(text: string): boolean {
+  return text.trimStart().startsWith(RUN_REPORT_HEADING);
+}

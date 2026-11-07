@@ -11,6 +11,8 @@ import { CodeIndexer } from "./codeindex/indexer";
 import { type OpenedDatabase, openDatabase } from "./db";
 import { projects as projectsTable, tasks as tasksTable } from "./db/schema";
 import { DesignService } from "./design/service";
+import { devDbHooks } from "./devdb/hooks";
+import { DevDatabaseService } from "./devdb/service";
 import { DiagnosticsService } from "./diagnostics/service";
 import { EventBus } from "./events/bus";
 import { GitService } from "./git/service";
@@ -62,6 +64,8 @@ export interface EngineOptions {
   models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
   /** Test hooks for the agent loop. */
   tasks?: { maxSteps?: number; retryDelayMs?: number };
+  /** Run the finish line after agents finish (default on; DEPO_FINISH_LINE=0 turns it off for tests). */
+  finishLine?: boolean;
   /** Test hooks for downloads (GitHub archives, OSV dumps). */
   downloads?: { github?: GithubEndpoints; osvBase?: string; updateApi?: string };
   /** Test hook: replaces the git runner used for clones. */
@@ -106,6 +110,7 @@ export interface Engine {
   readonly terminal: TerminalService;
   /** Installed compilers and linters; `latest(projectId, taskId)` feeds the readiness report. */
   readonly diagnostics: DiagnosticsService;
+  readonly devdb: DevDatabaseService;
   /** Pictures and links the owner sends as design references. */
   readonly references: ReferenceService;
   readonly database: OpenedDatabase;
@@ -163,6 +168,17 @@ export function createEngine(opts: EngineOptions): Engine {
     projects,
     memory,
     ...(opts.git ? { git: opts.git } : {}),
+  });
+  // "Allow all in this project" on an approval turns on the project's full access.
+  approvals.useProjectGrants({
+    has: (id) => safeSettings(registry, id)?.fullAccess ?? false,
+    grant: (id) => {
+      try {
+        registry.setSettings(id, { fullAccess: true });
+      } catch (err) {
+        logger.warn("could not save full access", { projectId: id, err });
+      }
+    },
   });
   const scheduler = new ModelScheduler({
     bus,
@@ -341,6 +357,16 @@ export function createEngine(opts: EngineOptions): Engine {
     scheduler,
     ...opts.references,
   });
+  /** Test databases: MariaDB (or an installed MySQL) on 127.0.0.1, one database per project. */
+  const devdb = new DevDatabaseService({
+    dir: path.join(dirs.root, "devdb"),
+    toolsDir: path.join(dirs.root, "tools"),
+    bus,
+    logger,
+    approvals,
+  });
+  const projectName = (id: string) =>
+    database.db.select().from(projectsTable).where(eq(projectsTable.id, id)).get()?.name ?? null;
   const autoPreview = new AutoPreview({
     bus,
     logger,
@@ -371,6 +397,16 @@ export function createEngine(opts: EngineOptions): Engine {
     }),
     readiness: readinessHooks,
     references,
+    devdb: devDbHooks({ service: devdb, projectName }),
+    finishLine:
+      (opts.finishLine ?? process.env.DEPO_FINISH_LINE !== "0")
+        ? {
+            previews,
+            autoStart: (projectId, taskId) => autoPreview.onReview(projectId, taskId),
+            devdb,
+            qa,
+          }
+        : undefined,
     eta,
     previews,
     qa,
@@ -495,6 +531,7 @@ export function createEngine(opts: EngineOptions): Engine {
     terminal,
     diagnostics,
     references,
+    devdb,
     database,
     async start() {
       server = startApiServer({
@@ -530,6 +567,7 @@ export function createEngine(opts: EngineOptions): Engine {
           terminal,
           diagnostics,
           references,
+          devdb,
           ...(opts.downloads?.updateApi ? { updateApi: opts.downloads.updateApi } : {}),
           info: {
             startedAt,
@@ -581,6 +619,7 @@ export function createEngine(opts: EngineOptions): Engine {
       await terminal.stopAll();
       await autoPreview.detach();
       await previews.stopAll();
+      await devdb.stopAll();
       await mcp.stopAll();
       await server?.stop();
       database.close();

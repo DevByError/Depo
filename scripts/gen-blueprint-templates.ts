@@ -11,6 +11,7 @@ const SETS: Record<string, string> = {
   "fastapi-service": "FASTAPI_TEMPLATES",
   "react-web-app": "WEB_TEMPLATES",
   fullstack: "FULLSTACK_TEMPLATES",
+  "next-bun-mysql": "NEXT_BUN_TEMPLATES",
 };
 
 function walk(dir: string, base = dir): string[] {

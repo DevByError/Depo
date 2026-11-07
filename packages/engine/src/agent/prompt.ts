@@ -98,6 +98,7 @@ export function codingSystemPrompt(opts: {
     "3. Follow the project's existing structure, style and libraries. Add a dependency only when there is no reasonable alternative.",
     "4. Add or update tests for what you change. Run the tests. If they fail, read the error, fix the cause, and run them again.",
     "   For an app with a server or web pages, also start it with start_preview, check the endpoints with http_check and the pages with check_page before you finish, then stop it with stop_preview.",
+    "   When the app uses MySQL or MariaDB, call dev_database start: Depo runs a local test database and writes DATABASE_URL into the app's .env. Then run the app's migrate and seed scripts so it has tables and demo data. Never ask the owner to set up a database.",
     "5. When the work is done and the tests pass, stop calling tools and reply with a short summary: what changed, which files, and the test result.",
     "",
     "Rules: read a file before editing it; never guess its contents. Do not ask the user to copy or apply anything; the review step does that. Keep replies short and plain.",

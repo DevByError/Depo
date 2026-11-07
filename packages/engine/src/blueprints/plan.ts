@@ -25,7 +25,7 @@ const NOT_WEB =
   /\b(cli|command[- ]line|terminal app|library|sdk|npm package|pip package|mobile|ios|android|react native|flutter|expo|desktop app|electron|tauri|game|unity|godot|browser extension|chrome extension|vs ?code extension|plugin|bot|scraper|crawler|notebook|jupyter|spreadsheet|embedded|firmware|arduino|smart contract|blockchain)\b/i;
 /** Server stacks other than FastAPI. */
 const OTHER_SERVER =
-  /\b(node(?:\.?js)?|express|nest\.?js|fastify|koa|hono|deno|django|flask|rails|ruby|laravel|php|spring|java|kotlin|dotnet|asp\.net|golang|go api|rust|actix|axum|elixir|phoenix|supabase|firebase)\b|(?:^|[\s(,])(?:\.net|c#)(?=$|[\s),.])/i;
+  /\b(node(?:\.?js)?|bun|express|nest\.?js|fastify|koa|hono|deno|django|flask|rails|ruby|laravel|php|spring|java|kotlin|dotnet|asp\.net|golang|go api|rust|actix|axum|elixir|phoenix|supabase|firebase)\b|(?:^|[\s(,])(?:\.net|c#)(?=$|[\s),.])/i;
 /** Web stacks other than React with Vite. */
 const OTHER_WEB =
   /\b(next\.?js|nuxt|remix|gatsby|astro|vue|svelte|sveltekit|angular|solid\.?js|qwik|htmx|jquery|wordpress|blazor)\b/i;
@@ -38,9 +38,26 @@ const SMALL =
 const WEB =
   /\b(ui|ux|pages?|screens?|dashboards?|frontend|front-end|web ?app|website|site|portal|forms?|app|react|vite|spa)\b/i;
 
+/** Next.js named as the web stack ("next" alone is a common word, so it needs company). */
+const NEXT =
+  /\bnext\.?js\b|\b(?:use|using|with|in)\s+next\b|\bnext\s+(?:for|as|on)\s+(?:the\s+)?(?:front|web|ui|client|pages)/i;
+/** A Bun or TypeScript server. */
+const BUN_SERVER =
+  /\bbun\b|\b(?:type ?script|ts)\b.{0,40}\b(?:back[ -]?end|server|api)\b|\b(?:back[ -]?end|server|api)\b.{0,40}\b(?:type ?script|ts)\b/i;
+/** Server stacks that are not Bun, and databases or data layers other than MySQL / MariaDB. */
+const NOT_BUN_MYSQL =
+  /\b(express|nest\.?js|fastify|koa|hono|deno|django|flask|fastapi|python|rails|ruby|laravel|php|spring|java|kotlin|dotnet|asp\.net|golang|go api|rust|actix|axum|elixir|phoenix|postgres\w*|psql|mongo\w*|sqlite|redis|dynamo\w*|cassandra|mssql|sql server|oracle|supabase|firebase|prisma|drizzle|typeorm|sequelize)\b/i;
+
+/** A Next.js front end with a Bun / TypeScript back end (MySQL or no database named). */
+export function wantsNextBun(text: string): boolean {
+  return NEXT.test(text) && BUN_SERVER.test(text) && !NOT_BUN_MYSQL.test(text);
+}
+
 /** The blueprint that fits this kind of work, or null when none does (before the folder check). */
 export function blueprintFor(mode: WorkMode, text: string): Blueprint | null {
   if (NOT_WEB.test(text)) return null;
+  if ((mode === "single" || mode === "full") && wantsNextBun(text))
+    return findBlueprint("next-bun-mysql") ?? null;
   const otherServer = OTHER_SERVER.test(text);
   const otherWeb = OTHER_WEB.test(text);
   const pick = (id: string) => findBlueprint(id) ?? null;

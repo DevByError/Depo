@@ -210,6 +210,7 @@ describe("projects", () => {
     const { e, work, ctx } = await setup();
     const p = await e.registry.create({ name: "s", parentDir: work, initGit: false });
     expect(e.registry.getSettings(p.id)).toEqual({
+      fullAccess: false,
       indexEnabled: true,
       maxParallel: 1,
       paused: false,

@@ -13,6 +13,7 @@ import { BLOCKS } from "../blocks";
 import type { CodeIndexer } from "../codeindex/indexer";
 import { FONT_LIBRARY } from "../design/fonts";
 import type { DesignService } from "../design/service";
+import type { DevDatabaseService } from "../devdb/service";
 import type { DiagnosticsService } from "../diagnostics/service";
 import type { EventBus } from "../events/bus";
 import type { GitService } from "../git/service";
@@ -77,6 +78,8 @@ export interface HandlerContext {
   diagnostics?: DiagnosticsService;
   /** Pictures and links sent as design references. */
   references?: ReferenceService;
+  /** Test databases (MariaDB on 127.0.0.1). */
+  devdb?: DevDatabaseService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -115,6 +118,11 @@ function systemInfo(ctx: HandlerContext) {
     schemaVersion: ctx.info.schemaVersion,
     apiFingerprint: API_FINGERPRINT,
   };
+}
+
+function needDevDb(ctx: HandlerContext): DevDatabaseService {
+  if (!ctx.devdb) throw new Error("Test databases are not available.");
+  return ctx.devdb;
 }
 
 function needLogs(ctx: HandlerContext): LogService {
@@ -196,7 +204,7 @@ export const handlers: Handlers = {
   "approvals.list": (_p, ctx) => ({ approvals: ctx.approvals.list() }),
   "approvals.respond": (p, ctx) => {
     const req = ctx.approvals.list().find((a) => a.id === p.id);
-    const ok = ctx.approvals.respond(p.id, p.approve);
+    const ok = ctx.approvals.respond(p.id, p.approve, p.scope ?? "once");
     // A decline with a reason teaches Depo a preference (memory.auto).
     if (ok && !p.approve && req && p.reason) ctx.tasks.autoMemory?.learnFromDecline(req, p.reason);
     // The agent that asked reads the reason at its next step (a declined plan is planned again).
@@ -310,6 +318,12 @@ export const handlers: Handlers = {
   "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
   "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode, p.references ?? []),
+  "devdb.status": (p, ctx) => needDevDb(ctx).status(p.projectId),
+  "devdb.start": async (p, ctx) =>
+    needDevDb(ctx).ensure(p.projectId, { name: (await ctx.projects.get(p.projectId)).name, agent: "owner" }),
+  "devdb.stop": async (p, ctx) => ({ stopped: await needDevDb(ctx).stop(p.projectId) }),
+  "devdb.reset": async (p, ctx) =>
+    needDevDb(ctx).reset(p.projectId, { name: (await ctx.projects.get(p.projectId)).name, agent: "owner" }),
   "references.image": (p, ctx) => {
     if (!ctx.references) throw new Error("Design references are not available.");
     return ctx.references.image(p.taskId, p.id);

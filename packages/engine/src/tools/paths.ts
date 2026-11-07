@@ -11,6 +11,18 @@ export class ToolError extends Error {
 /** Folders agents never read or write, wherever they appear. */
 const BLOCKED_SEGMENTS = new Set([".git", ".depo"]);
 
+/** Why a path in .git or .depo is refused, and where the file belongs instead. */
+function protectedMessage(rel: string, parts: string[]): string {
+  const folder = parts.find((s) => BLOCKED_SEGMENTS.has(s)) ?? ".depo";
+  const rest = parts.filter((s) => !BLOCKED_SEGMENTS.has(s)).join("/");
+  const what =
+    folder === ".git"
+      ? "`.git` is git's own folder; agents never touch it."
+      : "`.depo` is Depo's own working folder, not part of the project; agents never write there.";
+  const instead = rest ? ` Put the file in the project itself, for example \`${rest}\`.` : "";
+  return `Path ${rel} is not allowed: ${what}${instead} The project root is the folder that list_files shows.`;
+}
+
 /** Normalise a model-supplied relative path to forward slashes without leading `./`. */
 export function cleanRel(p: string): string {
   return p
@@ -31,7 +43,7 @@ export function resolveInside(root: string, rel: string): { abs: string; rel: st
   }
   const parts = r.split("/");
   if (parts.some((s) => s === "..")) throw new ToolError(`Path ${rel} leaves the project folder`);
-  if (parts.some((s) => BLOCKED_SEGMENTS.has(s))) throw new ToolError(`Path ${rel} is in a protected folder`);
+  if (parts.some((s) => BLOCKED_SEGMENTS.has(s))) throw new ToolError(protectedMessage(rel, parts));
   // Windows ignores trailing dots/spaces and supports alternate data streams: refuse both.
   if (parts.some((s) => /[. ]$/.test(s) || s.includes(":"))) throw new ToolError(`Invalid path: ${rel}`);
   const rootAbs = path.resolve(root);

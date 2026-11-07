@@ -455,8 +455,7 @@ export class ReferenceService {
     refs.forEach((r, i) => {
       const what = r.kind === "link" ? `the page ${r.url}` : `the picture "${r.name}"`;
       const size = r.width && r.height ? ` (${r.width}x${r.height})` : "";
-      const where = r.file ? `, saved at .depo/references/${path.basename(r.file)}` : "";
-      lines.push(`Reference ${i + 1}: ${what}${size}${where}`);
+      lines.push(`Reference ${i + 1}: ${what}${size}`);
       if (r.mode) lines.push(`- Theme: ${r.mode}`);
       const named = r.palette.filter((s) => s.role);
       const others = r.palette.filter((s) => !s.role).slice(0, 4);
