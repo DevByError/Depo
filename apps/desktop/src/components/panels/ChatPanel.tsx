@@ -8,6 +8,7 @@ import { PlanCard } from "@/components/chat/PlanCard";
 import { SteerNote } from "@/components/chat/SteerNote";
 import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
 import { RunningAppLink } from "@/components/qa/RunningAppLink";
+import { ReadinessCard } from "@/components/readiness/ReadinessCard";
 import { EtaHint } from "@/components/team/EtaHint";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -297,7 +298,12 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
       {mine.map((a) => (
         <ApprovalCard key={a.id} approval={a} />
       ))}
-      {task.status === "review" && <ReviewBanner projectId={task.projectId} taskId={task.id} />}
+      {task.status === "review" && (
+        <>
+          <ReviewBanner projectId={task.projectId} taskId={task.id} />
+          <ReadinessCard taskId={task.id} />
+        </>
+      )}
       <p className="sr-only" role="status" aria-live="polite">
         {active ? (task.status === "waiting" ? "The agent needs you." : (live.step?.text ?? "Working")) : ""}
       </p>

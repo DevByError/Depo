@@ -11,6 +11,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { ReadinessPill } from "@/components/readiness/ReadinessPill";
 import { AgentAvatar } from "@/components/team/AgentAvatar";
 import { AgentCard } from "@/components/team/AgentCard";
 import { BoardView } from "@/components/team/BoardView";
@@ -184,6 +185,7 @@ function MissionControl({
             {TASK_STATUS_TEXT[status]}
           </span>
           <span className="shrink-0 text-xs text-subtle">{MODE_LABEL[view.mode] ?? view.mode}</span>
+          {live && view.status === "review" && <ReadinessPill taskId={taskId} />}
           {!live && (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted"
