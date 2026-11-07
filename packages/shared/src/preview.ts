@@ -93,6 +93,10 @@ export const PreviewInfoSchema = z.object({
   startedAt: z.string(),
   readyAt: z.string().nullable(),
   stoppedAt: z.string().nullable(),
+  /** Started by Depo when the task's changes were ready for review (preview.autoStart). */
+  auto: z.boolean().optional(),
+  /** The owner asked to keep it running after the changes are applied or discarded. */
+  pinned: z.boolean().optional(),
 });
 export type PreviewInfo = z.infer<typeof PreviewInfoSchema>;
 

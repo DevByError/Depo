@@ -18,6 +18,13 @@ export function eventToNotice(e: DepoEvent): Notice | null {
       level: "info",
       taskId: e.taskId,
     };
+  if (e.type === "preview_started" && e.status === "succeeded" && e.details?.auto === true)
+    return {
+      title: "Your app is running",
+      text: `Try the changes before you apply them${typeof e.details.url === "string" ? `: ${e.details.url}` : "."}`,
+      level: "info",
+      taskId: e.taskId,
+    };
   if (e.type === "error" && e.taskId && !e.ephemeral)
     return { title: "Something went wrong", text: e.text, level: "problem", taskId: e.taskId };
   return null;

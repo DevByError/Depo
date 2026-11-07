@@ -11,6 +11,7 @@ import {
   Laptop,
   Loader2,
   MonitorPlay,
+  Pin,
   Play,
   RotateCw,
   Smartphone,
@@ -18,6 +19,7 @@ import {
   Tablet,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { PageCheckSection } from "@/components/qa/PageCheckSection";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
@@ -372,6 +374,7 @@ export function PreviewPanel() {
 
       {current?.approvalId && <ApprovalInline id={current.approvalId} />}
       {current && <LinkBar preview={current} mates={mates} />}
+      <PageCheckSection target={{ projectId, taskId }} preview={current} />
       <Viewer preview={current} device={ui.device} />
       <LogPane preview={current} />
     </section>
@@ -454,6 +457,7 @@ function LinkBar({ preview, mates }: { preview: PreviewInfo; mates: PreviewInfo[
           {copied ? "Link copied" : ""}
         </span>
       </div>
+      {preview.auto && preview.taskId && <PinToggle preview={preview} />}
       <p className="text-[11px] text-subtle">
         {preview.label}
         {preview.command ? (
@@ -489,6 +493,36 @@ function LinkBar({ preview, mates }: { preview: PreviewInfo; mates: PreviewInfo[
           {openError}
         </p>
       )}
+    </div>
+  );
+}
+
+/** Depo stops the app it started at review once the changes are applied or discarded, unless pinned. */
+function PinToggle({ preview }: { preview: PreviewInfo }) {
+  const qc = useQueryClient();
+  const pin = useMutation({
+    mutationFn: (pinned: boolean) => call("preview.pin", { id: preview.id, pinned }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["previews"] }),
+  });
+  const pinned = !!preview.pinned;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <p className="text-[11px] text-muted">
+        Depo started this when the changes were ready.{" "}
+        {pinned
+          ? "It keeps running after you apply or discard them."
+          : "It stops when you apply or discard them."}
+      </p>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-pressed={pinned}
+        disabled={pin.isPending}
+        onClick={() => pin.mutate(!pinned)}
+        className={pinned ? "bg-hover text-fg" : undefined}
+      >
+        <Pin /> Keep running
+      </Button>
     </div>
   );
 }

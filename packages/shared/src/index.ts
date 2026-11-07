@@ -5,6 +5,7 @@ export * from "./git";
 export * from "./ids";
 export * from "./logs";
 export * from "./preview";
+export * from "./qa";
 export * from "./review";
 export * from "./rpc";
 export * from "./search";

@@ -6,7 +6,13 @@ import { call, setTheme } from "@/lib/engine";
 import { queryClient } from "@/lib/query";
 import { useEngine } from "@/store/engine";
 import { type Theme, useUi } from "@/store/ui";
-import { MemorySetting, NotificationSetting, TeamSettings, UpdateSetting } from "./SettingsSections";
+import {
+  MemorySetting,
+  NotificationSetting,
+  PreviewSetting,
+  TeamSettings,
+  UpdateSetting,
+} from "./SettingsSections";
 
 export function SettingsDialog() {
   const open = useUi((s) => s.settingsOpen);
@@ -65,6 +71,7 @@ export function SettingsDialog() {
           <ParallelSetting />
           <TeamSettings />
           <MemorySetting />
+          <PreviewSetting />
           <NotificationSetting />
           <UpdateSetting />
 

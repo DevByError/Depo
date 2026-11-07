@@ -10,6 +10,7 @@
 - Prefer the libraries the project already uses; add a dependency only with a clear reason.
 - Use list_blocks for login, roles, audit log, rate limiting and pagination instead of writing security code from scratch.
 - Check edge cases: empty, duplicate, too long, concurrent, time zones, money.
+- After building pages: start_preview, then check_page at phone, tablet and desktop; fix console errors and critical or serious accessibility issues before you finish.
 
 ## Avoid
 - Guessing file contents or APIs; read them or use read_playbook.

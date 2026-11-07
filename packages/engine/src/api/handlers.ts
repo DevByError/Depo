@@ -24,6 +24,7 @@ import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { PreviewManager } from "../preview/manager";
 import type { ProjectRegistry } from "../projects/registry";
+import type { QaService } from "../qa/service";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SearchService } from "../search/service";
 import type { SecurityService } from "../security/service";
@@ -58,6 +59,8 @@ export interface HandlerContext {
   search?: SearchService;
   /** Commits for applied change sets, history. */
   git?: GitService;
+  /** Page checks in a headless browser (absent in engines built without it, e.g. some tests). */
+  qa?: QaService;
   /** Test hook: where the release lookup goes. */
   updateApi?: string;
   info: {
@@ -111,6 +114,11 @@ function needSearch(ctx: HandlerContext): SearchService {
 function needGit(ctx: HandlerContext): GitService {
   if (!ctx.git) throw new Error("Git is not available in this engine.");
   return ctx.git;
+}
+
+function needQa(ctx: HandlerContext): QaService {
+  if (!ctx.qa) throw new Error("Page checks are not available in this engine.");
+  return ctx.qa;
 }
 
 export type Handlers = {
@@ -504,4 +512,18 @@ export const handlers: Handlers = {
   "git.log": (p, ctx) => needGit(ctx).log(p.projectId, p.limit),
   "git.show": (p, ctx) => needGit(ctx).show(p.projectId, p.hash),
   "git.setIdentity": (p, ctx) => needGit(ctx).setIdentity(p.projectId, p.name, p.email),
+  "qa.check": async (p, ctx) => ({
+    check: await needQa(ctx).check({
+      projectId: p.projectId,
+      taskId: p.taskId ?? null,
+      url: p.url,
+      widths: p.widths,
+      expectText: p.expectText,
+      by: "user",
+    }),
+  }),
+  "qa.get": (p, ctx) => ({ check: needQa(ctx).get(p.projectId, p.taskId ?? null, p.id) }),
+  "qa.list": (p, ctx) => ({ checks: needQa(ctx).list(p.projectId, p.taskId ?? null, p.limit ?? 10) }),
+  "qa.screenshot": (p, ctx) => needQa(ctx).screenshot(p.projectId, p.taskId ?? null, p.path),
+  "preview.pin": (p, ctx) => ({ preview: ctx.previews.setPinned(p.id, p.pinned) }),
 };

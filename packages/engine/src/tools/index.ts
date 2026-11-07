@@ -11,6 +11,7 @@ import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool 
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
 import { PREVIEW_TOOLS, type PreviewHooks } from "./preview-tools";
+import type { QaHooks } from "./qa-tools";
 import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
@@ -50,6 +51,8 @@ export interface ToolContext {
   onTestResult?: (r: { command: string; passed: boolean; output: string }) => string | undefined;
   /** Start, check and stop the app from the workspace (start_preview, http_check, stop_preview). */
   previews?: PreviewHooks;
+  /** Look at the running app in a headless browser (check_page). */
+  qa?: QaHooks;
 }
 
 export interface TeamHooks {

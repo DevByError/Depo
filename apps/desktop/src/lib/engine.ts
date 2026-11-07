@@ -114,6 +114,9 @@ function invalidateFor(type: string, status: string): void {
     void queryClient.invalidateQueries({ queryKey: ["git", "status"] });
     void queryClient.invalidateQueries({ queryKey: ["git", "log"] });
   }
+  if (type === "rendering_screenshot" && status !== "started") {
+    void queryClient.invalidateQueries({ queryKey: ["qa", "list"] });
+  }
 }
 
 async function onConnected() {

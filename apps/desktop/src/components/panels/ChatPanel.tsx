@@ -7,6 +7,7 @@ import { Composer } from "@/components/chat/Composer";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { SteerNote } from "@/components/chat/SteerNote";
 import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
+import { RunningAppLink } from "@/components/qa/RunningAppLink";
 import { EtaHint } from "@/components/team/EtaHint";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -296,7 +297,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
       {mine.map((a) => (
         <ApprovalCard key={a.id} approval={a} />
       ))}
-      {task.status === "review" && <ReviewBanner />}
+      {task.status === "review" && <ReviewBanner projectId={task.projectId} taskId={task.id} />}
       <p className="sr-only" role="status" aria-live="polite">
         {active ? (task.status === "waiting" ? "The agent needs you." : (live.step?.text ?? "Working")) : ""}
       </p>
@@ -452,13 +453,14 @@ function Answer({ item }: { item: ChatItem }) {
   );
 }
 
-function ReviewBanner() {
+function ReviewBanner({ projectId, taskId }: { projectId: string; taskId: string }) {
   const setCenterTab = useUi((s) => s.setCenterTab);
   const setChangeSetId = useUi((s) => s.setChangeSetId);
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-success/40 bg-success/10 px-4 py-3 text-[13px]">
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-success/40 bg-success/10 px-4 py-3 text-[13px]">
       <FileDiff className="size-4 text-success" aria-hidden />
       <span className="flex-1 text-fg">The changes are ready. Nothing has touched your files yet.</span>
+      <RunningAppLink projectId={projectId} taskId={taskId} />
       <Button
         variant="primary"
         size="sm"

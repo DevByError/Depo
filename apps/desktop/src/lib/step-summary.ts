@@ -440,6 +440,41 @@ export function summarizeStep(item: Pick<ChatItem, "toolName" | "text" | "isErro
         meta: null,
       });
     }
+    case "check_page": {
+      const head = text.match(/^Page check qa_[0-9a-f]{28} of (\S+), (\d+) widths? in /);
+      let page = str(args, "file") ?? str(args, "url");
+      if (!page && head?.[1]) {
+        try {
+          page = new URL(head[1].replace(/,$/, "")).pathname;
+        } catch {
+          page = null;
+        }
+      }
+      const bits: string[] = [];
+      if (head?.[2]) bits.push(plural(Number(head[2]), "width"));
+      if (/^The page passed\./m.test(text)) bits.push("passed");
+      else if (head) {
+        const summary = text.match(/^Summary: (.*)$/m)?.[1] ?? "";
+        const num = (re: RegExp) => Number(summary.match(re)?.[1] ?? 0);
+        const a11y = summary.match(/(?:^|\. )Accessibility: ([^.(]*)/)?.[1] ?? "";
+        const problems = [
+          [num(/(?:^|\. )(\d+) console errors?/), "console error"],
+          [num(/(?:^|\. )(\d+) failed requests?/), "failed request"],
+          [num(/(?:^|\. )(\d+) requests? to the internet/), "blocked request"],
+          [
+            Number(a11y.match(/(\d+) critical/)?.[1] ?? 0) + Number(a11y.match(/(\d+) serious/)?.[1] ?? 0),
+            "accessibility issue",
+          ],
+        ] as const;
+        const shown = problems.filter(([n]) => n > 0).map(([n, what]) => plural(n, what));
+        bits.push(shown.length ? shown.join(", ") : "needs work");
+      }
+      return out({
+        kind: "screenshot",
+        title: page ? `Checked the page ${page}` : "Checked a page",
+        meta: bits.join(" · ") || null,
+      });
+    }
     case "make_deck":
       return out({ kind: "deck", title: "Made a slide deck", meta: str(args, "dir") });
     case "record_ux_audit":

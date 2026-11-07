@@ -16,6 +16,7 @@ import {
 import { asc, desc, eq, inArray } from "drizzle-orm";
 import "../tools/block-tools";
 import "../tools/design-tools";
+import "../tools/qa-tools";
 import { Blackboard } from "../agents/blackboard";
 import type { EtaService } from "../agents/eta";
 import { agentTag, manifestOf } from "../agents/manifests";
@@ -66,6 +67,8 @@ export interface TaskManagerOptions {
   previews?: PreviewHooks;
   /** Time estimates learned on this PC (team.eta, the plan approval message). */
   eta?: EtaService;
+  /** Page checks in a headless browser (check_page). */
+  qa?: ToolContext["qa"];
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -136,6 +139,7 @@ export class TaskManager {
       manifest: o.manifest,
       ...(o.previews ? { previews: o.previews } : {}),
       ...(o.eta ? { eta: o.eta } : {}),
+      ...(o.qa ? { qa: o.qa } : {}),
     });
   }
 
@@ -569,6 +573,7 @@ export class TaskManager {
       readPaths: new Set<string>(),
       ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
       ...(this.o.previews ? { previews: this.o.previews } : {}),
+      ...(this.o.qa ? { qa: this.o.qa } : {}),
     };
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);

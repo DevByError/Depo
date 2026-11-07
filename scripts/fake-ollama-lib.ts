@@ -101,6 +101,31 @@ const OVERCLAIM_SCRIPT: Step[] = [
   { final: () => "Done. Tests passed without any issues." },
 ];
 
+/** A small static page the landing-page scripts write. */
+export const LANDING_HTML =
+  '<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Welcome</title></head>\n<body><main><h1>Welcome</h1><p>Plan your trips in one place.</p></main></body>\n</html>\n';
+
+/** "make a landing page": writes index.html (a static site) and stops. */
+const LANDING_SCRIPT: Step[] = [
+  { say: "I'll write the page.", tool: "write_file", args: { path: "index.html", content: LANDING_HTML } },
+  { final: () => "Added a landing page in `index.html`." },
+];
+
+/** "check the landing page": writes it, starts the app and looks at it with check_page. */
+const CHECK_SCRIPT: Step[] = [
+  { say: "", tool: "write_file", args: { path: "index.html", content: LANDING_HTML } },
+  { say: "Starting the app.", tool: "start_preview", args: {} },
+  {
+    say: "Looking at it in the browser.",
+    tool: "check_page",
+    args: { url: "/", widths: ["phone", "desktop"], expect_text: "Welcome" },
+  },
+  { say: "", tool: "stop_preview", args: {} },
+  {
+    final: () => "Built the landing page and checked it in the browser at two widths.",
+  },
+];
+
 /** Deterministic bag-of-words vectors, so semantic search can be tested without a model. */
 export function fakeEmbedding(text: string, dims = 64): number[] {
   const v = new Array<number>(dims).fill(0);
@@ -146,7 +171,9 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
       const endpoint = /add an? \/([a-z][a-z0-9_-]*) endpoint/i.exec(firstUser)?.[1];
       const slug = /slugify helper/.test(firstUser);
       const overclaim = /break the root route/.test(firstUser);
-      if (!endpoint && !slug && !overclaim) {
+      const landing = /make a landing page/.test(firstUser);
+      const checkLanding = /check the landing page/.test(firstUser);
+      if (!endpoint && !slug && !overclaim && !landing && !checkLanding) {
         for (const w of words("I can only run the scripted /health demo in this test model.")) {
           ctl.enqueue(line({ message: { role: "assistant", content: w } }));
         }
@@ -155,11 +182,15 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number): Response {
         return;
       }
       if (stepDelayMs > 0) await Bun.sleep(stepDelayMs);
-      const script = overclaim
-        ? OVERCLAIM_SCRIPT
-        : slug
-          ? SLUGIFY_SCRIPT
-          : endpointScript((endpoint ?? "").toLowerCase());
+      const script = checkLanding
+        ? CHECK_SCRIPT
+        : landing
+          ? LANDING_SCRIPT
+          : overclaim
+            ? OVERCLAIM_SCRIPT
+            : slug
+              ? SLUGIFY_SCRIPT
+              : endpointScript((endpoint ?? "").toLowerCase());
       const step = script[Math.min(toolMsgs.length, script.length - 1)] as Step;
       if ("final" in step) {
         for (const w of words(step.final(toolMsgs.at(-1)?.content ?? ""))) {

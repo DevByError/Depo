@@ -93,6 +93,8 @@ export interface TeamHost {
   previews?: ToolContext["previews"];
   /** Time estimates learned on this PC: one line for the plan approval message. */
   eta?: { planNote(plan: Plan, parallel: number): string | null } | undefined;
+  /** Page checks in a headless browser (check_page). */
+  qa?: ToolContext["qa"];
 }
 
 export interface AgentExtras {
@@ -1501,6 +1503,7 @@ export class TeamRunner {
       team,
       vision: (prompt, images) => this.askVision(input, prompt, images),
       ...(this.h.previews ? { previews: this.h.previews } : {}),
+      ...(this.h.qa ? { qa: this.h.qa } : {}),
     };
   }
 

@@ -12,6 +12,7 @@
 - Use factories or fixtures for data; name tests after behaviour ("rejects a booking that overlaps").
 - Query UI elements by role and label, wait for conditions (never fixed sleeps).
 - Add a regression test for every bug fixed.
+- For a web app: start_preview, then check_page on the main pages at phone, tablet and desktop, with steps for the key flow (sign in, submit the main form) and expect_text for the result. Console errors and serious accessibility issues count as failures.
 
 ## Avoid
 - Weakening assertions, skipping or deleting tests to get green.

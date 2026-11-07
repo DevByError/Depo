@@ -13,6 +13,7 @@
 - Code-split routes, lazy-load heavy parts, give images width and height.
 - Lists that can grow are paginated or virtualised; tables have sorting and filters when the stories need them.
 - Write copy that is short and plain; buttons say what they do ("Save booking").
+- After building UI: start_preview, then check_page on each page you changed at phone, tablet and desktop (add steps for the main form). Fix console errors, failed requests and critical or serious accessibility issues before you hand off.
 
 ## Avoid
 - div or span with onClick instead of button; placeholder used as a label.

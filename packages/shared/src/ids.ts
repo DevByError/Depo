@@ -23,7 +23,8 @@ export type IdPrefix =
   | "aer"
   | "prv"
   | "grp"
-  | "rvc";
+  | "rvc"
+  | "qa";
 
 export function newId(prefix: IdPrefix, now: number = Date.now()): string {
   const time = now.toString(16).padStart(12, "0");
