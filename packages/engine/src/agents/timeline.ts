@@ -214,7 +214,8 @@ export function loadTimelineEvents(
       WHERE project_id = ${projectId} AND task_id = ${taskId} AND type <> 'decision'
       GROUP BY agent)`,
   );
-  const span = db.get<{ first: string | null; last: string | null }>(
+  // `db.get` returns raw values for SQL text; `all` returns named columns.
+  const [span] = db.all<{ first: string | null; last: string | null }>(
     sql`SELECT min(ts) AS first, max(ts) AS last FROM events WHERE project_id = ${projectId} AND task_id = ${taskId}`,
   );
   return { events, latest, span: { first: span?.first ?? null, last: span?.last ?? null } };

@@ -45,7 +45,7 @@ export function AgentCard({
       onClick={onSelect}
       data-agent={a.id}
       className={cn(
-        "group relative flex min-w-0 flex-col gap-2.5 overflow-hidden rounded-xl border bg-panel p-3 text-left transition-[border-color,box-shadow] duration-200",
+        "group relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border bg-panel p-2.5 text-left transition-[border-color,box-shadow] duration-200",
         busy ? "border-border-strong shadow-pop" : "border-border hover:border-border-strong",
         selected && "ring-2 ring-accent ring-offset-1 ring-offset-bg",
       )}
@@ -65,16 +65,13 @@ export function AgentCard({
         <AgentStateBadge state={a.state} />
       </span>
 
-      <span className="block rounded-lg bg-raised px-2.5 py-2">
+      <span className="block rounded-lg bg-raised px-2.5 py-1.5">
         <span className="flex items-center gap-1.5 text-[11px] text-subtle">
           <Icon className="size-3 shrink-0" aria-hidden />
           {busy ? "Now" : "Last action"}
           {a.actionAt && <span className="ml-auto tabular-nums">{formatRelative(a.actionAt, now)}</span>}
         </span>
-        <span
-          className="mt-0.5 line-clamp-2 block min-h-8 text-xs leading-4 text-fg"
-          data-testid="agent-action"
-        >
+        <span className="mt-0.5 line-clamp-2 min-h-8 text-xs leading-4 text-fg" data-testid="agent-action">
           {a.action ?? idleLine(a)}
         </span>
         {a.thought && (
@@ -89,7 +86,7 @@ export function AgentCard({
           <Signpost className="size-3 shrink-0" aria-hidden />
           Last decision
         </span>
-        <span className="mt-0.5 line-clamp-2 block min-h-8 text-xs leading-4 text-muted">
+        <span className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted">
           {a.lastDecision?.text ?? "No decision yet"}
         </span>
       </span>

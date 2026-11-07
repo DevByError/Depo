@@ -534,6 +534,8 @@ describe("decision events from a team run", () => {
     expect(by.manager?.lastDecision?.kind).toBe("release");
     expect(by.database?.action).toBeTruthy();
     expect(t.agents.every((a) => a.workMs >= 0)).toBe(true);
+    // The Manager's time is the run's span, from the first event to the last.
+    expect(by.manager?.workMs).toBeGreaterThan(0);
   }, 60_000);
 
   test("loop limit: the Manager escalates, the release verdict says work is unfinished; a broken plan falls back", async () => {

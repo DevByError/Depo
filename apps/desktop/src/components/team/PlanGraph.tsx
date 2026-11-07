@@ -97,7 +97,7 @@ export const PlanGraph = memo(function PlanGraph({
   return (
     <section
       aria-labelledby="team-graph-title"
-      className="overflow-hidden rounded-xl border border-border bg-panel"
+      className="@container shrink-0 overflow-hidden rounded-xl border border-border bg-panel"
     >
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3.5 py-2.5">
         <h3 id="team-graph-title" className="text-xs font-semibold text-fg">
@@ -106,7 +106,7 @@ export const PlanGraph = memo(function PlanGraph({
         <span className="text-xs tabular-nums text-subtle">
           {done} of {plan.nodes.length} done · {layout.layers} step{layout.layers === 1 ? "" : "s"}
         </span>
-        <ul className="ml-auto hidden items-center gap-3 @2xl:flex" aria-label="Legend">
+        <ul className="ml-auto hidden items-center gap-3 @xl:flex" aria-label="Legend">
           {(["todo", "doing", "review", "done", "failed"] as const).map((s) => {
             const Icon = STATUS[s].icon;
             return (
@@ -125,7 +125,7 @@ export const PlanGraph = memo(function PlanGraph({
             if (focusId) scrollToNode(focusId, true);
           }}
           className={cn(
-            "ml-auto inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors @2xl:ml-0",
+            "ml-auto inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors @xl:ml-0",
             follow
               ? "border-accent/40 bg-accent-soft text-accent"
               : "border-border text-muted hover:bg-hover hover:text-fg",

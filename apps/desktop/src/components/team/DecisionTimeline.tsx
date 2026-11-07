@@ -86,6 +86,17 @@ export function DecisionTimeline({
     else if (added > 0) setUnseen((u) => u + added);
   }, [items.length]);
 
+  // Resizing the window or a panel keeps the newest entry in view while following.
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const follow = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    follow.observe(el);
+    return () => follow.disconnect();
+  }, []);
+
   // A new filter starts at the newest entry.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the filter changes.
   useEffect(() => {
@@ -145,7 +156,7 @@ export function DecisionTimeline({
           onScroll={onScroll}
           tabIndex={0}
           aria-label={filter ? `Decisions by ${agentName(filter)}, oldest first` : "Decisions, oldest first"}
-          className="h-full max-h-[32rem] overflow-y-auto px-4 py-3 @4xl:max-h-none"
+          className="h-full max-h-[32rem] overflow-y-auto px-4 py-3 @3xl:max-h-none"
         >
           {items.length === 0 ? (
             <p className="py-8 text-center text-xs leading-relaxed text-muted">

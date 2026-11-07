@@ -112,7 +112,11 @@ export function liveTeam(
     const newer = recent && (!a.actionAt || recent.ts >= a.actionAt);
     const any = lastAny.get(a.id);
     let state = a.state;
-    const writing = any && (any.type === "thinking" || (any.ephemeral && any.type === "planning"));
+    // The model is writing (streamed text) or reading the prompt ("Waiting for the model" lines).
+    const writing =
+      any &&
+      (any.type === "thinking" ||
+        (any.ephemeral && any.type === "planning" && typeof any.details?.jobId === "string"));
     if (active && state === "working" && writing) state = "thinking";
     return {
       ...a,

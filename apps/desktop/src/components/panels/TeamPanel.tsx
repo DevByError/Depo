@@ -91,7 +91,9 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
   const nodes = useMemo(() => new Map((view.plan?.nodes ?? []).map((n) => [n.id, n])), [view.plan]);
   const totals = teamTotals(view);
   const elapsed = view.agents.find((a) => a.id === "manager")?.workMs ?? 0;
-  const waiting = view.status === "waiting" && view.agents.some((a) => a.state === "waiting");
+  // An open approval (the plan, or a command) puts the run on hold until the person answers.
+  const waitingFor = active ? view.agents.find((a) => a.state === "waiting") : undefined;
+  const status: TaskStatus = waitingFor ? "waiting" : view.status;
 
   const showNode = (id: string) => {
     setHighlight(id);
@@ -106,7 +108,7 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
-              STATUS_STYLE[view.status],
+              STATUS_STYLE[status],
             )}
             data-testid="team-status"
           >
@@ -116,16 +118,16 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
                 <span className="relative inline-flex size-1.5 rounded-full bg-current" />
               </span>
             )}
-            {TASK_STATUS_TEXT[view.status]}
+            {TASK_STATUS_TEXT[status]}
           </span>
           <span className="shrink-0 text-xs text-subtle">{MODE_LABEL[view.mode] ?? view.mode}</span>
         </div>
         {view.plan?.summary && (
-          <p className="mt-1 line-clamp-2 max-w-4xl text-xs leading-relaxed text-muted">
+          <p className="mt-1 line-clamp-1 max-w-4xl text-xs text-muted" title={view.plan.summary}>
             {view.plan.summary}
           </p>
         )}
-        <dl className="mt-3 grid grid-cols-2 gap-2 @xl:grid-cols-3 @4xl:grid-cols-5">
+        <dl className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-2">
           <Stat label="Progress">
             <span>
               {totals.done}
@@ -143,19 +145,27 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
             <span className="text-subtle"> of {totals.agents}</span>
           </Stat>
           <Stat label="Decisions">{totals.decisions}</Stat>
-          <Stat label="Reviews">
+          <Stat
+            label={
+              <>
+                Reviews
+                {totals.changes > 0 && <span className="text-warning"> · {totals.changes} sent back</span>}
+              </>
+            }
+          >
             {totals.approved}
             <span className="text-xs font-normal text-subtle"> approved</span>
-            {totals.changes > 0 && (
-              <span className="text-xs font-normal text-warning"> · {totals.changes} sent back</span>
-            )}
           </Stat>
           <Stat label={active ? "Elapsed" : "Run time"}>{formatDuration(elapsed)}</Stat>
         </dl>
-        {waiting && (
+        {waitingFor && (
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-fg">
             <Hourglass className="size-3.5 shrink-0 text-warning" aria-hidden />
-            <span className="min-w-0 flex-1">The Manager is waiting for you to approve the plan.</span>
+            <span className="min-w-0 flex-1">
+              {waitingFor.id === "manager"
+                ? "The Manager is waiting for you to approve the plan."
+                : `${waitingFor.name} is waiting for your approval.`}
+            </span>
             <Button size="sm" variant="secondary" onClick={() => setCenterTab("chat")}>
               Review in Chat
             </Button>
@@ -166,17 +176,17 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
       <section
         tabIndex={0}
         aria-label="Team view"
-        className="min-h-0 flex-1 overflow-y-auto @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)] @4xl:grid-rows-1 @4xl:overflow-hidden"
+        className="min-h-0 flex-1 overflow-y-auto @3xl:grid @3xl:grid-cols-[minmax(0,1fr)_minmax(17rem,21rem)] @3xl:grid-rows-1 @3xl:overflow-hidden"
       >
         <section
           tabIndex={0}
           aria-label="Plan and agents"
-          className="flex min-w-0 flex-col gap-4 p-4 @4xl:min-h-0 @4xl:overflow-y-auto"
+          className="flex min-w-0 flex-col gap-4 p-4 @3xl:min-h-0 @3xl:overflow-y-auto"
         >
           {view.plan ? (
             <PlanGraph plan={view.plan} highlight={highlight} reducedMotion={reduced} />
           ) : (
-            <div className="flex items-center gap-3 rounded-xl border border-dashed border-border-strong bg-panel px-4 py-5">
+            <div className="flex shrink-0 items-center gap-3 rounded-xl border border-dashed border-border-strong bg-panel px-4 py-5">
               <AgentAvatar id="manager" name="Manager" busy />
               <div className="min-w-0">
                 <p className="text-[13px] font-medium text-fg">The Manager is planning the work</p>
@@ -185,7 +195,7 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
             </div>
           )}
 
-          <section aria-labelledby="team-agents-title">
+          <section aria-labelledby="team-agents-title" className="shrink-0">
             <div className="mb-2 flex items-baseline gap-2">
               <h3 id="team-agents-title" className="text-xs font-semibold text-fg">
                 Agents
@@ -196,7 +206,7 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
                   : "Select a card to see only that agent's decisions."}
               </span>
             </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(15.5rem,1fr))] gap-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2.5">
               {view.agents.map((a) => (
                 <AgentCard
                   key={a.id}
@@ -210,7 +220,7 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
           </section>
         </section>
 
-        <div className="flex min-h-0 flex-col border-t border-border bg-panel @4xl:border-t-0 @4xl:border-l">
+        <div className="flex min-h-0 flex-col border-t border-border bg-panel @3xl:border-t-0 @3xl:border-l">
           <DecisionTimeline
             decisions={view.decisions}
             nodes={nodes}
@@ -225,7 +235,7 @@ function MissionControl({ view, taskId }: { view: LiveTeam; taskId: string }) {
   );
 }
 
-function Stat({ label, children }: { label: string; children: ReactNode }) {
+function Stat({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="min-w-0 rounded-lg border border-border bg-bg px-3 py-2">
       <dt className="truncate text-[11px] text-subtle">{label}</dt>
