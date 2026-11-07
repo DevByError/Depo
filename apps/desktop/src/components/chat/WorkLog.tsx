@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { Markdown } from "@/components/panels/Markdown";
+import { PageCheckStep } from "@/components/qa/PageCheckView";
 import { cn } from "@/lib/cn";
 import {
   describeNote,
@@ -476,6 +477,8 @@ function StepDetails({ item, summary }: { item: ChatItem; summary: StepSummary }
             />
           ))}
         </div>
+      ) : tool === "check_page" && !item.isError ? (
+        <PageCheckStep text={item.text} />
       ) : content !== null ? (
         <Output label={`Content written to ${path ?? "the file"}`} className="text-fg">
           {content}

@@ -117,6 +117,28 @@ export function MemorySetting() {
   );
 }
 
+/** Whether Depo starts a task's private copy when its changes are ready (preview.auto_start). */
+export function PreviewSetting() {
+  const s = useSetting<boolean>("preview.auto_start", true);
+  return (
+    <fieldset className="mt-5">
+      <legend className="mb-1 text-xs font-medium text-fg">Preview</legend>
+      <label className="flex items-center gap-2 text-[13px] text-muted">
+        <input
+          type="checkbox"
+          checked={s.value}
+          disabled={s.disabled}
+          onChange={(e) => s.set(e.target.checked)}
+        />
+        Start the app when changes are ready, so I can try them before I apply them
+      </label>
+      <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+        Only for apps that need nothing installed first. It stops when you apply or discard the changes.
+      </p>
+    </fieldset>
+  );
+}
+
 export function NotificationSetting() {
   const s = useSetting<boolean>("notify.enabled", true);
   const setEnabled = useNotifications((n) => n.setEnabled);

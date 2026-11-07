@@ -110,6 +110,9 @@ function invalidateFor(type: string, status: string): void {
   if (type === "preview_started" || type === "preview_stopped") {
     void queryClient.invalidateQueries({ queryKey: ["previews"] });
   }
+  if (type === "rendering_screenshot" && status !== "started") {
+    void queryClient.invalidateQueries({ queryKey: ["qa", "list"] });
+  }
 }
 
 async function onConnected() {
