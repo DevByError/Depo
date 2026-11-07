@@ -958,7 +958,11 @@ export class TeamRunner {
 
     while (!signal.aborted) {
       // The owner's notes first: the Manager may add or drop tasks before more of them start.
-      if (input.notes) await this.handleNotes(input, plan, baseEmit(this.tag("manager")), save);
+      if (input.notes) {
+        await this.handleNotes(input, plan, baseEmit(this.tag("manager")), save);
+        byId.clear();
+        for (const n of plan.nodes) byId.set(n.id, n);
+      }
       if (signal.aborted) break;
       // Nodes whose dependencies failed can never run.
       for (const n of plan.nodes) {
