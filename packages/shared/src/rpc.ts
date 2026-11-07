@@ -312,6 +312,11 @@ export const ChatItemSchema = z.object({
   /** `backend@1.0.0` when the message comes from a team agent. */
   agent: z.string().nullable().default(null),
   createdAt: z.string(),
+  /**
+   * Tool items only: the arguments the agent passed to the tool (long strings clipped), so the chat
+   * can say "Ran python -m pytest -q" or show an edit as a diff. Untrusted data: display it as text.
+   */
+  args: z.record(z.string(), JsonValueSchema).optional(),
 });
 export type ChatItem = z.infer<typeof ChatItemSchema>;
 

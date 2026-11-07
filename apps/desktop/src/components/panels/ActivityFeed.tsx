@@ -20,7 +20,7 @@ import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import { EVENT_STYLE, TONE_TEXT } from "@/lib/event-style";
 import { formatBytes, formatClock, formatDuration } from "@/lib/format";
-import { useStickToBottom } from "@/lib/use-stick-to-bottom";
+import { useFollowList } from "@/lib/use-follow-list";
 import { useTaskTitles } from "@/lib/use-task-titles";
 import { useEngine } from "@/store/engine";
 import { type FeedScope, useUi } from "@/store/ui";
@@ -184,7 +184,7 @@ export function ActivityFeed() {
     overscan: 12,
     getItemKey: (i) => items[i]?.key ?? i,
   });
-  const stick = useStickToBottom(items.length, items.at(-1)?.key ?? null, () => {
+  const stick = useFollowList(items.length, items.at(-1)?.key ?? null, () => {
     if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: "end" });
   });
 

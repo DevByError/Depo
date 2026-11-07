@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { useStickToBottom } from "./use-stick-to-bottom";
+import { useFollowList } from "./use-follow-list";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -8,7 +8,7 @@ test("follows new rows only while the reader is at the bottom", () => {
   let now = 1000;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   const scroll = vi.fn();
-  const { result, rerender } = renderHook(({ count, last }) => useStickToBottom(count, last, scroll), {
+  const { result, rerender } = renderHook(({ count, last }) => useFollowList(count, last, scroll), {
     initialProps: { count: 3, last: "c" },
   });
   // The backlog on mount is followed.

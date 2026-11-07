@@ -36,7 +36,7 @@ import {
   taskChip,
   toggleLevel,
 } from "@/lib/logs";
-import { useStickToBottom } from "@/lib/use-stick-to-bottom";
+import { useFollowList } from "@/lib/use-follow-list";
 import { useTaskTitles } from "@/lib/use-task-titles";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
@@ -171,7 +171,7 @@ export function LogsPanel() {
     getItemKey: (i) => view.lines[i]?.id ?? i,
   });
   // Follows new lines (live, or after a new search) only while the reader is at the bottom.
-  const stick = useStickToBottom(view.lines.length, view.lines.at(-1)?.id ?? null, () => {
+  const stick = useFollowList(view.lines.length, view.lines.at(-1)?.id ?? null, () => {
     if (view.lines.length > 0) virtualizer.scrollToIndex(view.lines.length - 1, { align: "end" });
   });
   stickReset.current = stick.reset;
