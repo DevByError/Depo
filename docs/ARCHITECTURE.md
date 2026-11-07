@@ -187,3 +187,19 @@ packages/engine/src/
 Flow of a team task: `tasks.send(mode)` creates the shadow workspace, then `TeamRunner.run` asks the Manager for a plan, optionally waits for the user's approval, runs ready nodes in parallel (limit `team.parallel`), reviews each node with a different agent, loops on blocking findings up to `team.fix_loops`, and finishes with the Manager's summary and one change set for Diff Review. Per-run extras (skills, MCP tools, knowledge search, dependency check) are merged by one provider in `engine.ts` and given to both the coder and the team agents.
 
 Tables added: migration 4 (`blackboard`, `blackboard_history`, `agent_messages`, `tasks.mode`, `tasks.plan`) and migration 5 (`skills`, `skill_assignments`, `mcp_servers`, `knowledge_packs`, `knowledge_fts`, `osv_vulns`, `osv_meta`).
+
+## Playbooks and automatic memory
+
+```
+packages/engine/src/
+  playbooks/core/*.md    one core per agent (and the coder): mission, definition of done, checklist, what to avoid
+  playbooks/topics/*.md  27 topics with a small header (title, summary, agents, triggers, when)
+  playbooks/index.ts     loading, topic choice, budgets, the read_playbook tool's answers
+  playbooks/plan.ts      the production bar: planning guide for the Manager and extra criteria per task
+  agent/stack.ts         stack detection (languages, frameworks, databases, package manager, test and run commands, ports)
+  memory/auto.ts         memory.auto: facts and a model summary after each task, preferences from reasons
+```
+
+Knowledge loads in steps so small local models are not flooded. Every system prompt has the agent's core and a one-line list of topics. Topic sections are added only when the model's context allows it (none up to 8k tokens, 1 up to 16k, 2 above), chosen by the request text, the detected stack and the agent's own field, and trimmed at a heading or paragraph. Anything else is one `read_playbook` call away (`{topic}`, `{query}`, or nothing to list). Build plans (full, backend, frontend, ai) get the production bar: accounts, roles, validation, errors, pagination, seed data, tests, README and run script, accessible UI states, OpenAPI, as testable criteria. Reviewers check work against the owner's definition of done.
+
+After a single or team task ends in review or done (never cancelled or declined), `AutoMemory` saves facts read from the files (stack, package manager, the test command that passed, run command, ports, layout; keyed `auto:*` in `memory_facts.signature`), then asks the fast or coder model, at background priority, for at most 5 items as JSON. Items are cleaned, checked for secrets, deduplicated (same normalised text or token Jaccard of 0.8 or more updates instead of adding), stored with source `auto`, capped at 40 per project, and announced with one `memory_updated` event. A reason given when declining a command or plan, or when discarding changes, becomes a preference; a discard also re-reads the facts from the real project. Setting `memory.auto` (default on) turns it off. No migration: `source` is a text column.

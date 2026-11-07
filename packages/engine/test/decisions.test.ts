@@ -516,16 +516,20 @@ describe("decision events from a team run", () => {
     const t = parsed.data;
     expect(t.status).toBe("review");
     expect(t.decisions.map((d) => d.id)).toEqual(decisions.map((d) => d.id));
-    expect(t.agents.map((a) => a.id)).toEqual([
-      "manager",
-      "project-management",
-      "thinking",
-      "database",
-      "backend",
-      "testing",
-      "reasoning",
-      "security",
-    ]);
+    // The Manager leads; the rest follow plan order, which the production bar may reshuffle.
+    expect(t.agents[0]?.id).toBe("manager");
+    expect(t.agents.map((a) => a.id).sort()).toEqual(
+      [
+        "manager",
+        "project-management",
+        "thinking",
+        "database",
+        "backend",
+        "testing",
+        "reasoning",
+        "security",
+      ].sort(),
+    );
     const by = Object.fromEntries(t.agents.map((a) => [a.id, a]));
     expect(by.backend).toMatchObject({ done: 1, total: 1, state: "idle" });
     expect(by.backend?.lastDecision?.text).toBe("Backend: Hashed the passwords before storing them.");

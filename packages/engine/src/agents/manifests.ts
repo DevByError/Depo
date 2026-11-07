@@ -1,6 +1,16 @@
 import type { AgentGroup, AgentId, AgentManifest, WorkMode } from "@depo/shared";
+import { corePrompt } from "../playbooks";
 
-const READ = ["read_file", "list_dir", "find_files", "search", "repo_map", "find_symbol", "semantic_search"];
+const READ = [
+  "read_file",
+  "list_dir",
+  "find_files",
+  "search",
+  "repo_map",
+  "find_symbol",
+  "semantic_search",
+  "read_playbook",
+];
 const WRITE = ["write_file", "edit_file", "delete_file"];
 const RUN = ["run_command", "git_status", "git_diff"];
 const BLOCK_TOOLS = ["list_blocks", "use_block"];
@@ -41,7 +51,9 @@ function m(
     group,
     role,
     mission,
-    prompt: `${COMMON}\n\nYou are the ${name} agent. ${mission}\n${body}`,
+    // The core playbook (definition of done, checklist, anti-patterns) is always in the prompt;
+    // topic sections are loaded on demand (read_playbook) or added for the stack (team.ts).
+    prompt: `${COMMON}\n\nYou are the ${name} agent. ${mission}\n${body}\n\n${corePrompt(id)}`,
     tools,
     reviewers,
     writes,

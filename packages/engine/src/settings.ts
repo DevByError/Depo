@@ -28,6 +28,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "ui.onboarded": false,
   /** Lowest engine log level written to the log files: "debug", "info", "warn" or "error". */
   "logs.level": "info",
+  /** After each finished task, remember durable facts about the project by itself (stack, commands, decisions). */
+  "memory.auto": true,
 };
 
 export class SettingsRepo {

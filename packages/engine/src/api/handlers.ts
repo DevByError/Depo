@@ -18,6 +18,7 @@ import type { OsvService } from "../knowledge/osv";
 import type { KnowledgeService } from "../knowledge/service";
 import type { LogService } from "../logs/service";
 import type { McpManager } from "../mcp/manager";
+import { readableDir } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { PreviewManager } from "../preview/manager";
@@ -152,7 +153,13 @@ export const handlers: Handlers = {
   "models.benchmark": async (p, ctx) => ({ benchmark: await ctx.models.benchmark(p) }),
 
   "approvals.list": (_p, ctx) => ({ approvals: ctx.approvals.list() }),
-  "approvals.respond": (p, ctx) => ({ ok: ctx.approvals.respond(p.id, p.approve) }),
+  "approvals.respond": (p, ctx) => {
+    const req = ctx.approvals.list().find((a) => a.id === p.id);
+    const ok = ctx.approvals.respond(p.id, p.approve);
+    // A decline with a reason teaches Depo a preference (memory.auto).
+    if (ok && !p.approve && req && p.reason) ctx.tasks.autoMemory?.learnFromDecline(req, p.reason);
+    return { ok };
+  },
 
   "projects.list": async (p, ctx) => ({ projects: await ctx.projects.list(p.includeArchived ?? false) }),
   "projects.open": async (p, ctx) => {
@@ -247,7 +254,15 @@ export const handlers: Handlers = {
   "changes.list": (p, ctx) => ({ changeSets: ctx.projects.listChangeSets(p.projectId) }),
   "changes.get": (p, ctx) => ctx.projects.getChangeSet(p.id),
   "changes.apply": (p, ctx) => ctx.projects.applyChangeSet(p.id, ctx.projects.workspaceFor(p.id), p.files),
-  "changes.discard": (p, ctx) => ctx.projects.discardChangeSet(p.id),
+  "changes.discard": async (p, ctx) => {
+    const cs = ctx.projects.discardChangeSet(p.id);
+    // Facts read from the discarded work no longer hold; a reason becomes a preference.
+    if (ctx.tasks.autoMemory?.enabled()) {
+      const root = (await ctx.projects.list(true)).find((x) => x.id === cs.projectId)?.rootPath ?? null;
+      ctx.tasks.autoMemory.learnFromDiscard(cs, p.reason, readableDir(root));
+    }
+    return cs;
+  },
   "tasks.list": (p, ctx) => ({ tasks: ctx.tasks.list(p.projectId) }),
   "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),

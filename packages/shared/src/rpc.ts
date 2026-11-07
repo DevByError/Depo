@@ -176,7 +176,8 @@ export const MemoryFactSchema = z.object({
   kind: MemoryKindSchema,
   text: z.string(),
   signature: z.string().nullable(),
-  source: z.enum(["user", "agent", "system"]),
+  /** auto = Depo remembered it by itself after a task (memory.auto). */
+  source: z.enum(["user", "agent", "system", "auto"]),
   uses: z.number().int(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -975,7 +976,8 @@ const ProjectMethods = {
     }),
   },
   "changes.discard": {
-    params: z.object({ id: z.string() }).strict(),
+    /** reason: optional; when given, Depo remembers it as a preference (memory.auto). */
+    params: z.object({ id: z.string(), reason: z.string().trim().max(500).optional() }).strict(),
     result: ChangeSetSchema,
   },
   "checkpoints.list": {
@@ -1011,7 +1013,10 @@ const ApprovalMethods = {
     result: z.object({ approvals: z.array(PendingApprovalSchema) }),
   },
   "approvals.respond": {
-    params: z.object({ id: z.string(), approve: z.boolean() }).strict(),
+    /** reason: optional, for a decline; Depo remembers it as a preference (memory.auto). */
+    params: z
+      .object({ id: z.string(), approve: z.boolean(), reason: z.string().trim().max(500).optional() })
+      .strict(),
     result: z.object({ ok: z.boolean() }),
   },
 } as const;

@@ -26,6 +26,7 @@ import type { AppDb } from "../db";
 import { messages, projects, tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
 import { type Logger, withLogContext } from "../logger";
+import { AutoMemory } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelScheduler } from "../scheduler/scheduler";
@@ -66,6 +67,13 @@ export interface TaskManagerOptions {
 const MEMORY_BUDGET = 5000;
 const REPO_MAP_BUDGET = 3500;
 
+/** Small contexts (8k) get smaller memory and repo map blocks, so the conversation still fits. */
+export function promptBudgets(contextLength: number): { memory: number; repoMap: number } {
+  return contextLength <= 8192
+    ? { memory: 2000, repoMap: 1500 }
+    : { memory: MEMORY_BUDGET, repoMap: REPO_MAP_BUDGET };
+}
+
 /**
  * Runs coding tasks: one agent, one shadow workspace per task, a tool loop until the model
  * stops calling tools, then a change set for review. Follow-up messages continue the same task.
@@ -76,10 +84,22 @@ export class TaskManager {
   private readonly log: Logger;
   readonly blackboard: Blackboard;
   private readonly team: TeamRunner;
+  /** Remembers what finished tasks taught (memory.auto); null without a memory store. */
+  readonly autoMemory: AutoMemory | null;
 
   constructor(private readonly o: TaskManagerOptions) {
     this.log = o.logger.child({ component: "tasks" });
     this.blackboard = new Blackboard(o.db);
+    this.autoMemory = o.memory
+      ? new AutoMemory({
+          db: o.db,
+          logger: this.log,
+          memory: o.memory,
+          models: o.models,
+          scheduler: o.scheduler,
+          enabled: () => o.settings?.get("memory.auto") !== false,
+        })
+      : null;
     this.team = new TeamRunner({
       db: o.db,
       bus: o.bus,
@@ -95,12 +115,17 @@ export class TaskManager {
       addMessage: (taskId, msg, agent) => this.addMessage(taskId, msg as ChatMessage, undefined, agent),
       knowledge: (id) => this.knowledge(id),
       lessons: (id) => this.lessonTracker(id),
-      memoryContext: (id) => o.memory?.contextFor(id, MEMORY_BUDGET).trim() ?? "",
-      repoMap: (id) => o.indexer?.repoMap(id, REPO_MAP_BUDGET).trim() ?? "",
+      memoryContext: (id) => o.memory?.contextFor(id, this.teamBudgets().memory).trim() ?? "",
+      repoMap: (id) => o.indexer?.repoMap(id, this.teamBudgets().repoMap).trim() ?? "",
       ...(o.extras ? { extras: o.extras } : {}),
       manifest: o.manifest,
       ...(o.previews ? { previews: o.previews } : {}),
     });
+  }
+
+  /** Prompt budgets for team agents, from the coder model's context (the smallest usually). */
+  private teamBudgets() {
+    return promptBudgets(this.o.models.resolve("coder")?.contextLength ?? DEFAULT_CONTEXT);
   }
 
   /** Skills, MCP tools and knowledge for the single coding agent. */
@@ -369,6 +394,7 @@ export class TaskManager {
   async cancelAll(): Promise<void> {
     for (const ctl of this.running.values()) ctl.abort();
     await Promise.allSettled([...this.done.values()]);
+    await this.autoMemory?.stop();
   }
 
   // ---- the loop --------------------------------------------------------------------------
@@ -420,10 +446,11 @@ export class TaskManager {
     const settings = this.o.projectSettings?.(project.id);
     this.o.indexer?.ensure(project.id);
     const history = this.loadHistory(taskId);
+    const request = requestText(row.prompt, history);
     // The system prompt is rebuilt on every run so it carries the latest memory and repo map.
     const sys: ChatMessage = {
       role: "system",
-      content: this.systemPrompt(project.id, project.name, ws.root),
+      content: this.systemPrompt(project.id, project.name, ws.root, contextLength, request),
     };
     if (history[0]?.role !== "system") {
       history.unshift(sys);
@@ -484,7 +511,15 @@ export class TaskManager {
       .set({ summary: finalText.slice(0, 4000), updatedAt: new Date().toISOString() })
       .where(eq(tasks.id, taskId))
       .run();
-    this.finishChanges(project.id, taskId, ws, row.title, emit, (cs) => (cs ? "review" : "done"));
+    const cs = this.finishChanges(project.id, taskId, ws, row.title, emit, (c) => (c ? "review" : "done"));
+    this.autoMemory?.afterTask({
+      projectId: project.id,
+      taskId,
+      request,
+      finalText,
+      root: ws.root,
+      files: cs?.files ?? [],
+    });
   }
 
   /** Team modes: the Manager plans, the agents work through the task graph, reviewers sign off. */
@@ -528,7 +563,16 @@ export class TaskManager {
       emit({ type: "handoff", text: "Plan declined: nothing was built", status: "cancelled" });
       return;
     }
-    this.finishChanges(project.id, taskId, ws, row.title, emit, (cs) => (cs ? "review" : "done"));
+    const cs = this.finishChanges(project.id, taskId, ws, row.title, emit, (c) => (c ? "review" : "done"));
+    this.autoMemory?.afterTask({
+      projectId: project.id,
+      taskId,
+      request: lastUser?.text ?? row.prompt,
+      finalText: res.finalText,
+      notes: this.blackboard.read(project.id, "decisions.md")?.content ?? "",
+      root: ws.root,
+      files: cs?.files ?? [],
+    });
   }
 
   private finishChanges(
@@ -559,11 +603,18 @@ export class TaskManager {
 
   // ---- memory, index and lessons ---------------------------------------------------------
 
-  private systemPrompt(projectId: string, projectName: string, root: string): string {
-    const parts = [codingSystemPrompt({ projectName, root })];
-    const memory = this.o.memory?.contextFor(projectId, MEMORY_BUDGET).trim();
+  private systemPrompt(
+    projectId: string,
+    projectName: string,
+    root: string,
+    contextLength: number = DEFAULT_CONTEXT,
+    request = "",
+  ): string {
+    const budgets = promptBudgets(contextLength);
+    const parts = [codingSystemPrompt({ projectName, root, contextLength, request })];
+    const memory = this.o.memory?.contextFor(projectId, budgets.memory).trim();
     if (memory) parts.push(`# What you know about this project\n${memory}`);
-    const map = this.o.indexer?.repoMap(projectId, REPO_MAP_BUDGET).trim();
+    const map = this.o.indexer?.repoMap(projectId, budgets.repoMap).trim();
     if (map) {
       parts.push(
         `# Repo map (files and their main symbols; use repo_map, find_symbol and semantic_search for more)\n${map}`,
@@ -691,6 +742,12 @@ export class TaskManager {
       status: "failed",
     });
   }
+}
+
+/** The task's request: the first message, plus the newest follow-up when there is one. */
+function requestText(prompt: string, history: ChatMessage[]): string {
+  const last = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+  return last && last !== prompt ? `${prompt}\n${last}` : prompt;
 }
 
 function toTask(r: typeof tasks.$inferSelect): Task {

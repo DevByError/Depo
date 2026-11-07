@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
 import { firstLine, getLogger } from "../logger";
+import { readPlaybook } from "../playbooks";
 import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
@@ -517,6 +518,25 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     async run(a, ctx) {
       needKnowledge(ctx).remember(a.kind, a.text);
       return "Saved to project memory.";
+    },
+  }),
+  tool({
+    name: "read_playbook",
+    description:
+      "Read Depo's engineering playbooks: concrete, current practice for stacks and tasks (FastAPI, Django, Express, NestJS, Next.js, React, PostgreSQL, MongoDB, Redis, auth, roles, testing, OWASP, performance, accessibility, Docker, docs, local AI). Give a topic to read it, a query to find the best match, or nothing to list the topics.",
+    schema: z.object({
+      topic: z.string().max(80).optional().describe("Topic id, e.g. fastapi, auth, postgres, or an agent id"),
+      query: z.string().max(200).optional().describe("What you need, e.g. 'refresh token rotation'"),
+    }),
+    async run(a, ctx) {
+      const r = readPlaybook(a);
+      emit(ctx, {
+        type: "searching",
+        text: r.found ? `Playbook: ${r.title}` : `Playbook: nothing for "${a.topic ?? a.query ?? ""}"`,
+        details: { topic: a.topic ?? null, query: a.query ?? null, found: r.found },
+        status: "succeeded",
+      });
+      return r.text;
     },
   }),
   tool({

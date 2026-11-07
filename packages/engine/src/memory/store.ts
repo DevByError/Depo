@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type MemoryFact, MemoryFactSchema, type MemoryKind, newId } from "@depo/shared";
+import { type JsonValue, type MemoryFact, MemoryFactSchema, type MemoryKind, newId } from "@depo/shared";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { AppDb } from "../db";
 import { memoryFacts } from "../db/schema";
@@ -144,6 +144,84 @@ export class MemoryStore {
     return toFact(row);
   }
 
+  // ---- remembered by itself (memory.auto) ----------------------------------------------------
+
+  /**
+   * Save an item Depo found by itself, without an event per item (the caller announces a summary).
+   * With a key (e.g. "auto:test-command") the keyed item is updated in place. Otherwise an item
+   * that says the same thing as an existing one (same normalised text, or token overlap of 80% or
+   * more) is not added again: an auto item is refreshed with the new wording, anything the user or
+   * an agent wrote is left as it is. A change of case or punctuation only counts as unchanged.
+   */
+  upsertAuto(
+    projectId: string,
+    kind: Exclude<MemoryKind, "lesson">,
+    text: string,
+    key: string | null = null,
+  ): { fact: MemoryFact; change: "added" | "updated" | "unchanged" } {
+    const clean = text.trim();
+    const existing = this.list(projectId, ["fact", "decision", "preference"]);
+    const now = new Date().toISOString();
+    const same =
+      (key ? existing.find((f) => f.signature === key) : undefined) ??
+      existing.find((f) => isDuplicate(f.text, clean) && (!key || !f.signature?.startsWith("auto:")));
+    if (same) {
+      // Only auto items are refreshed, and only when the wording really changed (not case or punctuation).
+      if (same.source !== "auto" || normalizeMemoryText(same.text) === normalizeMemoryText(clean))
+        return { fact: same, change: "unchanged" };
+      this.db
+        .update(memoryFacts)
+        .set({ text: clean, kind, updatedAt: now })
+        .where(eq(memoryFacts.id, same.id))
+        .run();
+      return { fact: this.getFact(same.id), change: "updated" };
+    }
+    const id = newId("mem");
+    this.db
+      .insert(memoryFacts)
+      .values({
+        id,
+        projectId,
+        kind,
+        text: clean,
+        signature: key,
+        source: "auto",
+        uses: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    return { fact: this.getFact(id), change: "added" };
+  }
+
+  /** Remove a keyed auto item (a fact that no longer holds, e.g. after the changes were discarded). */
+  removeAutoKey(projectId: string, key: string): boolean {
+    const row = this.list(projectId).find((f) => f.signature === key && f.source === "auto");
+    if (!row) return false;
+    this.db.delete(memoryFacts).where(eq(memoryFacts.id, row.id)).run();
+    return true;
+  }
+
+  /** Keep at most `max` auto items per project: the oldest go first. User and agent items stay. */
+  pruneAuto(projectId: string, max: number): number {
+    const auto = this.list(projectId).filter((f) => f.source === "auto");
+    const extra = auto.slice(max);
+    for (const f of extra) this.db.delete(memoryFacts).where(eq(memoryFacts.id, f.id)).run();
+    return extra.length;
+  }
+
+  /** One memory_updated event for the activity feed and the Memory panel. */
+  announce(projectId: string | null, text: string, details: Record<string, JsonValue> = {}): void {
+    this.bus.emit({
+      projectId,
+      agent: "engine",
+      type: "memory_updated",
+      text,
+      details: { scope: projectId ? "project" : "global", ...details },
+      status: "succeeded",
+    });
+  }
+
   // ---- lessons learned -----------------------------------------------------------------------
 
   /** Store how a failing check was fixed. A lesson with the same signature is refreshed, not duplicated. */
@@ -223,6 +301,32 @@ function toFact(r: typeof memoryFacts.$inferSelect): MemoryFact {
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   });
+}
+
+/** Lower-case words and numbers only, accents removed: "Uses Postgres!" and "uses postgres" match. */
+export function normalizeMemoryText(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Token overlap (Jaccard) of two texts after normalising: 1 = the same words. */
+export function tokenJaccard(a: string, b: string): number {
+  const ta = new Set(normalizeMemoryText(a).split(" ").filter(Boolean));
+  const tb = new Set(normalizeMemoryText(b).split(" ").filter(Boolean));
+  if (ta.size === 0 && tb.size === 0) return 1;
+  let both = 0;
+  for (const t of ta) if (tb.has(t)) both++;
+  return both / (ta.size + tb.size - both);
+}
+
+/** Do two memory items say the same thing? Same normalised text, or 80% or more word overlap. */
+export function isDuplicate(a: string, b: string): boolean {
+  const na = normalizeMemoryText(a);
+  return na === normalizeMemoryText(b) || tokenJaccard(a, b) >= 0.8;
 }
 
 /**
