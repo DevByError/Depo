@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import { askText, changeText, type LineSelection, pathLine } from "@/lib/code-actions";
 import { call } from "@/lib/engine";
 import { languageForPath, languageLabel } from "@/lib/highlight/languages";
+import type { Token } from "@/lib/highlight/tokens";
 import { useHighlight } from "@/lib/highlight/use-highlight";
 import { copyText } from "@/lib/open-url";
 import { prefill } from "@/store/composer";
@@ -292,7 +293,7 @@ function FileLines({
   projectId: string;
   path: string;
   lines: string[];
-  tokens: Parameters<typeof CodeLines>[0]["tokens"];
+  tokens: Token[][] | null;
   langLabel: string | null;
   large: boolean;
   truncated: boolean;
