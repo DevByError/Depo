@@ -708,7 +708,7 @@ const RISKY: [RegExp, string][] = [
   ],
   [/(^|\/)\.env(\.[\w-]+)?$|(^|\/)env\.(example|sample|template)$/i, "Environment file"],
   [
-    /(^|[/._-])(auth\w*|login|logout|signin|signup|session|passwords?|passwd|oauth\d?|jwt|tokens?|permissions?|rbac|acl|crypto|secrets?)([/._-]|$)/i,
+    /(^|[/._-])(auth|authn|authz|authentication|authori[sz]ation|login|logout|signin|signup|sessions?|passwords?|passwd|oauth\d?|jwt|permissions?|rbac|acl|crypto|secrets?)([/._-]|$)/i,
     "Auth or secrets",
   ],
 ];

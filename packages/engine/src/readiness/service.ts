@@ -554,7 +554,7 @@ export class ReadinessService implements ReadinessHooks {
     if (want("page")) checks.push(pageCheck({ page, ui, changedAfter, action: act.page, now }));
     const plan = o.plan !== undefined ? o.plan : this.plan(row);
     if (row.mode !== "single" && plan) {
-      const reviews = this.reviewEvidence(evs);
+      const reviews = this.reviewEvidence(evs, plan);
       if (want("plan")) checks.push(planCheck(plan, agentLabel));
       if (want("reviews")) checks.push(reviewsCheck(plan, reviews, agentLabel));
     }
@@ -599,10 +599,14 @@ export class ReadinessService implements ReadinessHooks {
     }
   }
 
-  private reviewEvidence(evs: StoredEvent[]): ReviewEvidence[] {
+  /** Reviews, send-backs and escalations of the current plan's run (a follow-up plans again). */
+  private reviewEvidence(evs: StoredEvent[], plan: Plan): ReviewEvidence[] {
+    const starts = plan.nodes.map((n) => n.startedAt).filter((t): t is string => !!t);
+    const since = starts.length ? starts.reduce((a, b) => (a < b ? a : b)) : null;
     const out: ReviewEvidence[] = [];
     for (const e of evs) {
       if (e.type !== "decision") continue;
+      if (since && e.ts < since) continue;
       const kind = e.details?.kind;
       if (kind !== "review" && kind !== "send_back" && kind !== "escalate") continue;
       out.push({
