@@ -89,6 +89,8 @@ export interface TeamHost {
   extras?(agentId: string, projectId: string, run: { taskId: string; signal: AbortSignal }): AgentExtras;
   /** Previews of the app being built (start_preview, http_check, stop_preview). */
   previews?: ToolContext["previews"];
+  /** Time estimates learned on this PC: one line for the plan approval message. */
+  eta?: { planNote(plan: Plan, parallel: number): string | null } | undefined;
 }
 
 export interface AgentExtras {
@@ -645,7 +647,12 @@ export class TeamRunner {
       status: "succeeded",
     });
     this.planDecision(input, plan, standard, mgrEmit);
-    this.h.addMessage(taskId, { role: "assistant", content: planText(plan) }, mgrTag);
+    const etaNote = this.etaNote(plan, opts.parallel);
+    this.h.addMessage(
+      taskId,
+      { role: "assistant", content: etaNote ? `${planText(plan)}\n\n${etaNote}` : planText(plan) },
+      mgrTag,
+    );
 
     if (opts.approvePlan && !READ_ONLY_MODES.includes(input.mode)) {
       const ok = await this.h.approvals.request(
@@ -656,8 +663,9 @@ export class TeamRunner {
           kind: "other",
           title: `Start this plan (${plan.nodes.length} tasks)?`,
           reason:
-            [plan.summary, ...plan.questions.map((q) => `Question: ${q}`)].filter(Boolean).join("\n") ||
-            "The Manager prepared a plan.",
+            [plan.summary, etaNote, ...plan.questions.map((q) => `Question: ${q}`)]
+              .filter(Boolean)
+              .join("\n") || "The Manager prepared a plan.",
           details: { plan: plan.nodes.map((n) => `${this.man(n.owner).name}: ${n.title}`).join("\n") },
         },
         signal,
@@ -691,6 +699,16 @@ export class TeamRunner {
     this.h.blackboard.write(projectId, "plan.json", JSON.stringify(plan), mgrTag, taskId);
     const unfinished = plan.nodes.filter((n) => n.status !== "done").length;
     return { finalText, unfinished, declined: false };
+  }
+
+  /** "About 25 to 40 min on this PC." for the plan, or null; an estimate never stops a run. */
+  private etaNote(plan: Plan, parallel: number): string | null {
+    try {
+      return this.h.eta?.planNote(plan, Math.max(1, parallel)) ?? null;
+    } catch (err) {
+      this.h.logger.warn("plan estimate failed", { err });
+      return null;
+    }
   }
 
   // ---- planning ----------------------------------------------------------------------------
@@ -960,6 +978,13 @@ export class TeamRunner {
           n.status = "blocked";
           n.note = `Waiting on "${bad.title}", which did not finish.`;
           save();
+          // Stored, so a replay of the run shows the task stop here too.
+          baseEmit(this.tag("manager"))({
+            type: "planning",
+            text: `${shortTitle(n.title, 60)} is on hold: ${shortTitle(bad.title, 60)} did not finish`,
+            details: { nodeId: n.id, nodeStatus: "blocked" },
+            status: "info",
+          });
         }
       }
       const ready = plan.nodes.filter(

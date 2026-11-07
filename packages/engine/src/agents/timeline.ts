@@ -8,6 +8,7 @@ import {
   type TaskStatus,
   type TeamAgentStat,
   type TeamDecision,
+  type TeamEvent,
   type TeamTimeline,
   type WorkMode,
 } from "@depo/shared";
@@ -219,4 +220,101 @@ export function loadTimelineEvents(
     sql`SELECT min(ts) AS first, max(ts) AS last FROM events WHERE project_id = ${projectId} AND task_id = ${taskId}`,
   );
   return { events, latest, span: { first: span?.first ?? null, last: span?.last ?? null } };
+}
+
+/** Detail keys the replay needs; everything else (command text, output chunks, file lists) stays out. */
+const REPLAY_KEYS = [
+  "kind",
+  "nodeId",
+  "outcome",
+  "reason",
+  "items",
+  "attempt",
+  "attempts",
+  "verdict",
+  "status",
+  "nodeStatus",
+  "to",
+  "owner",
+  "reviewer",
+  "plan",
+  "nodes",
+  "tasks",
+  "approvalId",
+  "approved",
+  "blocking",
+] as const;
+/** Types that say nothing about who did what (streamed output, queue lines). */
+const REPLAY_SKIP = ["command_output", "queued", "heartbeat"];
+
+function clipText(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+/** Details cut down to the replay keys, with long text and lists clipped. */
+export function replayDetails(raw: string | null): Record<string, JsonValue> | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const src = parsed as Record<string, JsonValue>;
+  const out: Record<string, JsonValue> = {};
+  for (const k of REPLAY_KEYS) {
+    const v = src[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v === "string") out[k] = clipText(v, k === "reason" ? 800 : 200);
+    else if (Array.isArray(v))
+      out[k] = v.slice(0, 12).map((x) => (typeof x === "string" ? clipText(x, 240) : x));
+    else if (typeof v !== "object") out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * One page of a task's stored events, oldest first, for the replay. `after` is the cursor of the
+ * previous page (`next`); `next` is null on the last page.
+ */
+export function loadTeamEvents(
+  db: AppDb,
+  projectId: string,
+  taskId: string,
+  opts: { after?: number | undefined; limit: number },
+): { events: TeamEvent[]; next: number | null } {
+  const limit = Math.max(1, Math.min(1000, Math.floor(opts.limit)));
+  const skip = sql.join(
+    REPLAY_SKIP.map((t) => sql`${t}`),
+    sql`, `,
+  );
+  const rows = db.all<{
+    rid: number;
+    id: string;
+    ts: string;
+    agent: string;
+    type: string;
+    text: string;
+    status: string;
+    details: string | null;
+  }>(
+    sql`SELECT rowid AS rid, id, ts, agent, type, text, status, details FROM events
+        WHERE project_id = ${projectId} AND task_id = ${taskId} AND rowid > ${opts.after ?? 0}
+          AND type NOT IN (${skip})
+        ORDER BY rowid LIMIT ${limit + 1}`,
+  );
+  const page = rows.slice(0, limit);
+  return {
+    events: page.map((r) => ({
+      id: r.id,
+      ts: r.ts,
+      agent: r.agent,
+      type: r.type,
+      text: clipText(r.text, 240),
+      status: r.status,
+      details: replayDetails(r.details),
+    })),
+    next: rows.length > limit ? (page.at(-1)?.rid ?? null) : null,
+  };
 }

@@ -334,6 +334,31 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX agent_eval_runs_agent ON agent_eval_runs (agent_id, suite_id, created_at);
     `,
   },
+  {
+    // Time estimates learned on this PC (agents/eta.ts). IF NOT EXISTS keeps it safe to renumber.
+    version: 7,
+    name: "eta_history",
+    sql: `
+      CREATE TABLE IF NOT EXISTS eta_samples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        model TEXT,
+        tokens_per_sec REAL,
+        attempts INTEGER,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS eta_samples_agent_kind ON eta_samples (agent, kind, id);
+      CREATE TABLE IF NOT EXISTS eta_models (
+        model TEXT PRIMARY KEY NOT NULL,
+        tokens_per_sec REAL,
+        ttft_ms REAL,
+        calls INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

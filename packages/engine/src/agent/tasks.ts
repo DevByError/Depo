@@ -17,9 +17,10 @@ import { asc, desc, eq, inArray } from "drizzle-orm";
 import "../tools/block-tools";
 import "../tools/design-tools";
 import { Blackboard } from "../agents/blackboard";
+import type { EtaService } from "../agents/eta";
 import { agentTag, manifestOf } from "../agents/manifests";
 import { agentStatuses, TeamRunner } from "../agents/team";
-import { buildTimeline, loadTimelineEvents } from "../agents/timeline";
+import { buildTimeline, loadTeamEvents, loadTimelineEvents } from "../agents/timeline";
 import type { ApprovalCenter } from "../approvals";
 import type { CodeIndexer } from "../codeindex/indexer";
 import type { AppDb } from "../db";
@@ -61,6 +62,8 @@ export interface TaskManagerOptions {
   manifest?: ConstructorParameters<typeof TeamRunner>[0]["manifest"];
   /** Previews of the app agents build (start_preview, http_check, stop_preview). */
   previews?: PreviewHooks;
+  /** Time estimates learned on this PC (team.eta, the plan approval message). */
+  eta?: EtaService;
 }
 
 /** Budgets (characters) for what is added to the system prompt. */
@@ -120,6 +123,7 @@ export class TaskManager {
       ...(o.extras ? { extras: o.extras } : {}),
       manifest: o.manifest,
       ...(o.previews ? { previews: o.previews } : {}),
+      ...(o.eta ? { eta: o.eta } : {}),
     });
   }
 
@@ -193,6 +197,20 @@ export class TaskManager {
       now: Date.now(),
     });
     return { ...timeline, status };
+  }
+
+  /** A page of a task's stored events for the Team screen's replay. */
+  teamEvents(taskId: string, after: number | undefined, limit: number) {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row) throw new Error(`Unknown task: ${taskId}`);
+    return loadTeamEvents(this.o.db, row.projectId, taskId, { after, limit });
+  }
+
+  /** How long the task's work takes on this PC (team.eta). */
+  teamEta(taskId: string) {
+    if (!this.o.eta) throw new Error("Time estimates are not available in this engine.");
+    const state = this.teamState(taskId);
+    return this.o.eta.forTask({ taskId, mode: state.mode, plan: state.plan });
   }
 
   list(projectId: string): Task[] {
