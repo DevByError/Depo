@@ -274,6 +274,12 @@ export const CODE_MAP_AGENTS: AgentId[] = [
 for (const a of MANIFESTS)
   if (CODE_MAP_AGENTS.includes(a.id) && !a.tools.includes("code_map")) a.tools.push("code_map");
 
+/** Agents that can start an empty project from a blueprint (the single coder gets every tool). */
+export const BLUEPRINT_AGENTS: AgentId[] = ["thinking", "backend", "frontend", "integration"];
+for (const a of MANIFESTS)
+  for (const t of ["list_blueprints", "use_blueprint"])
+    if (BLUEPRINT_AGENTS.includes(a.id) && !a.tools.includes(t)) a.tools.push(t);
+
 export function manifestOf(id: AgentId): AgentManifest {
   const found = MANIFESTS.find((x) => x.id === id);
   if (!found) throw new Error(`Unknown agent: ${id}`);

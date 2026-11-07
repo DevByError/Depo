@@ -12,6 +12,7 @@
 - Layers: routes (HTTP only) call services (business rules) which call repositories (data access).
 - Response models never expose internal fields (password_hash, tokens, internal flags).
 - Use list_blocks for login, roles, audit log, rate limiting and pagination before writing your own.
+- Empty project: start from a blueprint (use_blueprint fastapi-service, or fullstack) and extend it; never over existing code.
 - Rate limit login and other expensive or sensitive routes.
 - Time in UTC (ISO 8601), money as integer cents or decimal.
 

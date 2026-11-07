@@ -29,6 +29,14 @@ import { type Emit, runAgentLoop } from "../agent/loop";
 import { detectProject, topLevelListing, venvEnv } from "../agent/prompt";
 import type { SteerInbox } from "../agent/steer";
 import type { ApprovalCenter } from "../approvals";
+import {
+  blueprintOwner,
+  blueprintPlanGuide,
+  isBlueprintStep,
+  pickBlueprint,
+  summaryWithBlueprint,
+  withBlueprint,
+} from "../blueprints/plan";
 import type { AppDb } from "../db";
 import { tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
@@ -736,6 +744,8 @@ export class TeamRunner {
    */
   private async makePlan(input: TeamInput, emit: Emit): Promise<{ plan: Plan; standard: string | null }> {
     const template = templateNodes(input.mode, input.text);
+    // An empty project and a new system: start from the closest blueprint (null otherwise).
+    const start = pickBlueprint(input.mode, input.text, input.ws.root);
     let drafts: Draft[] = template;
     let summary = "";
     let questions: string[] = [];
@@ -754,6 +764,7 @@ export class TeamRunner {
           `Owners must be one of:\n${allowed}`,
           "Keep the standard pipeline unless the request clearly does not need a step. Prefer 4 to 15 tasks. Every task must be small enough for one agent.",
           planningGuide(input.mode, input.text),
+          start ? blueprintPlanGuide(start, blueprintOwner(input.mode)) : "",
           `Standard pipeline for this mode:\n${template.map((n) => `- ${n.id} (${n.owner})${n.deps?.length ? ` after ${n.deps.join(", ")}` : ""}: ${n.title}`).join("\n")}`,
           this.h.memoryContext(input.projectId)
             ? `What you know about this project:\n${this.h.memoryContext(input.projectId)}`
@@ -797,11 +808,13 @@ export class TeamRunner {
     }
     // The production bar: testable criteria per task, also for the standard pipeline fallback.
     drafts = raiseTheBar(drafts, input.mode, input.text);
+    if (start) drafts = withBlueprint(drafts, start, blueprintOwner(input.mode));
     const opts = this.h.options();
     const nodes: PlanNode[] = drafts.map((d) => {
       const owner = d.owner as AgentId;
       const reviewable =
         !NO_REVIEW.includes(owner) &&
+        !isBlueprintStep(d) &&
         opts.reviews !== "off" &&
         !READ_ONLY_MODES.includes(input.mode) &&
         (opts.reviews === "all" || KEY_OWNERS.includes(owner));
@@ -818,7 +831,9 @@ export class TeamRunner {
     });
     const plan = PlanSchema.parse({
       mode: input.mode,
-      summary: summary || defaultSummary(nodes),
+      summary: start
+        ? summaryWithBlueprint(summary || defaultSummary(nodes), start)
+        : summary || defaultSummary(nodes),
       nodes,
       questions,
       version: 1,

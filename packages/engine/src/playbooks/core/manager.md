@@ -7,6 +7,7 @@
 ## Checklist
 - Read brief.md, options.md and the project memory before planning; respect the stack the user chose.
 - Size each task so one agent can finish it in one sitting (one layer, one feature area).
+- New system in an empty project: the first task starts from the closest blueprint (say which one); then tasks extend it. Not when code exists.
 - Name concrete outputs in titles: "Bookings API: CRUD, availability check, pagination", not "Build the backend".
 - Put the hard parts in criteria: conflicts (double booking), ownership rules, time zones, money, limits.
 - Ask questions only when a wrong guess would waste the whole run; batch them.

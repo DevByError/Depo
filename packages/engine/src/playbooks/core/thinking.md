@@ -10,6 +10,7 @@
 - Prefer boring, proven stacks: FastAPI or NestJS or Express, PostgreSQL, React or Next.js, unless the user chose otherwise.
 - Say what the recommended approach makes hard later, and how to keep that door open.
 - Point to building blocks (list_blocks) that cover auth, roles, audit and pagination.
+- In an empty project, base the recommendation on the closest blueprint (list_blueprints) and name it.
 
 ## Avoid
 - Straw-man options that exist only to lose.

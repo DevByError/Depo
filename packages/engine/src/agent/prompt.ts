@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { blueprintHint } from "../blueprints/plan";
 import { autoTopicsPrompt, corePrompt } from "../playbooks";
 import { detectStack, stackSummary } from "./stack";
 
@@ -78,6 +79,7 @@ export function codingSystemPrompt(opts: {
     `Shell: commands run with ${win ? "cmd.exe on Windows (use Windows syntax; `&&` works)" : "/bin/sh"} in the project root. There is no interactive input.`,
     ...(info.testCommand ? [`Run the tests with: ${info.testCommand}`] : []),
     ...info.notes,
+    ...[blueprintHint(opts.request ?? "", opts.root)].filter(Boolean),
     "",
     "How to work:",
     "1. Understand first: code_map shows the modules and which files import which; then read the relevant files (only the line ranges you need) and search for related code.",

@@ -256,6 +256,50 @@ export const FAKE_COMMIT = {
   body: "- add GET /health that answers ok\n- cover it with a test",
 };
 
+/**
+ * The Manager's plan for a team run: a build task and the test run, owned by agents the planning
+ * prompt allows. When the prompt says the project is empty and names a blueprint
+ * ("use_blueprint <id>"), the plan starts with that blueprint, like a model that follows it.
+ */
+export function fakePlan(system: string, request: string) {
+  const allowed = [...system.matchAll(/^- ([a-z-]+): /gm)].map((m) => m[1] as string);
+  const builder = ["backend", "frontend", "ai-integration"].find((id) => allowed.includes(id)) ?? "backend";
+  const blueprint = /use_blueprint ([a-z0-9-]+)/.exec(system)?.[1];
+  const owner = /owner ([a-z-]+), criteria/.exec(system)?.[1] ?? builder;
+  const nodes = [
+    ...(blueprint
+      ? [
+          {
+            id: "blueprint",
+            title: `Start from the ${blueprint} blueprint`,
+            owner,
+            deps: [],
+            criteria: [`use_blueprint ${blueprint}`],
+          },
+        ]
+      : []),
+    {
+      id: "build",
+      title: `Build: ${request.slice(0, 80)}`,
+      owner: builder,
+      deps: blueprint ? ["blueprint"] : [],
+      criteria: ["tests cover the main paths"],
+    },
+    {
+      id: "testing",
+      title: "Run the full test suite and fix failures",
+      owner: "testing",
+      deps: ["build"],
+      criteria: ["the whole suite passes"],
+    },
+  ];
+  return {
+    summary: blueprint ? `Build it on top of the ${blueprint} blueprint.` : "Build the request and test it.",
+    nodes,
+    questions: [],
+  };
+}
+
 function jsonReply(value: unknown): Response {
   return new Response(
     new ReadableStream({
@@ -339,6 +383,11 @@ export function startFakeOllama(
           if (sys.includes("Depo's durable memory")) return memoryReply();
           // Commit messages for applied changes.
           if (sys.includes("git commit messages")) return jsonReply(FAKE_COMMIT);
+          // The Manager's plan for a team run.
+          if (sys.includes("Plan the work as a task graph")) {
+            const request = body.messages.find((m) => m.role === "user")?.content ?? "";
+            return jsonReply(fakePlan(sys, request));
+          }
           // Benchmarks and plain chats: a short streamed answer.
           const words = "def merge_intervals(intervals):\n    return sorted(intervals)\n".split(/(?<= )/);
           return new Response(

@@ -4,6 +4,8 @@ import { findBlock, searchBlocks } from "../blocks";
 import { writeFileTool } from "./fs-tools";
 import { registerTools, tool } from "./index";
 import { resolveInside, ToolError } from "./paths";
+// Blueprints (whole starting points) register alongside the blocks (pieces to add).
+import "./blueprint-tools";
 
 /** Building blocks (Phase 8): tested pieces such as login, roles, audit log and rate limiting. */
 
