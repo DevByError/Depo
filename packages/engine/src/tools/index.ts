@@ -7,6 +7,7 @@ import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
 import { firstLine, getLogger } from "../logger";
 import { readPlaybook } from "../playbooks";
+import { CODE_MAP_TOOLS } from "./codemap-tools";
 import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { ToolError } from "./paths";
@@ -71,6 +72,8 @@ export interface ProjectKnowledge {
   findSymbols(name: string): SearchHit[];
   search(query: string, limit: number, signal?: AbortSignal): Promise<SearchHit[]>;
   remember(kind: "fact" | "decision" | "preference", text: string): void;
+  /** The code map as short text (code_map tool): overview, a folder, or one file's neighbours. */
+  codeMap?(a: { path?: string; folder?: string }): Promise<string>;
 }
 
 /** Does a project rule (a command prefix) match this command? */
@@ -717,3 +720,5 @@ async function runTool(name: string, rawArgs: unknown, ctx: ToolContext): Promis
 
 // Previews: start the app, smoke-test it over HTTP on 127.0.0.1, stop it.
 registerTools(...PREVIEW_TOOLS);
+// Code map: modules, imports, entry points and hot spots, in a few hundred tokens.
+registerTools(...CODE_MAP_TOOLS);

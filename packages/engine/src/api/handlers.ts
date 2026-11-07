@@ -475,4 +475,7 @@ export const handlers: Handlers = {
     calls: needLogs(ctx).stats.recent(p.limit),
     models: needLogs(ctx).stats.summary(),
   }),
+  "codemap.get": (p, ctx) => ctx.indexer.map.get(p.projectId, p.level, p.focus),
+  "codemap.file": (p, ctx) => ctx.indexer.map.file(p.projectId, p.path),
+  "codemap.repo": (p, ctx) => ctx.indexer.map.repo(p.projectId),
 };

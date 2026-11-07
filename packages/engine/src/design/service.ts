@@ -8,7 +8,8 @@ import { buildDeck, DeckSpecSchema } from "./deck";
 export interface DiagramFile {
   path: string;
   content: string;
-  source: "project" | "workspace";
+  /** auto = drawn by Depo from the code map; it lives in Depo's data folder, not the project. */
+  source: "project" | "workspace" | "auto";
 }
 export interface DeckInfo {
   dir: string;
@@ -33,6 +34,8 @@ export class DesignService {
     private readonly projects: ProjectService,
     private readonly workspaceRoot: (taskId: string) => string | null,
     private readonly bus: EventBus,
+    /** Diagrams Depo draws by itself (the code map's architecture diagram). */
+    private readonly generated: (projectId: string) => DiagramFile[] = () => [],
   ) {}
 
   private async roots(
@@ -65,6 +68,7 @@ export class DesignService {
         }
       }
     }
+    for (const d of this.generated(projectId)) if (!seen.has(d.path)) seen.set(d.path, d);
     return [...seen.values()];
   }
 

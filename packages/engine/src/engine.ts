@@ -154,6 +154,7 @@ export function createEngine(opts: EngineOptions): Engine {
     scheduler,
     embeddings,
     enabled: (id) => safeSettings(registry, id)?.indexEnabled ?? true,
+    mapDir: dirs.projects,
   });
   const skills = new SkillService({
     db: database.db,
@@ -251,7 +252,12 @@ export function createEngine(opts: EngineOptions): Engine {
     projectSettings: (id) => registry.getSettings(id),
     ...opts.tasks,
   });
-  const design = new DesignService(projects, (id) => tasks.workspaceRoot(id), bus);
+  const design = new DesignService(
+    projects,
+    (id) => tasks.workspaceRoot(id),
+    bus,
+    (id) => indexer.map.diagrams(id),
+  );
   const startedAt = new Date();
 
   let server: ApiServer | null = null;

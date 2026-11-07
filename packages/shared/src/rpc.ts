@@ -23,6 +23,7 @@ import {
   TeamTimelineSchema,
   WorkModeSchema,
 } from "./agents";
+import { CodeMapMethods } from "./codemap";
 import { DepoEventSchema, EventTypeSchema, JsonValueSchema } from "./events";
 import {
   KnowledgeCatalogEntrySchema,
@@ -500,7 +501,12 @@ const TaskMethods = {
     params: z.object({ projectId: z.string(), taskId: z.string().optional() }).strict(),
     result: z.object({
       diagrams: z.array(
-        z.object({ path: z.string(), content: z.string(), source: z.enum(["project", "workspace"]) }),
+        z.object({
+          path: z.string(),
+          content: z.string(),
+          /** auto = drawn by Depo from the code map (kept in Depo's data folder, not the project). */
+          source: z.enum(["project", "workspace", "auto"]),
+        }),
       ),
     }),
   },
@@ -1150,6 +1156,7 @@ export const ApiSchema = {
   ...TaskMethods,
   ...LogMethods,
   ...PreviewMethods,
+  ...CodeMapMethods,
 } as const;
 
 export type ApiMethod = keyof typeof ApiSchema;

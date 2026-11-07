@@ -640,6 +640,9 @@ export class TaskManager {
         if (!memory) throw new Error("Memory is not available here.");
         memory.add(projectId, kind, text, "agent");
       },
+      ...(indexer
+        ? { codeMap: (a: { path?: string; folder?: string }) => indexer.map.text(projectId, a) }
+        : {}),
     };
   }
 

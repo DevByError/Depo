@@ -86,10 +86,31 @@ export const codeFiles = sqliteTable(
     lang: text("lang"),
     size: integer("size").notNull(),
     lines: integer("lines").notNull(),
+    /** Code map (migration 7): a simple branch count (if, loops, case, catch, && and ||). */
+    branches: integer("branches").notNull().default(0),
+    /** Why this file looks like an entry point ("__main__ block", "FastAPI app"), or null. */
+    entry: text("entry"),
+    /** Version of the import extractor that analysed the file (re-analysed when it is older). */
+    mapVersion: integer("map_version").notNull().default(0),
     ...timestamps,
   },
   (t) => [primaryKey({ columns: [t.projectId, t.path] })],
 );
+
+/** Imports between files (code map). `target` is the project file the import resolves to, or null. */
+export const codeImports = sqliteTable("code_imports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: text("project_id").notNull(),
+  path: text("path").notNull(),
+  /** The module as written: `./util`, `@/lib/cn`, `..models`, `app.db`. */
+  spec: text("spec").notNull(),
+  /** Python `from x import name`: the imported name (it may be a submodule), else "". */
+  name: text("name").notNull().default(""),
+  /** import | export | require | dynamic | from | include | use | mod */
+  kind: text("kind").notNull(),
+  line: integer("line").notNull(),
+  target: text("target"),
+});
 
 export const codeSymbols = sqliteTable("code_symbols", {
   id: integer("id").primaryKey({ autoIncrement: true }),

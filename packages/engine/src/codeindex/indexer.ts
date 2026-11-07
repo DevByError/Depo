@@ -4,14 +4,15 @@ import type { ModelProvider } from "@depo/model-gateway";
 import type { IndexStatus, SearchHit } from "@depo/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { AppDb } from "../db";
-import { codeFiles, codeSymbols, embeddings, projects } from "../db/schema";
+import { codeFiles, codeImports, codeSymbols, embeddings, projects } from "../db/schema";
 import type { EventBus } from "../events/bus";
 import type { Logger } from "../logger";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { DEFAULT_IGNORES, isBinary } from "../tools/fs-tools";
 import { hashBytes, LINKED_DIRS, walkProject } from "../workspace/snapshot";
+import { analyseSource, MAP_VERSION } from "./analyse";
+import { CodeMapService } from "./codemap";
 import { languageFor } from "./languages";
-import { extractSymbols } from "./symbols";
 
 /** Files above this size are not indexed (generated bundles, data dumps). */
 const MAX_INDEX_FILE = 1024 * 1024;
@@ -32,6 +33,8 @@ export interface CodeIndexerOptions {
   scheduler: ModelScheduler;
   embeddings: EmbeddingSource;
   enabled: (projectId: string) => boolean;
+  /** `<data>/projects`: where the auto architecture diagram is kept (code map). */
+  mapDir?: string;
 }
 
 interface State {
@@ -54,9 +57,17 @@ interface State {
 export class CodeIndexer {
   private readonly states = new Map<string, State>();
   private readonly log: Logger;
+  /** Imports between files, modules, cycles, hot spots and the auto diagram (code map). */
+  readonly map: CodeMapService;
 
   constructor(private readonly o: CodeIndexerOptions) {
     this.log = o.logger.child({ component: "index" });
+    this.map = new CodeMapService({
+      db: o.db,
+      logger: o.logger,
+      ...(o.mapDir ? { mapDir: o.mapDir } : {}),
+      indexing: (id) => this.states.get(id)?.status.state === "indexing",
+    });
   }
 
   status(projectId: string): IndexStatus {
@@ -127,11 +138,13 @@ export class CodeIndexer {
 
   stopAll(): void {
     for (const id of this.states.keys()) this.stop(id);
+    this.map.stopTimers();
   }
 
   forget(projectId: string): void {
     this.stop(projectId);
     this.states.delete(projectId);
+    this.map.forget(projectId);
   }
 
   // ---- queries -------------------------------------------------------------------------------
@@ -354,13 +367,16 @@ export class CodeIndexer {
     const t0 = performance.now();
     const known = new Map(
       this.o.db
-        .select({ path: codeFiles.path, hash: codeFiles.hash })
+        .select({ path: codeFiles.path, hash: codeFiles.hash, mapVersion: codeFiles.mapVersion })
         .from(codeFiles)
         .where(eq(codeFiles.projectId, projectId))
         .all()
-        .map((r) => [r.path, r.hash]),
+        .map((r) => [r.path, { hash: r.hash, mapVersion: r.mapVersion }]),
     );
     const files = only ?? walkProject(root);
+    // Code map: which imports need resolving again after this pass.
+    const analysed: string[] = [];
+    let structure = !only;
     if (!only) {
       // Files that disappeared since the last full pass.
       const present = new Set(files);
@@ -381,52 +397,83 @@ export class CodeIndexer {
       try {
         const s = fs.statSync(abs);
         if (!s.isFile() || s.size > MAX_INDEX_FILE) {
-          if (known.has(rel)) this.removeFiles(projectId, [rel]);
+          if (known.has(rel)) {
+            this.removeFiles(projectId, [rel]);
+            structure = true;
+          }
           continue;
         }
         buf = fs.readFileSync(abs);
       } catch {
-        if (known.has(rel)) this.removeFiles(projectId, [rel]);
+        if (known.has(rel)) {
+          this.removeFiles(projectId, [rel]);
+          structure = true;
+        }
         continue;
       }
       if (isBinary(buf)) continue;
       const hash = hashBytes(buf);
-      if (known.get(rel) === hash && (!emb || this.hasEmbeddings(projectId, rel, emb.model))) continue;
+      const prev = known.get(rel);
+      const sameText = prev?.hash === hash;
+      const needEmbeddings = !!emb && !this.hasEmbeddings(projectId, rel, emb.model);
+      if (sameText && (prev?.mapVersion ?? 0) >= MAP_VERSION && !needEmbeddings) continue;
       changed++;
+      if (!prev || CodeMapService.isConfigFile(rel)) structure = true;
+      analysed.push(rel);
       const text = buf.toString("utf8");
       const lang = languageFor(rel);
-      const symbols = lang ? await extractSymbols(lang, text).catch(() => []) : [];
+      const a = await analyseSource(rel, lang, text).catch(() => ({
+        symbols: [],
+        imports: [],
+        branches: 0,
+        entry: null,
+      }));
       const lines = text.split("\n").length;
       const now = new Date().toISOString();
+      const reembed = !sameText || needEmbeddings;
       this.o.db.transaction((tx) => {
         tx.delete(codeSymbols)
           .where(and(eq(codeSymbols.projectId, projectId), eq(codeSymbols.path, rel)))
           .run();
-        tx.delete(embeddings)
-          .where(and(eq(embeddings.projectId, projectId), eq(embeddings.path, rel)))
+        tx.delete(codeImports)
+          .where(and(eq(codeImports.projectId, projectId), eq(codeImports.path, rel)))
           .run();
+        if (reembed)
+          tx.delete(embeddings)
+            .where(and(eq(embeddings.projectId, projectId), eq(embeddings.path, rel)))
+            .run();
+        const meta = {
+          hash,
+          lang,
+          size: buf.length,
+          lines,
+          branches: a.branches,
+          entry: a.entry,
+          mapVersion: MAP_VERSION,
+        };
         tx.insert(codeFiles)
-          .values({
-            projectId,
-            path: rel,
-            hash,
-            lang,
-            size: buf.length,
-            lines,
-            createdAt: now,
-            updatedAt: now,
-          })
+          .values({ projectId, path: rel, ...meta, createdAt: now, updatedAt: now })
           .onConflictDoUpdate({
             target: [codeFiles.projectId, codeFiles.path],
-            set: { hash, lang, size: buf.length, lines, updatedAt: now },
+            set: { ...meta, updatedAt: now },
           })
           .run();
-        for (const s of symbols)
+        for (const s of a.symbols)
           tx.insert(codeSymbols)
             .values({ projectId, path: rel, ...s })
             .run();
+        for (const imp of a.imports)
+          tx.insert(codeImports)
+            .values({ projectId, path: rel, spec: imp.spec, name: imp.name, kind: imp.kind, line: imp.line })
+            .run();
       });
-      if (emb) for (const c of chunk(rel, text)) toEmbed.push({ ...c, hash });
+      if (emb && reembed) for (const c of chunk(rel, text)) toEmbed.push({ ...c, hash });
+    }
+    if (analysed.length || structure) {
+      // New files or config changes can change what any import points at; otherwise only the
+      // imports of the files just read need resolving.
+      this.map.resolveImports(projectId, root, structure ? null : analysed);
+      this.map.invalidate(projectId);
     }
     if (emb && toEmbed.length) {
       st.status.embeddingModel = emb.model;
@@ -523,6 +570,9 @@ export class CodeIndexer {
           .run();
         tx.delete(embeddings)
           .where(and(eq(embeddings.projectId, projectId), inArray(embeddings.path, part)))
+          .run();
+        tx.delete(codeImports)
+          .where(and(eq(codeImports.projectId, projectId), inArray(codeImports.path, part)))
           .run();
       });
     }
