@@ -34,9 +34,20 @@ test("the Chat composer offers the work modes", async ({ page }) => {
   await page.goto("");
   await expect(page.getByTestId("connection-status")).toHaveText(/Engine connected/);
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
-  const modes = page.getByLabel("Work mode");
+  // The picker is a menu button ("Work mode: Single agent") listing each mode with a short description.
+  const modes = page.getByRole("button", { name: /^Work mode/ });
   if (await modes.count()) {
-    await expect(modes.locator("option")).toContainText(["Single agent", "Full system", "Backend only"]);
+    await modes.click();
+    await expect(page.getByRole("menuitemradio")).toContainText([
+      "Single agent",
+      "Full system",
+      "Backend only",
+    ]);
+    await page.getByRole("menuitemradio", { name: /Backend only/ }).click();
+    await expect(modes).toHaveAccessibleName("Work mode: Backend only");
+    await modes.click();
+    await page.getByRole("menuitemradio", { name: /Single agent/ }).click();
+    await expect(modes).toHaveAccessibleName("Work mode: Single agent");
   }
 });
 

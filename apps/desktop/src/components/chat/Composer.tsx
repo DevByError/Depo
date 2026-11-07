@@ -195,11 +195,7 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
             className="field-in-frame w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-5 text-fg outline-none placeholder:text-subtle"
           />
           <div className="mt-1.5 flex items-center gap-2">
-            {!task ? (
-              <ModePicker mode={mode} onChange={setMode} />
-            ) : (
-              <span className="px-1 text-[11px] text-subtle">Follow-up</span>
-            )}
+            {!task && <ModePicker mode={mode} onChange={setMode} />}
             <span className="flex-1" />
             {running ? (
               <button

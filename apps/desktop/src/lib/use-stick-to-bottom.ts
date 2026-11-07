@@ -90,11 +90,13 @@ function reducedMotion(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
-function supportsScrollAnchoring(): boolean {
+/** Does the browser hold the reader's place by itself (CSS scroll anchoring, not turned off here)? */
+function nativeAnchoring(el: HTMLElement): boolean {
   return (
     typeof CSS !== "undefined" &&
     typeof CSS.supports === "function" &&
-    CSS.supports("overflow-anchor", "auto")
+    CSS.supports("overflow-anchor", "auto") &&
+    getComputedStyle(el).getPropertyValue("overflow-anchor") !== "none"
   );
 }
 
@@ -159,7 +161,7 @@ export function useStickToBottom<
   useEffect(() => {
     const el = scrollEl;
     if (!el) return;
-    const nativeAnchoring = supportsScrollAnchoring();
+    const anchored = nativeAnchoring(el);
     let raf = 0;
     const onScroll = () => {
       const m = { scrollTop: el.scrollTop, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
@@ -179,7 +181,7 @@ export function useStickToBottom<
         );
       }
       lastTopRef.current = m.scrollTop;
-      if (!nativeAnchoring && !pinnedRef.current) {
+      if (!anchored && !pinnedRef.current) {
         cancelAnimationFrame(raf);
         raf = requestAnimationFrame(recordAnchor);
       }
@@ -228,10 +230,12 @@ export function useStickToBottom<
   useEffect(() => {
     const el = scrollEl;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const nativeAnchoring = supportsScrollAnchoring();
+    const anchored = nativeAnchoring(el);
     const onResize = () => {
       if (Date.now() < keepUntil.current) {
         // The reader opened something: stay where they are, and stop following if that moved the end away.
+        // Only the first change after their click is theirs.
+        keepUntil.current = 0;
         setPinned(isNearBottom(el, thresholdRef.current));
         lastTopRef.current = el.scrollTop;
         return;
@@ -242,7 +246,7 @@ export function useStickToBottom<
       }
       // Not following: hold the reader's place if the browser does not.
       const a = anchorRef.current;
-      if (!nativeAnchoring && a?.el.isConnected) {
+      if (!anchored && a?.el.isConnected) {
         const top = a.el.getBoundingClientRect().top - el.getBoundingClientRect().top;
         const delta = top - a.top;
         if (Math.abs(delta) >= 1) {

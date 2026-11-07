@@ -35,4 +35,33 @@ describe("groupTurns", () => {
     expect(t?.answer).toBeNull();
     expect(t?.steps).toHaveLength(2);
   });
+
+  it("while working, the latest text is narration, not the answer", () => {
+    const items = [item("u1", "user"), item("t1", "tool"), item("a1", "assistant", "Now the tests.")];
+    const [working] = groupTurns(items, { working: true });
+    expect(working?.answer).toBeNull();
+    expect(working?.steps.map((s) => s.id)).toEqual(["t1", "a1"]);
+    const [done] = groupTurns(items);
+    expect(done?.answer?.id).toBe("a1");
+  });
+
+  it("the Manager's plan becomes a card and Depo's note sits under the answer", () => {
+    const plan = {
+      ...item("p", "assistant", "**Plan** — Notes API.\n1. **Backend**: Build it"),
+      agent: "manager@1.0.0",
+    };
+    const handoff = { ...item("h", "assistant", "**Backend** — Build it"), agent: "backend@1.0.0" };
+    const [t] = groupTurns([
+      item("u1", "user"),
+      plan,
+      handoff,
+      item("t1", "tool"),
+      item("a1", "assistant", "Done. Tests passed."),
+      item("n1", "assistant", "Note from Depo: the last test run (pytest) failed."),
+    ]);
+    expect(t?.plan?.plan.tasks[0]).toMatchObject({ owner: "Backend", title: "Build it" });
+    expect(t?.steps.map((s) => s.id)).toEqual(["h", "t1"]);
+    expect(t?.answer?.id).toBe("a1");
+    expect(t?.note?.id).toBe("n1");
+  });
 });

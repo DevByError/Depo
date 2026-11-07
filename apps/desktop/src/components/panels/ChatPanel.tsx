@@ -90,6 +90,7 @@ export function ChatPanel() {
   const stick = useStickToBottom<HTMLElement, HTMLDivElement>({
     resetKey: taskId,
     count: open?.messages.length ?? 0,
+    anchorSelector: "li",
   });
 
   return (
@@ -107,7 +108,7 @@ export function ChatPanel() {
             <div ref={stick.contentRef}>
               {open ? (
                 <Transcript task={open.task} items={open.messages} />
-              ) : (
+              ) : taskId && enabled && task.isPending ? null : (
                 <Welcome hasProject={!!projectId} />
               )}
             </div>
@@ -403,7 +404,7 @@ function TurnView({
         </div>
       )}
       {stream && (
-        <div className="text-[13.5px] leading-relaxed text-fg">
+        <div className="text-[13.5px] leading-relaxed text-fg [&>p:last-of-type]:inline">
           <Markdown text={stream.slice(-6000)} />
           <span
             className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-accent align-middle"
