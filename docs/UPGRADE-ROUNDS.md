@@ -41,3 +41,22 @@ Where Depo now stands against the strongest coding agents (Claude Code, Cursor, 
 
 All eleven ideas, in five parallel worktrees, merged and tested together: steering notes (single and team), decline reasons, line comments with "Request changes", visual QA with a DevTools Protocol client and axe (`check_page`, thumbnails, "Check this page"), automatic preview with "Open the running app", code map with an auto architecture diagram and the `code_map` tool, the Project home, team replay, time estimates learned on this PC, Ctrl+K universal search, and git commits with a drafted message plus a History tab. A screenshot pass then gave Diff Review more room, sharpened command matching, made the Preview tab open on the running copy and closed the bottom panel by default. Verified: engine 417, UI 206, e2e 17.
 
+## Round 3: assessment
+
+After round 2 Depo steers, reviews like a pull request, sees the app it builds and understands the code. What still holds it back:
+
+1. Two bottom tabs are still placeholders: Terminal and Test results. Problems only lists error events, not real compiler or linter findings.
+2. Nothing closes the loop from a problem to a fix: a failing test, a type error or a crashing preview has to be retyped as a task.
+3. Speed on the owner's GPU is left to chance: models can reload between calls (changing context sizes, no keep-alive), prompts are not ordered for prefix reuse, and the scheduler swaps models freely.
+4. Small local models build from a blank page, so "build a task manager" comes out basic. They need strong, tested starting points.
+5. There is no single answer to "is this ready to ship?": tests, checks, scores, page checks and the plan's criteria live on different screens.
+6. Code has no syntax highlighting in Files, Diff Review or chat, and there is no "ask about these lines" from the code itself.
+
+## Round 3: ideas picked (5 workers)
+
+1. Speed on a modest PC: keep models loaded, one context size per model, prompts ordered for prefix reuse, model affinity in the scheduler, load and prompt-reading times in the model stats.
+2. Real Terminal, Test results and Problems tabs, with "Fix with an agent" on any failure.
+3. Blueprints: production-grade starting points (API, web app, full stack) that agents extend instead of starting from nothing.
+4. Readiness report: one card at review time with tests, checks, security and UX scores, page checks and the plan's criteria, and a plain verdict.
+5. Code you can read: syntax highlighting everywhere, the Files tree follows the open file, and "Ask about this" or "Change this" on selected lines.
+
