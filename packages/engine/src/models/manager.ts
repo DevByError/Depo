@@ -42,6 +42,8 @@ import { readKeepAlive, tuneProvider } from "./speed";
 
 const KEY_PROVIDERS = "models.providers";
 const KEY_ASSIGNMENTS = "models.assignments";
+/** Models that refused a picture, remembered across runs. */
+const KEY_BLIND = "models.blind";
 const KEY_CATALOG = "models.catalog";
 const KEY_PROFILE = "hardware.profile";
 
@@ -85,9 +87,15 @@ export class ModelManager {
   private readonly chosenContext = new Map<string, number>();
   /** Models chat or preload calls went to in this run, to unload at exit ("until Depo closes"). */
   private readonly used = new Map<string, { providerId: string; model: string }>();
+  /** The models each provider reported at the last look (none until the first look). */
+  private readonly seen = new Map<string, Set<string>>();
+  /** Models that refused a picture at run time ("does not support multimodal requests"). */
+  private readonly blind = new Set<string>();
 
   constructor(private readonly o: ModelManagerOptions) {
     this.log = o.logger.child({ component: "models" });
+    const blind = o.settings.get(KEY_BLIND);
+    if (Array.isArray(blind)) for (const m of blind) if (typeof m === "string") this.blind.add(m);
   }
 
   // ---- providers -------------------------------------------------------------------------
@@ -173,6 +181,7 @@ export class ModelManager {
         .map(async (s) => {
           try {
             const models = await this.provider(s.id).listModels(AbortSignal.timeout(10_000));
+            this.seen.set(s.id, new Set(models.map((m) => m.name)));
             return models.map((m) => ({
               providerId: s.id,
               ...m,
@@ -287,14 +296,45 @@ export class ModelManager {
    */
   resolve(role: Role): { provider: ModelProvider; model: string; contextLength: number | undefined } | null {
     const plan = this.plan();
-    const { effective } = this.assignmentsWith(plan);
+    const { assignments, effective } = this.assignmentsWith(plan);
     const ref = effective[role];
     if (!ref) return null;
+    // A picture never goes to a model that refused one. An Auto-Fit pick must look able to see;
+    // a model the owner chose is tried once, since names do not always say so.
+    if (role === "vision" && (this.blind.has(ref.model) || (!assignments.vision && !this.canSee(ref.model))))
+      return null;
+    // An Auto-Fit pick that is not downloaded: callers fall back to the coder's model.
+    if (!assignments[role] && role !== "coder" && !this.isInstalled(ref.providerId, ref.model)) return null;
     return {
       provider: this.provider(ref.providerId),
       model: ref.model,
       contextLength: this.contextWith(plan, effective, ref.providerId, ref.model),
     };
+  }
+
+  /** False only when the provider's last list did not include the model. */
+  private isInstalled(providerId: string, model: string): boolean {
+    const list = this.seen.get(providerId);
+    if (!list) return true;
+    return list.has(model) || list.has(`${model}:latest`) || list.has(model.replace(/:latest$/, ""));
+  }
+
+  /** Can this model read pictures? The catalog says so, or its name does (llava, …-vl, vision). */
+  canSee(model: string): boolean {
+    if (this.blind.has(model)) return false;
+    const entry = this.catalog().catalog.models.find((m) =>
+      m.quantizations.some((q) => q.tag === model || q.tag === model.replace(/:latest$/, "")),
+    );
+    if (entry) return entry.capabilities.includes("vision");
+    return /vl\b|vl:|-vl|vision|llava|moondream|minicpm-v|gemma3|llama4/i.test(model);
+  }
+
+  /** A model refused a picture: it is not used as the vision model again in this run. */
+  noteCannotSee(model: string): void {
+    if (this.blind.has(model)) return;
+    this.blind.add(model);
+    this.o.settings.set(KEY_BLIND, [...this.blind] as unknown as JsonValue);
+    this.log.warn("model cannot read pictures; not used for vision", { model });
   }
 
   /**

@@ -92,10 +92,10 @@ export interface TeamHost {
   };
   projectSettings(projectId: string): ProjectSettings | undefined;
   addMessage(taskId: string, msg: ChatMessage & { isError?: boolean }, agent: string): void;
-  knowledge(projectId: string): ProjectKnowledge | undefined;
+  knowledge(projectId: string, root?: string): ProjectKnowledge | undefined;
   lessons(projectId: string): NonNullable<Parameters<typeof runAgentLoop>[0]["lessons"]>;
   memoryContext(projectId: string): string;
-  repoMap(projectId: string): string;
+  repoMap(projectId: string, root?: string): string;
   /** Extra prompt text and tools for an agent (skills, MCP servers, knowledge packs). */
   extras?(agentId: string, projectId: string, run: { taskId: string; signal: AbortSignal }): AgentExtras;
   /** Previews of the app being built (start_preview, http_check, stop_preview). */
@@ -1537,7 +1537,7 @@ export class TeamRunner {
         return "Message sent.";
       },
     };
-    const knowledge = this.h.knowledge(projectId);
+    const knowledge = this.h.knowledge(projectId, ws.root);
     const extras = this.h.extras?.(manifest.id, projectId, { taskId, signal });
     return {
       root: ws.root,
@@ -1607,7 +1607,9 @@ export class TeamRunner {
       this.h.memoryContext(input.projectId)
         ? `# What you know about this project\n${this.h.memoryContext(input.projectId)}`
         : "",
-      this.h.repoMap(input.projectId) ? `# Repo map\n${this.h.repoMap(input.projectId)}` : "",
+      this.h.repoMap(input.projectId, input.ws.root)
+        ? `# Files in your copy now\n${this.h.repoMap(input.projectId, input.ws.root)}`
+        : "",
       autoTopicsPrompt({
         agent: manifest.id,
         text: input.text,

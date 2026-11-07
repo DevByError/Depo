@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { MissingDeps, RecipeKind, RecipeRole, RunRecipe, RunRecipeBase } from "@depo/shared";
+import { type PackageManager, packageManagerFor } from "../agent/stack";
 import { runShell } from "../tools/shell/run";
 import { PREVIEW_HOST } from "./ports";
 
@@ -106,20 +107,8 @@ function baseEnv(): Record<string, string> {
 
 // ---- Node ---------------------------------------------------------------------------------
 
-type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
-
 function packageManager(dir: string, root: string, pkg: Record<string, unknown>): PackageManager {
-  const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
-  if (declared === "pnpm" || declared === "yarn" || declared === "bun" || declared === "npm") return declared;
-  // Lock files may sit in the folder or at the monorepo root.
-  for (let d = dir; ; d = path.dirname(d)) {
-    if (exists(path.join(d, "bun.lock")) || exists(path.join(d, "bun.lockb"))) return "bun";
-    if (exists(path.join(d, "pnpm-lock.yaml"))) return "pnpm";
-    if (exists(path.join(d, "yarn.lock"))) return "yarn";
-    if (exists(path.join(d, "package-lock.json"))) return "npm";
-    if (path.resolve(d) === path.resolve(root) || path.dirname(d) === d) break;
-  }
-  return "npm";
+  return packageManagerFor(dir, root, pkg);
 }
 
 function runScript(pm: PackageManager, script: string, args = ""): string {

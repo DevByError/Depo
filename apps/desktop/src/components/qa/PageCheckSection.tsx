@@ -19,7 +19,8 @@ const byText = (by: string) => (by === "user" ? "you" : agentName(by) || by);
 export function PageCheckSection({ target, preview }: { target: CheckTarget; preview: PreviewInfo | null }) {
   const connected = useEngine((s) => s.status === "open");
   const qc = useQueryClient();
-  const [open, setOpen] = useState(true);
+  // An earlier check starts folded so the page itself stays in view; a check the owner runs opens.
+  const [open, setOpen] = useState(false);
   const key = ["qa", "list", target.projectId, target.taskId];
   const params = { projectId: target.projectId, ...(target.taskId ? { taskId: target.taskId } : {}) };
   const latest = useQuery({
@@ -77,6 +78,14 @@ export function PageCheckSection({ target, preview }: { target: CheckTarget; pre
       {error && (
         <p role="alert" className="text-xs text-danger">
           {error.message}
+        </p>
+      )}
+      {shown && !open && (
+        <p className="text-[11px] text-subtle">
+          Checked by {byText(shown.by)} · {formatRelative(shown.at)} ·{" "}
+          <span className={shown.ok ? "text-success" : "text-danger"}>
+            {shown.ok ? "no problems found" : "problems found"}
+          </span>
         </p>
       )}
       {shown && open && (

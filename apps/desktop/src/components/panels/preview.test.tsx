@@ -175,6 +175,19 @@ function mount(node: ReactNode) {
 }
 
 test("Preview tab: shows the detected command, starts the project and gives a link with a viewer and a log", async () => {
+  // The viewer's area measures 400 × 600 once it appears.
+  class FakeResizeObserver {
+    constructor(private readonly cb: ResizeObserverCallback) {}
+    observe() {
+      this.cb(
+        [{ contentRect: { width: 400, height: 600 } } as unknown as ResizeObserverEntry],
+        this as unknown as ResizeObserver,
+      );
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
   const view = mount(<PreviewPanel />);
   const input = (await screen.findByLabelText("Start command")) as HTMLInputElement;
   await waitFor(() => expect(input.value).toContain("uvicorn app.main:app"));
@@ -208,9 +221,21 @@ test("Preview tab: shows the detected command, starts the project and gives a li
   expect(frame.getAttribute("sandbox")).not.toContain("allow-top-navigation");
   fireEvent.click(screen.getByRole("button", { name: /Phone/ }));
   expect(screen.getByRole("button", { name: /Phone/ }).getAttribute("aria-pressed")).toBe("true");
+  // The page renders at the phone's real size (scaled to fit the panel).
   expect((screen.getByTitle("Preview of FastAPI app (app/main.py)") as HTMLIFrameElement).style.width).toBe(
-    "375px",
+    "390px",
   );
+  // 600 / 844 of the height fits: 71%.
+  expect(screen.getByTestId("device-size").textContent).toBe("390 × 844 · 71%");
+  const phone = screen.getByTitle("Preview of FastAPI app (app/main.py)") as HTMLIFrameElement;
+  expect(phone.style.transform).toMatch(/^scale\(0\.71/);
+  fireEvent.click(screen.getByRole("button", { name: "100%" }));
+  expect(screen.getByTestId("device-size").textContent).toBe("390 × 844 · 100%");
+  expect(phone.style.transform).toBe("scale(1)");
+  fireEvent.click(screen.getByRole("button", { name: "Fit" }));
+  fireEvent.click(screen.getByRole("button", { name: /Desktop/ }));
+  expect(screen.getByTestId("device-size").textContent).toBe("1440 × 900 · 28%");
+  vi.unstubAllGlobals();
 
   const log = screen.getByRole("region", { name: "Preview log" });
   expect(log.getAttribute("tabindex")).toBe("0");
@@ -306,6 +331,34 @@ test("Preview tab: opens on the task copy Depo already started instead of offeri
     expect(usePreviewUi.getState()).toMatchObject({ taskId: "tsk_1", previewId: "prv_auto" }),
   );
   expect(calls.some((c) => c.method === "preview.start")).toBe(false);
+});
+
+test("Preview tab: a site with an API opens on the site, and the API can be shown too", async () => {
+  // The owner's run: the API started first, so the Preview tab showed its JSON instead of the site.
+  const group = {
+    taskId: "tsk_1",
+    target: "workspace" as const,
+    groupId: "grp_1",
+    startedBy: "agent" as const,
+  };
+  previews = [
+    preview({ ...group, id: "prv_be", label: "Bun app in be", kind: "bun", url: "http://127.0.0.1:44212/" }),
+    preview({
+      ...group,
+      id: "prv_fe",
+      label: "Next.js app in fe",
+      kind: "next",
+      role: "frontend",
+      url: "http://127.0.0.1:3000/",
+    }),
+  ];
+  mount(<PreviewPanel />);
+  await waitFor(() =>
+    expect(usePreviewUi.getState()).toMatchObject({ taskId: "tsk_1", previewId: "prv_fe" }),
+  );
+  expect(await screen.findByTitle("Preview of Next.js app in fe")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Show here" }));
+  expect(await screen.findByTitle("Preview of Bun app in be")).toBeTruthy();
 });
 
 test("Running section: running previews show their link and open the Preview tab", async () => {

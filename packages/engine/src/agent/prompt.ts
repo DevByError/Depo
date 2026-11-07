@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { blueprintHint } from "../blueprints/plan";
 import { autoTopicsPrompt, corePrompt } from "../playbooks";
-import { detectStack, stackSummary } from "./stack";
+import { detectStack, packageManagerFor, stackSummary } from "./stack";
 
 /** What kind of project this is, so the agent knows how to run its tests. */
 export function detectProject(root: string): { kind: string; testCommand: string | null; notes: string[] } {
@@ -18,15 +18,12 @@ export function detectProject(root: string): { kind: string; testCommand: string
       const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
         scripts?: Record<string, string>;
       };
-      const pm =
-        has("bun.lock") || has("bun.lockb")
-          ? "bun"
-          : has("pnpm-lock.yaml")
-            ? "pnpm"
-            : has("yarn.lock")
-              ? "yarn"
-              : "npm";
-      return { kind: "JavaScript/TypeScript", testCommand: pkg.scripts?.test ? `${pm} test` : null, notes };
+      const pm = packageManagerFor(root, root, pkg as Record<string, unknown>);
+      return {
+        kind: "JavaScript/TypeScript",
+        testCommand: pkg.scripts?.test ? (pm === "bun" ? "bun run test" : `${pm} test`) : null,
+        notes,
+      };
     } catch {
       return { kind: "JavaScript/TypeScript", testCommand: null, notes };
     }

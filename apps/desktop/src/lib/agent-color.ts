@@ -15,6 +15,8 @@ const BY_AGENT: Record<string, AgentTone> = {
   frontend: "build",
   integration: "build",
   coder: "build",
+  starter: "ops",
+  tester: "quality",
   database: "data",
   "ai-integration": "data",
   testing: "quality",
@@ -98,6 +100,8 @@ export function agentInitials(name: string): string {
     backend: "BE",
     frontend: "FE",
     database: "DB",
+    starter: "ST",
+    tester: "TE",
   };
   const key = agentKey(name);
   if (special[key]) return special[key];

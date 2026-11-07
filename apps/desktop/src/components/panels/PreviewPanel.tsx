@@ -10,6 +10,8 @@ import {
   ExternalLink,
   Laptop,
   Loader2,
+  Maximize2,
+  Minimize2,
   MonitorPlay,
   Pin,
   Play,
@@ -25,7 +27,7 @@ import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import { copyText, openExternal } from "@/lib/open-url";
 import { useEngine } from "@/store/engine";
-import { DEVICE_WIDTH, type DeviceWidth, usePreviewUi } from "@/store/preview";
+import { DEVICE_SIZE, type DeviceWidth, usePreviewUi } from "@/store/preview";
 import { useUi } from "@/store/ui";
 
 const OWN = "__own";
@@ -100,13 +102,14 @@ export function PreviewPanel() {
     if (!projectId || ui.projectId === projectId) return;
     const all = list.data?.previews ?? [];
     if (all.some((p) => p.taskId === null && active(p))) return;
-    const running = all.find(active);
+    const running = all.filter(active).sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role])[0];
     if (running) usePreviewUi.getState().show({ projectId, taskId: running.taskId, previewId: running.id });
   }, [projectId, ui.projectId, list.data]);
 
   const forTarget = (list.data?.previews ?? []).filter((p) => p.taskId === taskId);
-  const current =
-    forTarget.find((p) => p.id === ui.previewId) ?? forTarget.find(active) ?? forTarget[0] ?? null;
+  // The site before its API: a frontend, then an app, then a backend.
+  const byRole = [...forTarget].sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role]);
+  const current = forTarget.find((p) => p.id === ui.previewId) ?? byRole.find(active) ?? byRole[0] ?? null;
   const mates = current?.groupId
     ? forTarget.filter((p) => p.groupId === current.groupId && p.id !== current.id)
     : [];
@@ -490,7 +493,14 @@ function LinkBar({ preview, mates }: { preview: PreviewInfo; mates: PreviewInfo[
           >
             {m.url}
           </a>{" "}
-          · {STATE_TEXT[m.state]}
+          · {STATE_TEXT[m.state]}{" "}
+          <button
+            type="button"
+            className="ml-1 rounded px-1 text-accent underline-offset-2 hover:underline"
+            onClick={() => usePreviewUi.getState().setPreviewId(m.id)}
+          >
+            Show here
+          </button>
         </p>
       ))}
       {preview.state === "failed" && preview.error && (
@@ -543,12 +553,38 @@ const DEVICES: { id: DeviceWidth; label: string; icon: typeof Smartphone }[] = [
   { id: "desktop", label: "Desktop", icon: Laptop },
 ];
 
+const ROLE_RANK: Record<PreviewInfo["role"], number> = { frontend: 0, app: 1, backend: 2 };
+
+/** Scale that fits a w×h screen into the box (never larger than 100%). */
+export function fitScale(
+  box: { width: number; height: number },
+  screen: { width: number; height: number },
+): number {
+  if (box.width <= 0 || box.height <= 0) return 1;
+  return Math.min(1, box.width / screen.width, box.height / screen.height);
+}
+
 function Viewer({ preview, device }: { preview: PreviewInfo | null; device: DeviceWidth }) {
   const [reloads, setReloads] = useState(0);
-  const width = DEVICE_WIDTH[device];
+  const size = DEVICE_SIZE[device];
   const running = preview?.state === "running";
+  // The page renders at the device's real size and is scaled down to fit the panel (or shown at
+  // 100% with scrolling). The area only exists while the app runs, so it is measured once it appears.
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  const [box, setBox] = useState({ width: 0, height: 0 });
+  const [actual, setActual] = useState(false);
+  const root = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!area || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setBox({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    ro.observe(area);
+    return () => ro.disconnect();
+  }, [area]);
+  const scale = actual ? 1 : fitScale(box, size);
   return (
-    <div className="flex min-h-[22rem] flex-1 flex-col">
+    <div ref={root} className="flex min-h-[max(22rem,72vh)] flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
         <fieldset className="m-0 flex items-center gap-1 border-0 p-0">
           <legend className="sr-only">Screen width</legend>
@@ -560,7 +596,11 @@ function Viewer({ preview, device }: { preview: PreviewInfo | null; device: Devi
                 size="sm"
                 variant="ghost"
                 aria-pressed={device === d.id}
-                onClick={() => usePreviewUi.getState().setDevice(d.id)}
+                onClick={() => {
+                  usePreviewUi.getState().setDevice(d.id);
+                  // Bring the whole screen into view (the panel scrolls when the page check is open).
+                  root.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+                }}
                 className={device === d.id ? "bg-hover text-fg" : undefined}
               >
                 <Icon /> {d.label}
@@ -568,31 +608,45 @@ function Viewer({ preview, device }: { preview: PreviewInfo | null; device: Devi
             );
           })}
         </fieldset>
+        <span className="ml-auto font-mono text-[11px] text-subtle" data-testid="device-size">
+          {size.width} × {size.height}
+          {box.width > 0 ? ` · ${Math.round(scale * 100)}%` : ""}
+        </span>
         <Button
           size="sm"
           variant="ghost"
-          className="ml-auto"
-          disabled={!running}
-          onClick={() => setReloads((n) => n + 1)}
+          aria-pressed={actual}
+          title={actual ? "Scale the page to fit the panel" : "Show the page at its real size and scroll"}
+          onClick={() => setActual((v) => !v)}
         >
+          {actual ? <Minimize2 /> : <Maximize2 />} {actual ? "Fit" : "100%"}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={!running} onClick={() => setReloads((n) => n + 1)}>
           <RotateCw /> Reload
         </Button>
       </div>
-      <section className="min-h-0 flex-1 overflow-auto bg-bg p-3" tabIndex={0} aria-label="Preview viewer">
+      <section
+        className={cn("min-h-0 flex-1 bg-bg p-3", actual ? "overflow-auto" : "overflow-hidden")}
+        tabIndex={0}
+        aria-label="Preview viewer"
+      >
         {running && preview ? (
-          <iframe
-            key={`${preview.id}:${preview.url}:${reloads}`}
-            src={preview.url}
-            title={`Preview of ${preview.label}`}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-            className={cn(
-              "mx-auto block h-full min-h-80 bg-white",
-              width
-                ? "rounded-lg border border-border-strong shadow-pop"
-                : "w-full rounded-md border border-border",
-            )}
-            style={width ? { width } : undefined}
-          />
+          <div ref={setArea} className="h-full min-h-80 w-full">
+            {/* The frame takes the scaled size in the layout; the page inside keeps the real one. */}
+            <div
+              className="mx-auto overflow-hidden rounded-lg border border-border-strong bg-white shadow-pop"
+              style={{ width: size.width * scale, height: size.height * scale }}
+            >
+              <iframe
+                key={`${preview.id}:${preview.url}:${reloads}`}
+                src={preview.url}
+                title={`Preview of ${preview.label}`}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                className="block origin-top-left border-0 bg-white"
+                style={{ width: size.width, height: size.height, transform: `scale(${scale})` }}
+              />
+            </div>
+          </div>
         ) : (
           <div className="flex h-full min-h-40 flex-col items-center justify-center gap-2 text-center">
             {preview?.state === "starting" ? (

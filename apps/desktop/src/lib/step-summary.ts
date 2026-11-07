@@ -200,6 +200,8 @@ const AGENT_NAMES: Record<string, string> = {
   "devops-docs": "DevOps & Docs",
   "devops-documentation": "DevOps & Docs",
   coder: "Coder",
+  starter: "Depo starter",
+  tester: "Depo tester",
 };
 
 /** "backend@1.0.0" -> "Backend", "ui-ux-design" -> "UI/UX Design". */

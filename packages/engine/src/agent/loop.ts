@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   type ChatMessage,
   type ChatResult,
@@ -14,7 +17,15 @@ import { fallOf, smallerContext, waitForRuntime } from "../models/revive";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
 import { type Repetition, RepetitionGuard } from "./repetition";
-import { extractTextToolCalls, looksLikeToolCall, stripToolMarkup } from "./textcalls";
+import {
+  extractTextToolCalls,
+  firstCallGroupEnd,
+  firstTextCallEnd,
+  inventsToolResult,
+  looksLikeToolCall,
+  stripToolMarkup,
+  withoutInventedResults,
+} from "./textcalls";
 
 /** A model call may be retried this many times after a transient failure. */
 const MODEL_RETRIES = 4;
@@ -27,6 +38,8 @@ const RETRY_BACKOFF = [1, 3, 8, 15];
 export const MAX_REPLY_TOKENS = 8192;
 /** Replies stopped for repeating themselves, in a row, before the task gives up. */
 const MAX_LOOPS = 3;
+/** Text allowed after a complete tool call written as text before the reply is stopped. */
+const AFTER_CALL_CHARS = 400;
 const log = getLogger({ component: "agent" });
 
 export type Emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown;
@@ -110,6 +123,10 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   const tools = toolDefinitions(p.toolNames, p.ctx.extraTools);
   const toolNames = tools.map((t) => t.name);
   const failures = new Map<string, number>();
+  // Looks the model already made since the last change (small models re-read the same file).
+  const looks = new Map<string, number>();
+  // Edits already made, with the file as they left it: the same edit on that file again only adds a copy.
+  const edits = new Map<string, string>();
   const changed = new Set<string>();
   let finalText = "";
   let steps = 0;
@@ -119,6 +136,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   let editedSinceTest = false;
   let finishNudges = 0;
   let doItNudges = 0;
+  let madeUpResults = 0;
   let loops = 0;
   const canEdit = p.toolNames.includes("write_file") || p.toolNames.includes("edit_file");
   // Lowered when the runtime crashes twice (a context too big for the GPU's memory).
@@ -157,6 +175,9 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     // A reply that starts repeating itself is stopped here, without cancelling the task.
     const guard = new RepetitionGuard();
     const loop: { found: Repetition | null } = { found: null };
+    // A reply that goes on after a complete tool call written as text (inventing the result,
+    // then the next steps) is stopped there: the call runs and the model gets the real result.
+    const early = { end: -1, checkedAt: 0, cut: false };
     const stop = new AbortController();
     const relay = () => stop.abort();
     signal.addEventListener("abort", relay, { once: true });
@@ -178,6 +199,14 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
           if (!loop.found) {
             loop.found = guard.check(streamed);
             if (loop.found) stop.abort();
+          }
+          if (!loop.found && !early.cut && streamed.length - early.checkedAt >= 80) {
+            early.checkedAt = streamed.length;
+            if (early.end < 0) early.end = firstTextCallEnd(streamed, toolNames);
+            if (early.end >= 0 && streamed.length - early.end > AFTER_CALL_CHARS) {
+              early.cut = true;
+              stop.abort();
+            }
           }
           const now = Date.now();
           if (now - lastEmit > 150) {
@@ -224,6 +253,25 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         status: "running",
       });
       res = { text: streamed.slice(0, loop.found.keep), toolCalls: [], finishReason: "unknown", usage: null };
+    }
+    let cutAfterCall = false;
+    if (res === null && early.cut && !signal.aborted) {
+      cutAfterCall = true;
+      // Keep the first group of calls (never a half-written one, nor the steps it went on to invent).
+      const cut = Math.max(firstCallGroupEnd(streamed, toolNames), early.end);
+      const after = streamed.slice(cut);
+      log.warn("model reply went on after a tool call", {
+        model: p.model,
+        chars: streamed.length,
+        inventedResult: /<tool_(response|result)>/i.test(after),
+      });
+      emit({
+        type: "retrying",
+        text: "The model kept writing after its tool call (making up the result), so Depo stopped it there and ran the call.",
+        details: { after: after.slice(0, 400) },
+        status: "running",
+      });
+      res = { text: streamed.slice(0, cut), toolCalls: [], finishReason: "unknown", usage: null };
     }
     if (res === null) break; // cancelled
     if ("badOutput" in res) {
@@ -276,6 +324,11 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       }
     }
     if (calls.length === 0) res.text = stripToolMarkup(res.text);
+    // Asked twice already: keep the model's own words and drop the results it made up.
+    if (calls.length === 0 && madeUpResults >= 2 && inventsToolResult(res.text))
+      res.text =
+        withoutInventedResults(res.text) ||
+        "The model could not finish this step with its tools. The work so far is ready for review.";
     calls = uniqueCalls(calls);
     const assistant: ChatMessage = {
       role: "assistant",
@@ -297,6 +350,21 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       const notes = steps < p.maxSteps ? (p.inbox?.() ?? []) : [];
       if (notes.length > 0) {
         history.push(...notes);
+        continue;
+      }
+      // A reply made of a tool result the model wrote itself is not an answer.
+      if (madeUpResults < 2 && inventsToolResult(res.text)) {
+        madeUpResults++;
+        emit({
+          type: "retrying",
+          text: "The model wrote a tool result itself instead of calling a tool. Asking it to call the tool.",
+          status: "running",
+        });
+        history.push({
+          role: "user",
+          content:
+            "You wrote a <tool_response> yourself. Only Depo writes tool results, after you call a tool. Call the tool you need (for example list_dir or read_file) and wait for its result, or give your final answer in your own words.",
+        });
         continue;
       }
       // Small models often hand the owner a list of steps instead of doing them.
@@ -360,13 +428,40 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       if (signal.aborted) break;
       p.lessons?.onCall(call.name, (call.arguments ?? {}) as Record<string, unknown>);
       if (call.name === "edit_file" || call.name === "write_file") editedSinceTest = true;
-      const result = p.toolNames.includes(call.name)
-        ? await executeTool(call.name, call.arguments, ctx)
-        : {
-            content: `The tool "${call.name}" is not available to you. Your tools: ${p.toolNames.join(", ")}.`,
-            isError: true,
-          };
+      const editKey =
+        call.name === "edit_file" ? call.rawArguments || JSON.stringify(call.arguments ?? null) : null;
+      const editPath = editKey ? fileOf(ctx.root, call.arguments) : null;
+      const again = !!editKey && !!editPath && edits.get(editKey) === fileHash(editPath);
+      if (again)
+        emit({
+          type: "retrying",
+          text: "The model made the same edit again; the file already has it, so Depo skipped it.",
+          status: "running",
+        });
+      const result = again
+        ? {
+            content:
+              "Nothing changed: you already made this exact edit and the file still has it. Do not make it again. If the request is done, give your final answer; otherwise make the next, different change.",
+            isError: false,
+          }
+        : p.toolNames.includes(call.name)
+          ? await executeTool(call.name, call.arguments, ctx)
+          : {
+              content: `The tool "${call.name}" is not available to you. Your tools: ${p.toolNames.join(", ")}.`,
+              isError: true,
+            };
+      if (editKey && editPath && !again && !result.isError) edits.set(editKey, fileHash(editPath));
       let content = result.content;
+      if (!LOOKS.has(call.name)) {
+        if (!again) looks.clear();
+      } else if (!result.isError) {
+        const key = `${call.name}:${call.rawArguments || JSON.stringify(call.arguments ?? null)}`;
+        const n = (looks.get(key) ?? 0) + 1;
+        looks.set(key, n);
+        if (n === 2) content += `\n\n${SAME_LOOK}`;
+        else if (n > 2)
+          content = `You made this exact call ${n} times and nothing changed since; the result is the same as before. ${SAME_LOOK}`;
+      }
       if (result.isError) {
         const key = `${call.name}:${call.rawArguments}`;
         const n = (failures.get(key) ?? 0) + 1;
@@ -382,6 +477,12 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         role: "user",
         content:
           "Depo stopped your last reply because it kept repeating the same tool calls. Each call above ran once; read the results. Make one call at a time and never repeat a call.",
+      });
+    else if (cutAfterCall)
+      history.push({
+        role: "user",
+        content:
+          "Depo stopped your last reply after your tool call: you went on to write its result and the next steps yourself. The real result is above. Make one tool call at a time, then wait for its result.",
       });
   }
 
@@ -410,6 +511,40 @@ export function describesStepsForOwner(text: string, changedFiles: number): bool
     text,
   );
 }
+
+/** The file an edit_file call names, inside the copy. */
+function fileOf(root: string, args: unknown): string | null {
+  const rel = (args as { path?: unknown } | null)?.path;
+  if (typeof rel !== "string" || !rel) return null;
+  const abs = path.resolve(root, rel);
+  return abs.startsWith(path.resolve(root)) ? abs : null;
+}
+
+function fileHash(abs: string): string {
+  try {
+    return createHash("sha1").update(fs.readFileSync(abs)).digest("hex");
+  } catch {
+    return "";
+  }
+}
+
+/** Tools that only look; any other call (an edit, a command) may change what they show. */
+const LOOKS = new Set([
+  "read_file",
+  "list_dir",
+  "find_files",
+  "search",
+  "repo_map",
+  "find_symbol",
+  "semantic_search",
+  "git_status",
+  "git_diff",
+  "read_playbook",
+  "bb_read",
+]);
+
+const SAME_LOOK =
+  "Note from Depo: you already made this exact call and nothing has changed since. Do not make it again: use the result you have. Make your change now (edit_file or write_file), or give your final answer.";
 
 /** The same call twice in one reply (same tool, same arguments) runs once. */
 export function uniqueCalls(calls: ToolCall[]): ToolCall[] {

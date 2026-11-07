@@ -229,12 +229,14 @@ describe("steering a single agent", () => {
     const res = e.tasks.steer(task.id, "Now add dark mode.");
     expect(res).toEqual({ delivery: "followup", taskId: task.id, noteId: null });
     await e.tasks.settled(task.id);
-    // A plain user message, not a framed note.
+    // The new request after a summary of the earlier turn, not a framed note.
     const last = requests
       .at(-1)
       ?.messages.filter((m) => m.role === "user")
       .at(-1);
-    expect(last?.content).toBe("Now add dark mode.");
+    expect(last?.content).toContain("New request, do this now: Now add dark mode.");
+    expect(last?.content).toContain("- Request: build the page");
+    expect(last?.content).not.toContain("Note from the owner");
     const { messages } = e.tasks.get(task.id);
     const followup = messages.filter((m) => m.role === "user").at(-1);
     expect(followup?.text).toBe("Now add dark mode.");
@@ -255,7 +257,7 @@ describe("steering a single agent", () => {
         return { text: "Finished." };
       }
       const last = req.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
-      return { text: `Handled: ${last}` };
+      return { text: `Handled: ${/New request, do this now: (.*)/.exec(last)?.[1] ?? last}` };
     });
     // One step only: the note arrives during the last step, so this run cannot read it.
     const { e, project } = await setup(model, { maxSteps: 1 });
@@ -265,7 +267,9 @@ describe("steering a single agent", () => {
     hold.open();
     await e.tasks.settled(task.id);
     expect(requests).toHaveLength(2);
-    expect(requests[1]?.messages.filter((m) => m.role === "user").at(-1)?.content).toBe("Use tabs.");
+    expect(requests[1]?.messages.filter((m) => m.role === "user").at(-1)?.content).toContain(
+      "New request, do this now: Use tabs.",
+    );
     const { messages } = e.tasks.get(task.id);
     const note = messages.find((m) => m.id === res.noteId);
     expect(note?.steer?.state).toBe("followup");

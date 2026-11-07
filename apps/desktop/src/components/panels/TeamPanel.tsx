@@ -18,6 +18,7 @@ import { BoardView } from "@/components/team/BoardView";
 import { DecisionTimeline } from "@/components/team/DecisionTimeline";
 import { PlanGraph } from "@/components/team/PlanGraph";
 import { ReplayBar } from "@/components/team/ReplayBar";
+import { SingleCrew } from "@/components/team/SingleCrew";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
@@ -92,15 +93,26 @@ export function TeamPanel() {
       </Empty>
     );
   }
-  if (view.mode === "single") {
+  if (view.mode === "single") return <SingleTask taskId={taskId} />;
+  return <MissionControl team={{ ...team, view }} player={player} taskId={taskId} />;
+}
+
+/** A single-agent task: the Coder and Depo's own starter, tester and reviewer. */
+function SingleTask({ taskId }: { taskId: string }) {
+  const projectId = useUi((s) => s.projectId);
+  const tasks = useQuery({
+    queryKey: ["tasks", "list", projectId],
+    queryFn: () => call("tasks.list", { projectId: projectId ?? "" }),
+    enabled: !!projectId,
+  });
+  const task = tasks.data?.tasks.find((x) => x.id === taskId);
+  if (!task)
     return (
-      <Empty icon={UsersRound} title="This task uses a single agent" action>
-        The team view follows tasks run by the agent team. Start a new task in Chat and pick a work mode such
-        as Full system or Backend only to see the agents plan, build, review and decide.
+      <Empty icon={Loader2} spin title="Loading the task">
+        One moment.
       </Empty>
     );
-  }
-  return <MissionControl team={{ ...team, view }} player={player} taskId={taskId} />;
+  return <SingleCrew task={task} projectId={projectId} />;
 }
 
 function MissionControl({

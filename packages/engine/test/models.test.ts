@@ -212,6 +212,36 @@ describe("models API", () => {
     expect(e.models.resolve("reasoning")?.contextLength).toBe(plan?.roles.reasoning?.contextLength ?? -1);
   });
 
+  test("roles skip models that are not downloaded, and pictures go only to models that can see", async () => {
+    const e = await boot();
+    const ollama = fakeOllama();
+    await call(e, "models.providers.set", {
+      providers: [{ id: "ollama", kind: "ollama", baseUrl: ollama.url, enabled: true }],
+    });
+    await call(e, "hardware.profile", {});
+    const { plan } = await call(e, "models.plan", {});
+    const fast = plan?.roles.fast?.tag;
+    expect(fast).toBeTruthy();
+    expect(e.models.resolve("fast")?.model).toBe(fast); // nothing listed yet: trusted
+    await call(e, "models.installed", {}); // qwen3-coder:30b and my-custom:latest only
+    if (fast !== "qwen3-coder:30b") expect(e.models.resolve("fast")).toBeNull(); // callers use the coder's
+    expect(e.models.resolve("coder")).not.toBeNull();
+    // The owner's setup: the coder model also set as the vision model. Chosen by hand, it is tried
+    // once; after it refuses a picture it is never used for pictures again, also after a restart.
+    await call(e, "models.assign", {
+      role: "vision",
+      ref: { providerId: "ollama", model: "my-custom:latest" },
+    });
+    expect(e.models.resolve("vision")?.model).toBe("my-custom:latest");
+    e.models.noteCannotSee("my-custom:latest");
+    expect(e.models.resolve("vision")).toBeNull();
+    expect(e.settings.get("models.blind")).toEqual(["my-custom:latest"]);
+    await call(e, "models.assign", { role: "vision", ref: { providerId: "ollama", model: "qwen2.5vl:3b" } });
+    expect(e.models.resolve("vision")?.model).toBe("qwen2.5vl:3b");
+    expect(e.models.canSee("qwen2.5-coder:3b")).toBe(false);
+    expect(e.models.canSee("qwen2.5vl:3b")).toBe(true);
+  });
+
   test("pull reports progress events and finishes; failures and cancellation are reported", async () => {
     const e = await boot();
     const ollama = fakeOllama();

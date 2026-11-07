@@ -43,7 +43,7 @@ export interface ReferenceServiceOptions {
   dataDir: string;
   bus: EventBus;
   logger: Logger;
-  models: Pick<ModelManager, "resolve">;
+  models: Pick<ModelManager, "resolve"> & Partial<Pick<ModelManager, "noteCannotSee">>;
   scheduler?: ModelScheduler;
   /** Test hook: how to get a headless browser. */
   open?: () => Promise<BrowserSession>;
@@ -380,9 +380,13 @@ export class ReferenceService {
         if (!vision) warnings.push("The vision model did not describe the design.");
       } catch (err) {
         if (o.signal?.aborted) throw err;
-        warnings.push(
-          `The vision model failed: ${err instanceof Error ? err.message.slice(0, 160) : String(err)}`,
-        );
+        const text = err instanceof Error ? err.message : String(err);
+        if (/does not support (multimodal|images|vision)|image input is not supported/i.test(text)) {
+          this.o.models.noteCannotSee?.(v.model);
+          warnings.push(
+            `${v.model} cannot read pictures, so only the colours were used. Pick a vision model (for example qwen2.5vl:3b) for the vision role.`,
+          );
+        } else warnings.push(`The vision model failed: ${text.slice(0, 160)}`);
       }
     }
 

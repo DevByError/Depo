@@ -240,6 +240,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       "Create a file or replace its whole content. Prefer edit_file for changes to existing files.",
     schema: z.object({ path: z.string().min(1), content: z.string() }),
     async run(a, ctx) {
+      refuseFolderOrPlaceholder(ctx.root, a.path, a.content);
       mustHaveRead(ctx, a.path, "replacing");
       const r = writeFileTool(ctx.root, a.path, a.content);
       ctx.readPaths?.add(r.path);
@@ -663,6 +664,50 @@ const ARGUMENT_HINTS: Record<string, string> = {
   write_file: 'write_file needs {"path": "relative/path", "content": "the whole file"}.',
   run_command: 'run_command needs {"command": "..."}; add "cwd": "sub/folder" to run it in a sub-folder.',
 };
+
+/** Content small models write instead of a file ("Folder created.", "// your code here"). */
+const PLACEHOLDER =
+  /^\s*(folder created\.?|file created\.?|created\.?|\.\.\.|…|todo\.?|\/\/ ?(your )?code( goes)? here\.?|<[a-z _-]*content[a-z _-]*>|\(?content\)?|placeholder\.?)\s*$/i;
+
+/**
+ * Small models "create folders" with write_file and write a note instead of the file. Folders are
+ * made by themselves; say so, list what is already there, and ask for the real content.
+ */
+export function refuseFolderOrPlaceholder(root: string, rel: string, content: string): void {
+  const norm = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  const abs = resolveInside(root, norm).abs;
+  let isDir = false;
+  try {
+    isDir = fs.statSync(abs).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (isDir || /\/$/.test(norm)) {
+    const name = norm.replace(/\/+$/, "") || ".";
+    let inside = "";
+    if (isDir) {
+      try {
+        const entries = fs
+          .readdirSync(abs, { withFileTypes: true })
+          .filter((e) => !/^(node_modules|\.git|\.next|dist|build)$/.test(e.name))
+          .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+          .sort();
+        inside = entries.length
+          ? ` It already exists and has: ${entries.slice(0, 20).join(", ")}${entries.length > 20 ? ", …" : ""}.`
+          : " It already exists and is empty.";
+      } catch {
+        inside = "";
+      }
+    }
+    throw new ToolError(
+      `${name}/ is a folder, not a file.${inside} Folders are created by themselves when you write a file inside them: call write_file with a file path such as ${name}/index.ts and its whole content. Use list_dir to see what a folder holds.`,
+    );
+  }
+  if (PLACEHOLDER.test(content))
+    throw new ToolError(
+      `Nothing was written: "${content.trim().slice(0, 40)}" is not file content. Write the whole, real content of ${norm} (the code or text the file should hold).`,
+    );
+}
 
 function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {
   if (!ctx.readPaths) return;

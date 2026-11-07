@@ -2,8 +2,23 @@ import { create } from "zustand";
 
 export type DeviceWidth = "phone" | "tablet" | "desktop";
 
-/** Pixel widths of the embedded viewer; desktop fills the space. */
-export const DEVICE_WIDTH: Record<DeviceWidth, number | null> = { phone: 375, tablet: 768, desktop: null };
+/**
+ * Real screen sizes in CSS pixels (a common phone, a tablet in portrait, a laptop). The viewer
+ * renders the page at exactly this size and scales it down to fit, so what you see is what that
+ * screen shows, layout breakpoints included.
+ */
+export const DEVICE_SIZE: Record<DeviceWidth, { width: number; height: number; name: string }> = {
+  phone: { width: 390, height: 844, name: "Phone" },
+  tablet: { width: 820, height: 1180, name: "Tablet" },
+  desktop: { width: 1440, height: 900, name: "Desktop" },
+};
+
+/** Widths of the viewer, kept for callers that only need the width. */
+export const DEVICE_WIDTH: Record<DeviceWidth, number> = {
+  phone: DEVICE_SIZE.phone.width,
+  tablet: DEVICE_SIZE.tablet.width,
+  desktop: DEVICE_SIZE.desktop.width,
+};
 
 interface PreviewUi {
   /** The project the target belongs to; a target from another project counts as "project folder". */

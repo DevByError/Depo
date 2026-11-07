@@ -1,6 +1,39 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+
+/**
+ * The package manager a JS folder uses: its `packageManager` field, then lock files (in the folder
+ * or up to the project root), then a Bun-only setup (bun types, `bun` in its scripts), else npm.
+ * Before the first install there is no lock file, so the field and the scripts matter.
+ */
+export function packageManagerFor(dir: string, root: string, pkg: Record<string, unknown>): PackageManager {
+  const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
+  if (declared === "pnpm" || declared === "yarn" || declared === "bun" || declared === "npm") return declared;
+  const exists = (f: string) => {
+    try {
+      return fs.existsSync(f);
+    } catch {
+      return false;
+    }
+  };
+  for (let d = dir; ; d = path.dirname(d)) {
+    if (exists(path.join(d, "bun.lock")) || exists(path.join(d, "bun.lockb"))) return "bun";
+    if (exists(path.join(d, "pnpm-lock.yaml"))) return "pnpm";
+    if (exists(path.join(d, "yarn.lock"))) return "yarn";
+    if (exists(path.join(d, "package-lock.json"))) return "npm";
+    if (path.resolve(d) === path.resolve(root) || path.dirname(d) === d) break;
+  }
+  const deps = {
+    ...((pkg.dependencies as Record<string, string> | undefined) ?? {}),
+    ...((pkg.devDependencies as Record<string, string> | undefined) ?? {}),
+  };
+  const scripts = Object.values((pkg.scripts as Record<string, string> | undefined) ?? {});
+  if ("@types/bun" in deps || "bun-types" in deps || scripts.some((x) => /^bun(x)?\s/.test(x))) return "bun";
+  return "npm";
+}
+
 /**
  * What a project is built with, read from its manifest files (package.json, requirements.txt,
  * pyproject.toml, pubspec.yaml, docker-compose...). Cheap and deterministic: no model, no network,
@@ -245,18 +278,16 @@ export function detectStack(root: string): StackInfo {
           info[kind].push(label);
           hints.push(...h);
         }
-        const pm =
-          has(dir, "bun.lock") || has(dir, "bun.lockb")
-            ? "bun"
-            : has(dir, "pnpm-lock.yaml")
-              ? "pnpm"
-              : has(dir, "yarn.lock")
-                ? "yarn"
-                : "npm";
+        const pm = packageManagerFor(dir, root, pkg as Record<string, unknown>);
         info.packageManager ??= pm;
         const scripts = pkg.scripts ?? {};
+        // `bun test` is Bun's own runner (it skips the script), so Bun runs scripts with `bun run`.
         const run = (s: string) =>
-          pm === "npm" && s !== "test" && s !== "start" ? `npm run ${s}` : `${pm} ${s}`;
+          pm === "bun" && s === "test"
+            ? "bun run test"
+            : pm === "npm" && s !== "test" && s !== "start"
+              ? `npm run ${s}`
+              : `${pm} ${s}`;
         if (scripts.test && !/no test specified/.test(scripts.test))
           info.testCommand ??= `${prefix(rel)}${run("test")}`;
         const runScript = scripts.dev ? "dev" : scripts.start ? "start" : null;

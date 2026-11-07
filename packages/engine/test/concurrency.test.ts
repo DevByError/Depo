@@ -166,7 +166,9 @@ describe("multiple projects", () => {
     ).systemPrompt(a.id, a.name, a.rootPath);
     expect(prompt).toContain("All endpoints return JSON objects");
     expect(prompt).toContain("app/main.py");
-    expect(prompt).toContain("Repo map");
+    // The repo map, corrected for the agent's copy, with the files' symbols.
+    expect(prompt).toContain("Files in your copy now");
+    expect(prompt).toContain("def read_root");
   });
 });
 

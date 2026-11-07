@@ -297,6 +297,7 @@ function finishSetup(o: {
   previews?: PreviewInfo[];
   consoleErrors?: string[];
   seedOutput?: string;
+  testsFail?: boolean;
 }) {
   const dir = temp("depo finish");
   const { bus, approvals } = busAndApprovals(dir);
@@ -315,7 +316,12 @@ function finishSetup(o: {
   const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8"));
   pkg.scripts["db:migrate"] = "echo migrated";
   pkg.scripts["db:seed"] = `echo ${o.seedOutput ?? "demo@example.com / demo12345"}`;
+  pkg.scripts.test = o.testsFail ? "echo 1 fail && exit 1" : "echo 8 pass";
   fs.writeFileSync(pkgFile, JSON.stringify(pkg));
+  const fePkgFile = path.join(root, "fe", "package.json");
+  const fePkg = JSON.parse(fs.readFileSync(fePkgFile, "utf8"));
+  fePkg.scripts.test = "echo 3 pass";
+  fs.writeFileSync(fePkgFile, JSON.stringify(fePkg));
   let installed = !o.installs;
   const stopped: string[] = [];
   const calls: string[] = [];
@@ -389,7 +395,7 @@ function finishSetup(o: {
     taskId: "tsk_1",
     agent: "coder",
     // What the owner's "Allow all in this project" covers; here only what the test runs.
-    commandRules: { allow: ["echo", "bun run db:migrate", "bun run db:seed"], deny: [] },
+    commandRules: { allow: ["echo", "bun run db:migrate", "bun run db:seed", "bun run test"], deny: [] },
   };
   const markInstalled = () => {
     installed = true;
@@ -414,6 +420,8 @@ describe("the finish line: Depo runs the work like the owner will", () => {
     expect(r.running.map((p) => p.url)).toEqual(["http://127.0.0.1:3000/", "http://127.0.0.1:4000/"]);
     expect(r.notes).toContain("Installed the packages in be.");
     expect(r.notes).toContain("Installed the packages in fe.");
+    expect(r.notes).toContain("Tests pass in be (`bun run test`).");
+    expect(r.notes).toContain("Tests pass in fe (`bun run test`).");
     expect(r.notes.some((n) => n.startsWith("Test database: login_demo on 127.0.0.1:3307"))).toBe(true);
     expect(r.notes).toContain("Demo sign-ins: demo@example.com / demo12345.");
     expect(r.notes.some((n) => n.includes("no console errors"))).toBe(true);
@@ -425,6 +433,15 @@ describe("the finish line: Depo runs the work like the owner will", () => {
       "Running now: Next.js (fe) http://127.0.0.1:3000/ · Bun (be) http://127.0.0.1:4000/",
     );
     expect(finishSummary({ problems: [], running: [], notes: [] })).toBe("");
+  }, 30_000);
+
+  test("failing tests come back to the agent before the app is started", async () => {
+    const s = finishSetup({ testsFail: true });
+    const r = await runFinishLine(s.ctx, s.deps, new AbortController().signal);
+    expect(r.problems).toHaveLength(1);
+    expect(r.problems[0]).toContain("The tests in be fail (`bun run test`)");
+    expect(r.problems[0]).toContain("1 fail");
+    expect(s.calls).not.toContain("autoStart");
   }, 30_000);
 
   test("an app that does not start comes back to the agent with its last output lines", async () => {

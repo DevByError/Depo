@@ -10,6 +10,14 @@ test("a pasted picture is read into colours with roles and shown under the messa
   await page.goto("");
   await expect(page.getByTestId("connection-status")).toHaveText(/Engine connected/);
   await useFakeOllamaAsCoder(page);
+  // The scripted model also plays the vision role, chosen by hand (an Auto-Fit pick must look able to see).
+  const vision = page
+    .getByRole("region", { name: "Auto-Fit plan" })
+    .getByRole("article")
+    .filter({ has: page.getByRole("heading", { name: "Vision", exact: true }) })
+    .getByLabel("Use");
+  await vision.selectOption({ label: "qwen2.5-coder:1.5b · ollama" });
+  await expect(vision).toHaveValue(/qwen2\.5-coder/);
   await page.getByRole("button", { name: "Open a project folder", exact: true }).click();
   await page.getByLabel("Project folder path").fill(project);
   await page.getByRole("button", { name: "Open", exact: true }).click();
@@ -54,7 +62,7 @@ test("a pasted picture is read into colours with roles and shown under the messa
   await expect(swatch("Background")).toContainText("#0b1220", { timeout: 60_000 });
   await expect(swatch("Surface")).toContainText("#111a2e");
   await expect(swatch("Primary")).toContainText("#14b8a6");
-  // The scripted model also plays the vision role here, so its notes are under "What Depo saw".
+  // The scripted model plays the vision role, so its notes are under "What Depo saw".
   const saw = refs.getByRole("button", { name: "What Depo saw" });
   await expect(saw).toHaveAttribute("aria-expanded", "false");
   await saw.click();

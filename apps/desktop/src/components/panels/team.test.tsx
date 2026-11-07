@@ -147,7 +147,7 @@ test("without a task the Team screen explains how to start a team run", async ()
   expect(useUi.getState().centerTab).toBe("chat");
 });
 
-test("a single-agent task says the team view is for team runs", async () => {
+test("a single-agent task shows the Coder and Depo's own starter, tester and reviewer at work", async () => {
   responses["team.timeline"] = () => ({
     ...timeline(),
     mode: "single",
@@ -155,8 +155,58 @@ test("a single-agent task says the team view is for team runs", async () => {
     agents: [],
     decisions: [],
   });
+  const ev = (
+    seq: number,
+    agent: string,
+    type: string,
+    text: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id: `evt_${String(seq).padStart(28, "0")}`,
+    ts: new Date(Date.UTC(2026, 10, 7, 15, 5, seq)).toISOString(),
+    seq,
+    projectId: "prj_1",
+    taskId: "tsk_1",
+    agent,
+    type,
+    text,
+    details: null,
+    durationMs: null,
+    status: "succeeded",
+    ephemeral: false,
+    ...extra,
+  });
+  responses["events.recent"] = () => ({
+    events: [
+      ev(
+        1,
+        "starter@depo",
+        "writing_file",
+        "Started from Depo's Next.js + Bun + MySQL app blueprint (41 files, tested)",
+      ),
+      ev(2, "coder@1.0.0", "editing_file", "Edited fe/app/globals.css (2 changes)"),
+      ev(3, "tester@depo", "testing", "Depo is installing, testing, starting and checking the app", {
+        status: "started",
+      }),
+      ev(4, "coder@1.0.0", "thinking", "streaming", { ephemeral: true }),
+      ev(5, "tester@depo", "running_command", "bun run test exited with 0"),
+    ],
+  });
+  responses["tasks.list"] = () => ({
+    tasks: [{ id: "tsk_1", title: "Make it responsive", status: "running", model: "qwen2.5-coder:3b" }],
+  });
   wrap(<TeamPanel />);
-  expect(await screen.findByText("This task uses a single agent")).toBeTruthy();
+  const crew = await screen.findByRole("list", { name: "Who works on this task" });
+  await waitFor(() =>
+    expect(crew.querySelector('[data-lane="tester"]')?.getAttribute("data-state")).toBe("working"),
+  );
+  expect(crew.querySelector('[data-lane="starter"]')?.getAttribute("data-state")).toBe("done");
+  expect(crew.querySelector('[data-lane="coder"]')?.getAttribute("data-state")).toBe("done");
+  expect(crew.querySelector('[data-lane="reviewer"]')?.getAttribute("data-state")).toBe("waiting");
+  expect(within(crew).getByText(/qwen2.5-coder:3b/)).toBeTruthy();
+  const steps = screen.getByRole("list", { name: "Steps, newest first" });
+  expect(within(steps).getAllByRole("listitem")).toHaveLength(4); // the streaming one is left out
+  expect(within(steps).getAllByRole("listitem")[0]?.textContent).toContain("bun run test exited with 0");
 });
 
 test("mission control shows the graph, live agents and decisions, and filters by agent", async () => {

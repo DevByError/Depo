@@ -153,7 +153,7 @@ describe("the agent loop stops a reply that repeats itself", () => {
       emit: (e) => events.push({ type: e.type, text: e.text }),
       persist: () => {},
     };
-    return { params, requests, history, events };
+    return { params, requests, history, events, root };
   }
 
   /** Streams the same lines until Depo stops it (or a safety limit, so a failing test ends). */
@@ -186,7 +186,8 @@ describe("the agent loop stops a reply that repeats itself", () => {
     expect(history.some((m) => m.role === "user" && m.content.includes("Depo stopped your last reply"))).toBe(
       true,
     );
-    expect(events.some((e) => e.type === "retrying" && e.text.includes("repeating itself"))).toBe(true);
+    // Stopped soon after the calls (before the repetition guard): the extra copies never run.
+    expect(events.some((e) => e.type === "retrying" && e.text.includes("Depo stopped it there"))).toBe(true);
   });
 
   test("a model that keeps repeating itself ends the task with a plain reason", async () => {
@@ -205,5 +206,54 @@ describe("the agent loop stops a reply that repeats itself", () => {
     expect(history.some((m) => m.role === "user" && m.content.includes("too long and was cut off"))).toBe(
       true,
     );
+  });
+
+  test("reading the same file again with nothing changed is pointed out, then cut short", async () => {
+    const read = '{"name": "read_file", "arguments": {"path": "a.txt"}}';
+    const { params, history } = setup([answer(read), answer(read), answer(read), answer("Done.")]);
+    params.toolNames = ["read_file", "edit_file"];
+    const res = await runAgentLoop(params);
+    expect(res.finalText).toBe("Done.");
+    const tools = history.filter((m) => m.role === "tool").map((m) => m.content);
+    expect(tools).toHaveLength(3);
+    expect(tools[0]).toContain("alpha");
+    expect(tools[0]).not.toContain("already made this exact call");
+    expect(tools[1]).toContain("alpha");
+    expect(tools[1]).toContain("already made this exact call");
+    expect(tools[2]).not.toContain("alpha");
+    expect(tools[2]).toContain("3 times");
+  });
+
+  test("the same edit again on a file that already has it is skipped, not added twice", async () => {
+    const read = '{"name": "read_file", "arguments": {"path": "a.txt"}}';
+    const edit =
+      '{"name": "edit_file", "arguments": {"path": "a.txt", "edits": [{"search": "alpha", "replace": "alpha\\nmore"}]}}';
+    const { params, history, events, root } = setup([
+      answer(read),
+      answer(edit),
+      answer(read),
+      answer(edit),
+      answer("Done."),
+    ]);
+    params.toolNames = ["read_file", "edit_file"];
+    const res = await runAgentLoop(params);
+    expect(res.finalText).toBe("Done.");
+    expect(fs.readFileSync(path.join(root, "a.txt"), "utf8")).toBe("alpha\nmore\n");
+    const tools = history.filter((m) => m.role === "tool").map((m) => m.content);
+    expect(tools[3]).toContain("already made this exact edit");
+    expect(events.some((e) => e.text.includes("Depo skipped it"))).toBe(true);
+  });
+
+  test("a change in between makes the same read new again", async () => {
+    const read = '{"name": "read_file", "arguments": {"path": "a.txt"}}';
+    const edit =
+      '{"name": "edit_file", "arguments": {"path": "a.txt", "edits": [{"search": "alpha", "replace": "gamma"}]}}';
+    const { params, history } = setup([answer(read), answer(edit), answer(read), answer("Done.")]);
+    params.toolNames = ["read_file", "edit_file"];
+    const res = await runAgentLoop(params);
+    expect(res.finalText).toBe("Done.");
+    const tools = history.filter((m) => m.role === "tool").map((m) => m.content);
+    expect(tools[2]).toContain("gamma");
+    expect(tools.some((t) => t.includes("already made this exact call"))).toBe(false);
   });
 });

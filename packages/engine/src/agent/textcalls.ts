@@ -12,22 +12,36 @@ export function parseTextToolCalls(text: string, toolNames: string[]): ToolCall[
 /** Tool calls written as text, plus the reply with those calls taken out (for display). */
 export function extractTextToolCalls(text: string, toolNames: string[]): { calls: ToolCall[]; rest: string } {
   const known = new Set(toolNames);
-  const candidates: { raw: string; json: string }[] = [];
+  const tagged: { raw: string; json: string }[] = [];
   for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g))
-    if (m[1]) candidates.push({ raw: m[0], json: m[1] });
-  if (candidates.length === 0) {
-    // A fenced block may hold several calls, one JSON object after another.
-    for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?)\s*```/g)) {
-      const objs = m[1] ? jsonObjects(m[1]) : [];
-      if (objs.length > 1) for (const o of objs) candidates.push({ raw: o, json: o });
-      else if (m[1]) candidates.push({ raw: m[0], json: m[1] });
-    }
+    if (m[1]) tagged.push({ raw: m[0], json: m[1] });
+  // A fenced block may hold several calls, one JSON object after another.
+  const fenced: { raw: string; json: string }[] = [];
+  for (const m of text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?)\s*```/g)) {
+    const objs = m[1] ? jsonObjects(m[1]) : [];
+    if (objs.length > 1) for (const o of objs) fenced.push({ raw: o, json: o });
+    else if (m[1]) fenced.push({ raw: m[0], json: m[1] });
   }
-  if (candidates.length === 0) {
-    // Bare JSON objects, possibly with prose around them: {"name": ..., "arguments": ...}
-    for (const obj of jsonObjects(text))
-      if (/"(name|tool)"\s*:/.test(obj)) candidates.push({ raw: obj, json: obj });
+  // Bare JSON objects, possibly with prose around them: {"name": ..., "arguments": ...}
+  const bare = () =>
+    jsonObjects(text)
+      .filter((obj) => /"(name|tool)"\s*:/.test(obj))
+      .map((obj) => ({ raw: obj, json: obj }));
+  // The first kind that holds a real call wins: a fenced package.json ({"name": "my-app"}) must
+  // not hide a call written next to it.
+  for (const candidates of [tagged, fenced]) {
+    const r = callsFrom(candidates, text, known);
+    if (r.calls.length) return r;
   }
+  const r = callsFrom(bare(), text, known);
+  return r.calls.length ? r : { calls: [], rest: text };
+}
+
+function callsFrom(
+  candidates: { raw: string; json: string }[],
+  text: string,
+  known: Set<string>,
+): { calls: ToolCall[]; rest: string } {
   const calls: ToolCall[] = [];
   let rest = text;
   // Small models often "cd" before a command, as if in a terminal: carry it into run_command's cwd.
@@ -105,6 +119,21 @@ export function closeBrackets(s: string): string {
   return s + stack.reverse().join("");
 }
 
+/** A reply that contains a tool result the model wrote itself ("<tool_response>…"). */
+export function inventsToolResult(text: string): boolean {
+  return /<tool_(response|result)>|<\/tool_(response|result)>/i.test(text);
+}
+
+/** The reply without the tool results the model wrote itself (and anything after an unclosed one). */
+export function withoutInventedResults(text: string): string {
+  return text
+    .replace(/<tool_(response|result)>[\s\S]*?<\/tool_(response|result)>/gi, "")
+    .replace(/<tool_(response|result)>[\s\S]*$/i, "")
+    .replace(/<\/?tool_(response|result)>/gi, "")
+    .replace(/```\w*\s*```/g, "")
+    .trim();
+}
+
 /** Does this reply look like an attempted tool call that could not be read? */
 export function looksLikeToolCall(text: string, toolNames: string[]): boolean {
   return /"(name|tool)"\s*:/.test(text) && toolNames.some((n) => text.includes(`"${n}"`));
@@ -137,7 +166,73 @@ export function escapeControlCharsInStrings(s: string): string {
 
 /** Top-level balanced {...} spans in text, string-aware. */
 function jsonObjects(text: string): string[] {
-  const found: string[] = [];
+  return jsonObjectSpans(text).map((s) => text.slice(s.start, s.end));
+}
+
+/**
+ * Where the first complete tool call written as text ends, or -1. While a reply streams, a small
+ * model that writes a call and then carries on (writing the result itself, then the next steps)
+ * can be stopped there instead of writing for minutes.
+ */
+export function firstTextCallEnd(text: string, toolNames: string[]): number {
+  return textCallSpans(text, toolNames)[0]?.end ?? -1;
+}
+
+/** Each complete tool call written as text (start and end), in order. */
+export function textCallSpans(text: string, toolNames: string[]): { start: number; end: number }[] {
+  const known = new Set(toolNames);
+  const isCall = (json: string) => {
+    const j = parseStrict(json);
+    if (!j || typeof j !== "object") return false;
+    const o = j as Record<string, unknown>;
+    const name = typeof o.name === "string" ? o.name : typeof o.tool === "string" ? o.tool : null;
+    return !!name && (known.has(name) || CD_TOOLS.has(name));
+  };
+  const spans: { start: number; end: number }[] = [];
+  for (const m of text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g))
+    if (m[1] && isCall(m[1])) spans.push({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+  // Objects inside <tool_call> tags are already counted by the tag.
+  const tagged = (s: { start: number; end: number }) =>
+    spans.some((t) => t.start <= s.start && t.end >= s.end);
+  for (const s of jsonObjectSpans(text)) if (!tagged(s) && isCall(text.slice(s.start, s.end))) spans.push(s);
+  return spans.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * The end of the first group of tool calls written next to each other (only blank lines, commas,
+ * fences or call tags between them), or -1. Calls further on belong to steps the model went on to
+ * invent after the first one, and are not run.
+ */
+export function firstCallGroupEnd(text: string, toolNames: string[]): number {
+  const spans = textCallSpans(text, toolNames);
+  const first = spans[0];
+  if (!first) return -1;
+  let end = first.end;
+  for (const s of spans.slice(1)) {
+    const gap = text
+      .slice(end, s.start)
+      .replace(/<\/?(tool_call|tool_response|tool_result)>/gi, "")
+      .replace(/```+\w*/g, "")
+      .replace(/[\s,;]/g, "");
+    if (gap) break;
+    end = s.end;
+  }
+  return end;
+}
+
+function parseStrict(s: string): unknown {
+  for (const attempt of [s, escapeControlCharsInStrings(s)]) {
+    try {
+      return JSON.parse(attempt);
+    } catch {
+      // try the next repair
+    }
+  }
+  return undefined;
+}
+
+function jsonObjectSpans(text: string): { start: number; end: number }[] {
+  const found: { start: number; end: number }[] = [];
   let depth = 0;
   let start = -1;
   let inStr = false;
@@ -156,7 +251,7 @@ function jsonObjects(text: string): string[] {
       depth++;
     } else if (ch === "}" && depth > 0) {
       depth--;
-      if (depth === 0 && start >= 0) found.push(text.slice(start, i + 1));
+      if (depth === 0 && start >= 0) found.push({ start, end: i + 1 });
     }
   }
   return found;

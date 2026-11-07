@@ -44,6 +44,7 @@ import type { PreviewHooks } from "../tools/preview-tools";
 import { computeChanges } from "../workspace/changes";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { type FinishDeps, finishSummary, problemsPrompt, runFinishLine } from "./finish";
+import { compactEarlierTurns, copyRepoMap, copyTree, isFollowUp } from "./followup";
 import { kickstart } from "./kickstart";
 import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
@@ -93,10 +94,15 @@ export interface TaskManagerOptions {
 
 /** Rounds of "Depo ran it and found problems" before the answer is accepted as it is. */
 const FINISH_ROUNDS = 2;
+/** Depo's own steps, shown under their own names next to the agents. */
+export const DEPO_STARTER = "starter@depo";
+export const DEPO_TESTER = "tester@depo";
 
 /** Budgets (characters) for what is added to the system prompt. */
 const MEMORY_BUDGET = 5000;
 const REPO_MAP_BUDGET = 3500;
+/** The index's whole map, trimmed afterwards to what the private copy holds. */
+const FULL_MAP = 200_000;
 
 /** Small contexts (8k) get smaller memory and repo map blocks, so the conversation still fits. */
 export function promptBudgets(contextLength: number): { memory: number; repoMap: number } {
@@ -154,10 +160,13 @@ export class TaskManager {
       options: () => this.teamOptions(),
       projectSettings: (id) => o.projectSettings?.(id),
       addMessage: (taskId, msg, agent) => this.addMessage(taskId, msg as ChatMessage, undefined, agent),
-      knowledge: (id) => this.knowledge(id),
+      knowledge: (id, root) => this.knowledge(id, root),
       lessons: (id) => this.lessonTracker(id),
       memoryContext: (id) => o.memory?.contextFor(id, this.teamBudgets().memory).trim() ?? "",
-      repoMap: (id) => o.indexer?.repoMap(id, this.teamBudgets().repoMap).trim() ?? "",
+      repoMap: (id, root) =>
+        root
+          ? copyRepoMap(root, o.indexer?.repoMap(id, FULL_MAP) ?? "", this.teamBudgets().repoMap).trim()
+          : (o.indexer?.repoMap(id, this.teamBudgets().repoMap).trim() ?? ""),
       ...(o.extras ? { extras: o.extras } : {}),
       manifest: o.manifest,
       ...(o.previews ? { previews: o.previews } : {}),
@@ -491,17 +500,25 @@ export class TaskManager {
 
   /** Run the finish line, with a start and an end in the activity feed. Never throws. */
   private async finish(
-    ctx: ToolContext,
+    coderCtx: ToolContext,
     deps: FinishDeps,
     signal: AbortSignal,
-    emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => void,
   ): Promise<Awaited<ReturnType<typeof runFinishLine>>> {
-    emit({ type: "testing", text: "Depo is installing, starting and checking the app", status: "started" });
+    // Depo's own tester does this, under its own name in the activity feed and the Team view.
+    const ctx: ToolContext = { ...coderCtx, agent: DEPO_TESTER };
+    const emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) =>
+      this.o.bus.emit({ ...e, agent: DEPO_TESTER, projectId: ctx.projectId, taskId: ctx.taskId });
+    emit({
+      type: "testing",
+      text: "Depo is installing, testing, starting and checking the app",
+      status: "started",
+    });
     const t0 = performance.now();
     try {
       const r = await runFinishLine(ctx, deps, signal);
+      // Not a test_result: the real test runs inside are recorded on their own.
       emit({
-        type: "test_result",
+        type: "info",
         text: r.problems.length
           ? `The app does not run yet: ${r.problems[0]?.split("\n")[0] ?? ""}`
           : r.running.length
@@ -704,22 +721,39 @@ export class TaskManager {
       emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
       return;
     }
-    const startNote = this.kickstart(row, project, ws, newReferences, emit);
+    const startNote = this.kickstart(row, project, ws, newReferences, (e) =>
+      this.o.bus.emit({ ...e, agent: DEPO_STARTER, projectId: project.id, taskId }),
+    );
     if (row.mode !== "single") {
       await this.runTeam(row, project, ws, signal, startNote);
       return;
     }
+    let history = this.loadHistory(taskId);
+    const followUp = isFollowUp(history);
+    const asked = followUp ? (history.at(-1)?.content ?? "").replace(/\s+/g, " ").trim() : "";
     emit({
       type: "planning",
-      text: `Working on: ${row.title}`,
+      text: `Working on: ${asked ? (asked.length > 120 ? `${asked.slice(0, 119)}…` : asked) : row.title}`,
       details: { model, contextLength },
       status: "started",
     });
 
     const settings = this.o.projectSettings?.(project.id);
     this.o.indexer?.ensure(project.id);
-    const history = this.loadHistory(taskId);
     const request = requestText(row.prompt, history);
+    // A follow-up: the earlier turns become a short summary with the copy's files, so the model
+    // builds on them instead of starting the first request again.
+    if (followUp) {
+      history = compactEarlierTurns(history, {
+        tree: copyTree(ws.root, promptBudgets(contextLength).repoMap),
+        brief: this.o.references?.brief(taskId) ?? "",
+      });
+      emit({
+        type: "planning",
+        text: "Follow-up: the model sees the earlier work as a summary and the files as they are now",
+        status: "info",
+      });
+    }
     // The system prompt is rebuilt on every run so it carries the latest memory and repo map.
     const sys: ChatMessage = {
       role: "system",
@@ -747,7 +781,7 @@ export class TaskManager {
       signal,
       env: venvEnv(ws.root),
       ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
-      ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id) } : {}),
+      ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id, ws.root) } : {}),
       readPaths: new Set<string>(),
       ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
       ...(this.o.previews ? { previews: this.o.previews } : {}),
@@ -762,8 +796,9 @@ export class TaskManager {
     let finishRounds = 0;
     const beforeFinish = finishLine
       ? async ({ changed }: { changed: string[] }) => {
-          if (!changed.length) return null;
-          const r = await this.finish(ctx, { ...finishLine, projectName: project.name }, signal, emit);
+          // Depo's own starting project and earlier turns count too, not only this turn's edits.
+          if (!changed.length && !computeChanges(project.rootPath, ws.root, ws.manifest).length) return null;
+          const r = await this.finish(ctx, { ...finishLine, projectName: project.name }, signal);
           if (r.problems.length && finishRounds < FINISH_ROUNDS) {
             finishRounds++;
             return { retry: problemsPrompt(r) };
@@ -801,6 +836,15 @@ export class TaskManager {
     if (!finalText) {
       finalText = `I stopped after ${maxSteps} steps without finishing. The changes so far are ready for review; send a follow-up message to continue.`;
       this.addMessage(taskId, { role: "assistant", content: finalText });
+      // Still install, test, start and check what is there, so the owner sees where it stands.
+      if (finishLine && result.hitLimit && computeChanges(project.rootPath, ws.root, ws.manifest).length) {
+        const r = await this.finish(ctx, { ...finishLine, projectName: project.name }, signal);
+        const text = signal.aborted ? "" : finishSummary(r);
+        if (text) {
+          finalText += `\n\n${text}`;
+          this.addMessage(taskId, { role: "assistant", content: text });
+        }
+      }
     }
     this.o.db
       .update(tasks)
@@ -890,7 +934,7 @@ export class TaskManager {
         env: venvEnv(ws.root),
         ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
       };
-      const r = await this.finish(ctx, { ...this.o.finishLine, projectName: project.name }, signal, emit);
+      const r = await this.finish(ctx, { ...this.o.finishLine, projectName: project.name }, signal);
       const extra = finishSummary(r);
       if (extra) {
         this.addMessage(taskId, { role: "assistant", content: extra }, undefined, agentTag("manager"));
@@ -972,10 +1016,12 @@ export class TaskManager {
     const context: string[] = [];
     const memory = this.o.memory?.contextFor(projectId, budgets.memory).trim();
     if (memory) context.push(`# What you know about this project\n${memory}`);
-    const map = this.o.indexer?.repoMap(projectId, budgets.repoMap).trim();
+    // The map describes the private copy as it is now (the index describes the project folder,
+    // which misses a starting project written into the copy and earlier turns' work).
+    const map = copyRepoMap(root, this.o.indexer?.repoMap(projectId, FULL_MAP) ?? "", budgets.repoMap).trim();
     if (map) {
       context.push(
-        `# Repo map (files and their main symbols; use repo_map, find_symbol and semantic_search for more)\n${map}`,
+        `# Files in your copy now (with their main symbols; use repo_map, find_symbol and search for more)\n${map}`,
       );
     }
     // Static parts first, then the project, memory and repo map, then the task's playbook topics,
@@ -990,11 +1036,14 @@ export class TaskManager {
     });
   }
 
-  private knowledge(projectId: string): ToolContext["knowledge"] | undefined {
+  private knowledge(projectId: string, root?: string): ToolContext["knowledge"] | undefined {
     const { indexer, memory } = this.o;
     if (!indexer && !memory) return undefined;
     return {
-      repoMap: (prefix) => indexer?.repoMap(projectId, 6000, prefix) ?? "",
+      repoMap: (prefix) =>
+        root
+          ? copyRepoMap(root, indexer?.repoMap(projectId, FULL_MAP, prefix) ?? "", 6000, prefix)
+          : (indexer?.repoMap(projectId, 6000, prefix) ?? ""),
       findSymbols: (name) => indexer?.findSymbols(projectId, name) ?? [],
       search: (query, limit, signal) =>
         indexer?.search(projectId, query, limit, signal) ?? Promise.resolve([]),

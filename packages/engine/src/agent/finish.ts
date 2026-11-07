@@ -11,6 +11,7 @@ import {
 import { dataSteps } from "../devdb/hooks";
 import type { DevDbInfo } from "../devdb/service";
 import { executeTool, type ToolContext } from "../tools/index";
+import { packageManagerFor } from "./stack";
 
 /**
  * The finish line: when an agent says it is done, Depo itself installs the app's packages, starts
@@ -100,6 +101,29 @@ export function usesMysql(root: string): boolean {
     return false;
   };
   return look(root, 0);
+}
+
+/** `bun test` / `npm test` for each JS part with a real test script (folders relative to the copy). */
+export function testCommands(root: string, recipes: { cwd: string }[]): { cwd: string; command: string }[] {
+  const out: { cwd: string; command: string }[] = [];
+  const seen = new Set<string>();
+  for (const r of recipes) {
+    if (seen.has(r.cwd)) continue;
+    seen.add(r.cwd);
+    const dir = path.join(root, r.cwd);
+    let pkg: Record<string, unknown>;
+    try {
+      pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const test = (pkg.scripts as Record<string, string> | undefined)?.test;
+    if (!test || /no test specified/.test(test)) continue;
+    // `bun test` is Bun's own test runner and skips the script; `bun run test` runs the script.
+    const pm = packageManagerFor(dir, root, pkg);
+    out.push({ cwd: r.cwd, command: pm === "bun" ? "bun run test" : `${pm} test` });
+  }
+  return out;
 }
 
 function exitOk(content: string): boolean {
@@ -198,7 +222,17 @@ export async function runFinishLine(
     if (problems.length) return { problems, running: [], notes };
   }
 
-  // 3. Start the app fresh (an agent's own preview may predate the installs and the .env).
+  // 3. The tests of every part that has them, the way the owner would run them.
+  for (const t of testCommands(ctx.root, parts(recipe))) {
+    if (signal.aborted) return { problems, running: [], notes };
+    const r = await run(t.command, t.cwd, 600);
+    const where = t.cwd ? ` in ${t.cwd}` : "";
+    if (r.ok) notes.push(`Tests pass${where} (\`${t.command}\`).`);
+    else problems.push(`The tests${where} fail (\`${t.command}\`):\n${tail(r.content, 20)}`);
+  }
+  if (problems.length) return { problems, running: [], notes };
+
+  // 4. Start the app fresh (an agent's own preview may predate the installs and the .env).
   for (const p of deps.previews.list(projectId))
     if (p.taskId === taskId && (p.state === "running" || p.state === "starting"))
       await deps.previews.stop(p.id, "Restarted by Depo to check the finished work");
@@ -239,7 +273,7 @@ export async function runFinishLine(
     .map((p) => ({ label: p.label, url: p.url, role: p.role }));
   if (problems.length) return { problems, running, notes };
 
-  // 4. Look at the home page like a person would: console errors and failed requests.
+  // 5. Look at the home page like a person would: console errors and failed requests.
   if (deps.qa && running.some((p) => p.role !== "backend")) {
     try {
       const c = await deps.qa.check({ projectId, taskId, by: ctx.agent, signal });
