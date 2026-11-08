@@ -61,6 +61,8 @@ const STEP_UP_TRIES = 2;
 const CAREFUL_TEMPERATURE = 0.2;
 /** Times the model is asked to go on with parts of the request that are missing. */
 const MAX_DONE_NUDGES = 10;
+/** Steps added for each round of fixing Depo's problem report. */
+export const FIX_STEPS = 20;
 /** How often a larger model builds a missing part the small one stopped at. */
 const MAX_PART_STEP_UPS = 2;
 /** What stands in the history for a reply that could not be read (small models copy their own broken calls). */
@@ -113,9 +115,18 @@ export interface LoopParams {
   checkDone?: () => string[];
   /**
    * Called when the model says it is done (after the test checks): Depo runs the work. `retry`
-   * sends the problems back to the model; `append` adds lines to the final answer.
+   * sends the problems back to the model (with `stepUp`, the larger model takes that round: the
+   * same problems came back); `append` adds lines to the final answer. Every retry gives the
+   * model FIX_STEPS more steps, so fixing is never cut short by the steps the building used.
    */
-  beforeFinish?: (o: { changed: string[] }) => Promise<{ retry: string } | { append: string } | null>;
+  beforeFinish?: (o: {
+    changed: string[];
+  }) => Promise<{ retry: string; stepUp?: boolean } | { append: string } | null>;
+  /**
+   * The run continues a fix round (the last run used up its steps while Depo's report was open):
+   * the report counts as just sent, and with `stepUp` the larger model starts.
+   */
+  fixing?: { report: string; stepUp?: boolean };
 }
 
 export interface LoopResult {
@@ -127,6 +138,8 @@ export interface LoopResult {
   lastTest: { command: string; passed: boolean } | null;
   /** Paths written or edited during the loop. */
   changed: string[];
+  /** The run ended (out of steps) while Depo's problem report was still being fixed. */
+  reportOpen?: boolean;
 }
 
 /**
@@ -174,9 +187,10 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   let stepUpFor: "call" | "report" | "part" | null = null;
   let partStepUps = 0;
   // Depo's problem report from the finish line, and the calls that ran since it was sent.
-  let reportOpen = false;
-  let lastReport = "";
+  let reportOpen = !!p.fixing;
+  let lastReport = p.fixing ? reportSummary(p.fixing.report) : "";
   let callsSinceReport = 0;
+  let maxSteps = p.maxSteps;
   let idleReports = 0;
   let emptyAnswers = 0;
   let doneNudges = 0;
@@ -210,7 +224,22 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     },
   };
 
-  while (steps < p.maxSteps) {
+  // The larger model fixes the problem the owner's model could not (see beforeFinish).
+  const reportStepUp = (why: string) => {
+    if (!p.stepUp || model === p.stepUp.model) return;
+    model = p.stepUp.model;
+    stepUpFor = "report";
+    log.warn("stepping up to a larger model for a problem that came back", { from: p.model, to: model });
+    emit({
+      type: "retrying",
+      text: `${why}, so Depo asked ${model} to fix it. Depo goes back to ${p.model} after the fix.`,
+      details: { from: p.model, to: model },
+      status: "running",
+    });
+  };
+  if (p.fixing?.stepUp) reportStepUp(`The same problem came back after ${p.model}'s fixes`);
+
+  while (steps < maxSteps) {
     if (signal.aborted) break;
     steps++;
     // A step boundary: the previous tool calls have all finished, so the owner's notes fit here.
@@ -535,12 +564,12 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     }
     if (calls.length === 0) {
       // A note arrived while the model wrote its answer: read it before finishing.
-      const notes = steps < p.maxSteps ? (p.inbox?.() ?? []) : [];
+      const notes = steps < maxSteps ? (p.inbox?.() ?? []) : [];
       if (notes.length > 0) {
         history.push(...notes);
         continue;
       }
-      const more = steps < p.maxSteps;
+      const more = steps < maxSteps;
       // An empty reply is not an answer: small models stop like this in the middle of the work.
       if (more && canEdit && !res.text.trim() && emptyAnswers < 2) {
         emptyAnswers++;
@@ -695,10 +724,14 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       if (p.beforeFinish && !signal.aborted) {
         const r = await p.beforeFinish({ changed: [...changed] });
         if (signal.aborted) break;
-        if (r && "retry" in r && steps < p.maxSteps) {
+        if (r && "retry" in r) {
+          // A fix round gets its own steps: fixing goes on whatever the building used.
+          maxSteps = Math.max(maxSteps, steps + FIX_STEPS);
           emit({
             type: "retrying",
-            text: "Depo ran the app and found problems. Asking the model to fix them.",
+            text: r.stepUp
+              ? "Depo ran the app again and the same problem is still there."
+              : "Depo ran the app and found problems. Asking the model to fix them.",
             status: "running",
           });
           history.push({ role: "user", content: r.retry });
@@ -706,6 +739,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
           reportOpen = true;
           lastReport = reportSummary(r.retry);
           callsSinceReport = 0;
+          idleReports = 0;
+          if (r.stepUp) reportStepUp(`The same problem came back after ${model}'s fix`);
           continue;
         }
         reportOpen = false;
@@ -823,7 +858,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   return {
     finalText,
     aborted: signal.aborted,
-    hitLimit: !signal.aborted && !finalText && steps >= p.maxSteps,
+    hitLimit: !signal.aborted && !finalText && steps >= maxSteps,
+    reportOpen: reportOpen && !finalText,
     steps,
     lastTest,
     changed: [...changed],

@@ -43,10 +43,17 @@ import { TOOLS, type ToolContext } from "../tools/index";
 import type { PreviewHooks } from "../tools/preview-tools";
 import { computeChanges } from "../workspace/changes";
 import type { ProjectService, Workspace } from "../workspace/service";
-import { type FinishDeps, finishSummary, problemsPrompt, runFinishLine } from "./finish";
+import {
+  type FinishDeps,
+  type FinishResult,
+  FixRounds,
+  finishSummary,
+  problemsPrompt,
+  runFinishLine,
+} from "./finish";
 import { compactEarlierTurns, copyRepoMap, copyTree, forRetry, isFollowUp } from "./followup";
 import { kickstart } from "./kickstart";
-import { runAgentLoop } from "./loop";
+import { FIX_STEPS, type LoopParams, type LoopResult, runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
 import { missingParts } from "./request-check";
 import { isSmallModel, pickStepUp, SMALL_MODEL_TOOLS } from "./small";
@@ -96,8 +103,6 @@ export interface TaskManagerOptions {
   finishLine?: Omit<FinishDeps, "projectName">;
 }
 
-/** Rounds of "Depo ran it and found problems" before the answer is accepted as it is. */
-const FINISH_ROUNDS = 2;
 /** Depo's own steps, shown under their own names next to the agents. */
 export const DEPO_STARTER = "starter@depo";
 export const DEPO_TESTER = "tester@depo";
@@ -718,6 +723,151 @@ export class TaskManager {
 
   // ---- the loop --------------------------------------------------------------------------
 
+  /** The coder's tool context in a task's private copy. */
+  private coderContext(
+    project: typeof projects.$inferSelect,
+    ws: Workspace,
+    taskId: string,
+    signal: AbortSignal,
+    extras: ReturnType<TaskManager["coderExtras"]>,
+  ): ToolContext {
+    const settings = this.o.projectSettings?.(project.id);
+    return {
+      root: ws.root,
+      bus: this.o.bus,
+      approvals: this.o.approvals,
+      projectId: project.id,
+      taskId,
+      agent: CODER_AGENT,
+      signal,
+      env: venvEnv(ws.root),
+      ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
+      ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id, ws.root) } : {}),
+      readPaths: new Set<string>(),
+      ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
+      ...(this.o.previews ? { previews: this.o.previews } : {}),
+      ...(this.o.qa ? { qa: this.o.qa } : {}),
+      ...(this.o.diagnostics ? { diagnostics: this.o.diagnostics } : {}),
+      ...(this.o.references ? { references: this.o.references } : {}),
+      ...(this.o.devdb ? { devdb: this.o.devdb } : {}),
+    };
+  }
+
+  /**
+   * Depo runs the app in the copy (the finish line). Problems go back to the model while
+   * `rounds` says fixing still gets somewhere ("again": the same problems, for the larger model);
+   * otherwise the run report is added to the answer.
+   */
+  private appChecker(
+    ctx: ToolContext,
+    projectName: string,
+    finishLine: TaskManagerOptions["finishLine"],
+    rounds: FixRounds,
+    signal: AbortSignal,
+  ): FixCheck {
+    return async () => {
+      if (!finishLine) return null;
+      const r = await this.finish(ctx, { ...finishLine, projectName }, signal);
+      if (r.problems.length && !signal.aborted) {
+        const step = rounds.next(r.problems);
+        if (step !== "stop")
+          return {
+            retry: problemsPrompt(r, { again: step === "again" }),
+            ...(step === "again" ? { stepUp: true } : {}),
+          };
+      }
+      const text = finishSummary(r, rounds.stopped);
+      return text ? { append: text } : null;
+    };
+  }
+
+  /**
+   * Team modes: the problems Depo found when it ran the team's work go to the coder model, which
+   * fixes them the way a single-agent run does. Returns the text for the owner.
+   */
+  private async fixAfterTeam(
+    row: typeof tasks.$inferSelect,
+    project: typeof projects.$inferSelect,
+    ws: Workspace,
+    signal: AbortSignal,
+    request: string,
+    first: FinishResult,
+  ): Promise<string> {
+    const resolved = this.o.models.resolve("coder");
+    const finishLine = this.o.finishLine;
+    if (!resolved || !finishLine) return finishSummary(first);
+    const taskId = row.id;
+    const emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) =>
+      this.o.bus.emit({ ...e, agent: CODER_AGENT, projectId: project.id, taskId });
+    const { provider, model } = resolved;
+    const contextLength = resolved.contextLength ?? DEFAULT_CONTEXT;
+    const installed = await Promise.resolve()
+      .then(() => provider.listModels(AbortSignal.timeout(5000)))
+      .catch(() => []);
+    const small = isSmallModel(model, installed.find((m) => m.name === model)?.parameterSize);
+    const stepUp =
+      small && this.o.settings?.get("agent.step_up") !== false ? pickStepUp(model, installed) : null;
+    const extras = this.coderExtras(project.id, taskId, signal);
+    const ctx = this.coderContext(project, ws, taskId, signal, extras);
+    const rounds = new FixRounds();
+    rounds.next(first.problems);
+    const report = problemsPrompt(first);
+    emit({
+      type: "retrying",
+      text: `Depo ran the team's work and found ${first.problems.length === 1 ? "a problem" : `${first.problems.length} problems`}; the Coder (${model}) fixes ${first.problems.length === 1 ? "it" : "them"}.`,
+      status: "running",
+    });
+    const history: ChatMessage[] = [
+      {
+        role: "system",
+        content: [
+          this.systemPrompt(project.id, project.name, ws.root, contextLength, request, small),
+          extras?.prompt ?? "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      },
+      {
+        role: "user",
+        content: `The team built this request in the private copy, and its files are there now:\n${request}\n\n${report}`,
+      },
+    ];
+    this.addMessage(taskId, { role: "user", content: report }, undefined, CODER_AGENT);
+    const checkApp = this.appChecker(ctx, project.name, finishLine, rounds, signal);
+    const settings = this.o.projectSettings?.(project.id);
+    const { result, report: tail } = await runUntilWorking({
+      params: {
+        provider,
+        model,
+        contextLength,
+        history,
+        toolNames: [
+          ...TOOLS.map((t) => t.name).filter((n) => !small || SMALL_MODEL_TOOLS.includes(n)),
+          ...(extras?.allow ?? []).filter((n) => !small || /^mcp__|skill/.test(n)),
+        ],
+        ctx,
+        maxSteps: this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS,
+        ...(stepUp ? { stepUp: { model: stepUp } } : {}),
+        fileBlocks: small,
+        checkDone: () => missingParts(request, ws.root),
+        signal,
+        scheduler: this.o.scheduler,
+        job: { projectId: project.id, taskId, label: row.title },
+        retryDelayMs: this.o.retryDelayMs,
+        emit,
+        persist: (m) => this.addMessage(taskId, m as ChatMessage, undefined, CODER_AGENT),
+        fixing: { report },
+        beforeFinish: () => checkApp(),
+      },
+      checkApp,
+      hasChanges: () => true,
+      addMessage: (m) => this.addMessage(taskId, m, undefined, CODER_AGENT),
+      emit,
+      signal,
+    });
+    return [result.finalText, tail].filter(Boolean).join("\n\n");
+  }
+
   private async run(taskId: string, signal: AbortSignal): Promise<void> {
     const retry = this.retrying.delete(taskId);
     const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
@@ -836,43 +986,20 @@ export class TaskManager {
     const lessons = this.lessonTracker(project.id);
     const extras = this.coderExtras(project.id, taskId, signal);
     if (extras?.prompt && history[0]?.role === "system") history[0].content += `\n\n${extras.prompt}`;
-    const ctx: ToolContext = {
-      root: ws.root,
-      bus: this.o.bus,
-      approvals: this.o.approvals,
-      projectId: project.id,
-      taskId,
-      agent: CODER_AGENT,
-      signal,
-      env: venvEnv(ws.root),
-      ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
-      ...(this.knowledge(project.id) ? { knowledge: this.knowledge(project.id, ws.root) } : {}),
-      readPaths: new Set<string>(),
-      ...(extras?.tools.length ? { extraTools: extras.tools } : {}),
-      ...(this.o.previews ? { previews: this.o.previews } : {}),
-      ...(this.o.qa ? { qa: this.o.qa } : {}),
-      ...(this.o.diagnostics ? { diagnostics: this.o.diagnostics } : {}),
-      ...(this.o.references ? { references: this.o.references } : {}),
-      ...(this.o.devdb ? { devdb: this.o.devdb } : {}),
-    };
+    const ctx = this.coderContext(project, ws, taskId, signal, extras);
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);
     const finishLine = this.o.settings?.get("agent.finish_line") === false ? undefined : this.o.finishLine;
-    let finishRounds = 0;
+    // Depo runs the app; problems go back to the model for as long as fixing gets somewhere.
+    const checkApp = this.appChecker(ctx, project.name, finishLine, new FixRounds(), signal);
     const beforeFinish = finishLine
       ? async ({ changed }: { changed: string[] }) => {
           // Depo's own starting project and earlier turns count too, not only this turn's edits.
           if (!changed.length && !computeChanges(project.rootPath, ws.root, ws.manifest).length) return null;
-          const r = await this.finish(ctx, { ...finishLine, projectName: project.name }, signal);
-          if (r.problems.length && finishRounds < FINISH_ROUNDS) {
-            finishRounds++;
-            return { retry: problemsPrompt(r) };
-          }
-          const text = finishSummary(r);
-          return text ? { append: text } : null;
+          return checkApp();
         }
       : undefined;
-    const result = await runAgentLoop({
+    const loopParams: LoopParams = {
       provider,
       model,
       contextLength,
@@ -897,6 +1024,14 @@ export class TaskManager {
       lessons,
       inbox,
       ...(beforeFinish ? { beforeFinish } : {}),
+    };
+    const { result, steps, report } = await runUntilWorking({
+      params: loopParams,
+      checkApp: finishLine ? checkApp : null,
+      hasChanges: () => computeChanges(project.rootPath, ws.root, ws.manifest).length > 0,
+      addMessage: (m) => this.addMessage(taskId, m),
+      emit,
+      signal,
     });
     let finalText = result.finalText;
 
@@ -907,16 +1042,12 @@ export class TaskManager {
       return;
     }
     if (!finalText) {
-      finalText = `I stopped after ${maxSteps} steps without finishing. The changes so far are ready for review; send a follow-up message to continue.`;
+      finalText = `I stopped after ${steps} steps without finishing. The changes so far are ready for review; send a follow-up message to continue.`;
       this.addMessage(taskId, { role: "assistant", content: finalText });
-      // Still install, test, start and check what is there, so the owner sees where it stands.
-      if (finishLine && result.hitLimit && computeChanges(project.rootPath, ws.root, ws.manifest).length) {
-        const r = await this.finish(ctx, { ...finishLine, projectName: project.name }, signal);
-        const text = signal.aborted ? "" : finishSummary(r);
-        if (text) {
-          finalText += `\n\n${text}`;
-          this.addMessage(taskId, { role: "assistant", content: text });
-        }
+      // What Depo found when it ran the app (installed, tested, started and checked).
+      if (report) {
+        finalText += `\n\n${report}`;
+        this.addMessage(taskId, { role: "assistant", content: report });
       }
     }
     // Whatever the model said: parts the request names that are not in the code are not done.
@@ -1026,7 +1157,17 @@ export class TaskManager {
         ...(settings ? { commandRules: { allow: settings.commandAllow, deny: settings.commandDeny } } : {}),
       };
       const r = await this.finish(ctx, { ...this.o.finishLine, projectName: project.name }, signal);
-      const extra = finishSummary(r);
+      // Problems are fixed, not only reported: the coder model works on them until the app runs.
+      const extra =
+        r.problems.length && !signal.aborted
+          ? await this.fixAfterTeam(row, project, ws, signal, asked, r)
+          : finishSummary(r);
+      if (signal.aborted) {
+        this.setStatus(taskId, "cancelled");
+        emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
+        this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+        return;
+      }
       if (extra) {
         this.addMessage(taskId, { role: "assistant", content: extra }, undefined, agentTag("manager"));
         this.o.db
@@ -1289,6 +1430,49 @@ export function latestRequest(items: ChatItem[]): { text: string; fromNotes: boo
 }
 
 /** The task's request: the first message, plus the newest follow-up when there is one. */
+type FixCheck = () => Promise<{ retry: string; stepUp?: boolean } | { append: string } | null>;
+
+/**
+ * Runs the agent loop, and when it ends out of steps, runs the app (`checkApp`): while that finds
+ * problems fixing can still get past, the loop goes on with FIX_STEPS fresh steps and the report
+ * open. `report` is the run report when the steps ran out and Depo stopped fixing (or all ran).
+ */
+export async function runUntilWorking(o: {
+  params: LoopParams;
+  checkApp: FixCheck | null;
+  hasChanges: () => boolean;
+  addMessage: (m: ChatMessage) => void;
+  emit: LoopParams["emit"];
+  signal: AbortSignal;
+}): Promise<{ result: LoopResult; steps: number; report: string }> {
+  let result = await runAgentLoop(o.params);
+  let steps = result.steps;
+  let report = "";
+  while (o.checkApp && result.hitLimit && !o.signal.aborted && o.hasChanges()) {
+    const next = await o.checkApp();
+    if (o.signal.aborted) break;
+    if (next && "retry" in next) {
+      o.emit({
+        type: "retrying",
+        text: `The model used its ${steps} step${steps === 1 ? "" : "s"} and Depo found problems in the app, so it goes on fixing them with ${FIX_STEPS} more steps.`,
+        status: "running",
+      });
+      o.params.history.push({ role: "user", content: next.retry });
+      o.addMessage({ role: "user", content: next.retry });
+      result = await runAgentLoop({
+        ...o.params,
+        maxSteps: FIX_STEPS,
+        fixing: { report: next.retry, ...(next.stepUp ? { stepUp: true } : {}) },
+      });
+      steps += result.steps;
+      continue;
+    }
+    report = next && "append" in next ? next.append : "";
+    break;
+  }
+  return { result, steps, report };
+}
+
 function requestText(prompt: string, history: ChatMessage[]): string {
   const last = [...history].reverse().find((m) => m.role === "user")?.content ?? "";
   return last && last !== prompt ? `${prompt}\n${last}` : prompt;

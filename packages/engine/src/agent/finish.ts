@@ -310,21 +310,82 @@ export async function runFinishLine(
   return { problems, running, notes, blocked };
 }
 
-/** What the agent reads when the finish line found problems. */
-export function problemsPrompt(r: FinishResult): string {
+/** What the agent reads when the finish line found problems; `again` when the same ones came back. */
+export function problemsPrompt(r: FinishResult, o: { again?: boolean } = {}): string {
   return [
-    "Depo tried to run your work the way the owner will, and it does not work yet:",
+    o.again
+      ? "Depo ran your work again, and the same problem is still there: your last change did not fix it."
+      : "Depo tried to run your work the way the owner will, and it does not work yet:",
     ...r.problems.map((p) => `- ${p}`),
-    "Fix the cause (read the files involved, change them, run the commands again), then finish with a short summary. Do not tell the owner to fix it.",
+    o.again
+      ? "Read the error again and the files it names. Look for a different cause than the one you fixed, change it, run the failing command yourself to see it pass, then finish with a short summary. Do not tell the owner to fix it."
+      : "Fix the cause (read the files involved, change them, run the commands again), then finish with a short summary. Do not tell the owner to fix it.",
   ].join("\n");
 }
 
+/** Rounds of "Depo ran it and found problems" at most, whatever happens (each round is model work). */
+export const MAX_FIX_ROUNDS = 12;
+/** The same problems coming back this many times after fixes means the fixing is stuck. */
+export const SAME_PROBLEMS_LIMIT = 3;
+
+/**
+ * What a problem is about, without what changes from run to run (numbers, times, ports): the
+ * first line and the first line that reads like an error.
+ */
+export function problemKey(problem: string): string {
+  const lines = problem
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const error = lines
+    .slice(1)
+    .find((l) => /error|fail|refus|cannot|can't|not found|undefined|exception|denied|missing/i.test(l));
+  return [lines[0] ?? "", error ?? ""]
+    .join(" ")
+    .replace(/\d+/g, "#")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The fix rounds of one run: the model gets the problems back for as long as fixing gets
+ * somewhere. When the same problems come back, the larger model (if any) takes the next round;
+ * when they have come back SAME_PROBLEMS_LIMIT times, or after MAX_FIX_ROUNDS, Depo stops and says why.
+ */
+export class FixRounds {
+  rounds = 0;
+  private seen = new Map<string, number>();
+  /** Why the last `next` said stop, for the owner. */
+  stopped: string | null = null;
+
+  next(problems: string[]): "fix" | "again" | "stop" {
+    const key = problems.map(problemKey).sort().join("|");
+    const n = (this.seen.get(key) ?? 0) + 1;
+    this.seen.set(key, n);
+    if (this.rounds >= MAX_FIX_ROUNDS) {
+      this.stopped = `Depo stopped after ${this.rounds} rounds of fixing, the most it does in one run.`;
+      return "stop";
+    }
+    if (n > SAME_PROBLEMS_LIMIT) {
+      this.stopped = `Depo stopped after ${this.rounds} rounds of fixing: the same problem came back ${n - 1} times after a fix.`;
+      return "stop";
+    }
+    this.rounds++;
+    return n > 1 ? "again" : "fix";
+  }
+}
+
 /** The report added after the final answer (shown as its own card in the chat), or "" when there is nothing to say. */
-export function finishSummary(r: FinishResult): string {
+export function finishSummary(r: FinishResult, stopped: string | null = null): string {
   const lines: string[] = [];
   if (r.running.length) lines.push(`Running now: ${r.running.map((p) => `${p.label} ${p.url}`).join(" · ")}`);
   lines.push(...r.notes);
-  if (r.problems.length) lines.push("Still not working:", ...r.problems.map((p) => `- ${p.split("\n")[0]}`));
+  if (r.problems.length) {
+    lines.push("Still not working:", ...r.problems.map((p) => `- ${p.split("\n")[0]}`));
+    if (stopped)
+      lines.push(`${stopped} Send "go on" to keep fixing, or add what you know about the problem.`);
+  }
   for (const b of r.blocked) {
     const [first, ...rest] = b.split("\n");
     lines.push(`Depo could not check the app: ${first}`, ...rest.slice(0, 3).map((l) => `  ${l}`));

@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## Keep fixing (2026-11-08): "the agents should fix the errors again and again until everything is working"
+
+- **Found:** Depo gave up on errors in three places: after two rounds of "Depo ran the app and found problems", when the step limit ran out (errors were only listed), and in team modes (errors found at the end were only reported).
+- **Built (ADR-0084):** fixing goes on while the problems change; the same problem again goes to the larger installed model with "your fix did not work, look for another cause"; Depo stops only when the same problem has come back 3 times after fixes (or after 12 rounds) and then says why, with "go on" to keep trying. Each fix round has its own 20 steps, a run that ends out of steps keeps fixing while Depo finds problems, and team modes hand the end problems to the coder.
+- **Verified:** `test/keep-fixing.test.ts`: the round rules (new, again, stop, the 12-round cap, line numbers ignored), a loop that fixes three different problems past a 3-step limit, the step-up for a repeated problem and back, a run that keeps fixing after its steps ran out, the push-back while fixing, and the stop note. Engine 660, lint and types clean. The team-mode fix pass is checked by types and the shared pieces, not by a task-level test (tests run without the finish line).
+
 ## Second part-1 run (2026-11-08): "Ready for review" with nothing built
 
 - **Found from the owner's run:** qwen2.5-coder:3b's first call appended the four tables correctly except `favorites.user_id INT`, but the new read-first rule refused it; 3b then wrote the tables as a Git conflict block and as a pasted `schema.sql` (not saved), stopped twice without building anything, and Depo took that. The finish line ran the blueprint (2 tables migrated, its tests passed), and the run showed "Changes ready for review: 45 files" and "Ready with 3 warnings".
