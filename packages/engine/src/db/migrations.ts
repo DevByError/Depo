@@ -445,6 +445,14 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    // The step plan of single-agent runs, one per turn (ADR-0086).
+    version: 11,
+    name: "task_step_plans",
+    sql: `
+      ALTER TABLE tasks ADD COLUMN step_plans TEXT;
+    `,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

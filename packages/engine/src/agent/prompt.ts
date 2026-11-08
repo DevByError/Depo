@@ -106,6 +106,8 @@ export function codingSystemPrompt(opts: {
   context?: string[];
   /** A small model (4B or less): fewer tools, so a shorter "how to work", and file blocks instead of JSON for code. */
   small?: boolean;
+  /** Depo runs a step plan (ADR-0086): the agent does one step at a time and Depo checks and runs the app. */
+  steps?: boolean;
 }): string {
   const info = detectProject(opts.root);
   const stack = detectStack(opts.root);
@@ -124,10 +126,17 @@ export function codingSystemPrompt(opts: {
           "2. Make small, precise edits with edit_file. Copy the exact current text into `search` (without line numbers). Use write_file for new files; append_file adds to the end of a file.",
         ]),
     "3. Follow the project's existing structure, style and libraries. Add a dependency only when there is no reasonable alternative.",
-    "4. Add or update tests for what you change. Run the tests. If they fail, read the error, fix the cause, and run them again.",
-    "   For an app with a server or web pages, also start it with start_preview, check the endpoints with http_check and the pages with check_page before you finish, then stop it with stop_preview.",
-    "   When the app uses MySQL or MariaDB, call dev_database start: Depo runs a local test database and writes DATABASE_URL into the app's .env. Then run the app's migrate and seed scripts so it has tables and demo data. Never ask the owner to set up a database.",
-    "5. When the work is done and the tests pass, stop calling tools and reply with a short summary: what changed, which files, and the test result.",
+    ...(opts.steps
+      ? [
+          "4. Depo gives you one step of a plan at a time. Do only that step, in the files it names; later steps come after it. Depo checks each step when you say it is done, and at the end it runs the tests, the database scripts and the app itself.",
+          "5. When the step is done, stop calling tools and say in one line what you did.",
+        ]
+      : [
+          "4. Add or update tests for what you change. Run the tests. If they fail, read the error, fix the cause, and run them again.",
+          "   For an app with a server or web pages, also start it with start_preview, check the endpoints with http_check and the pages with check_page before you finish, then stop it with stop_preview.",
+          "   When the app uses MySQL or MariaDB, call dev_database start: Depo runs a local test database and writes DATABASE_URL into the app's .env. Then run the app's migrate and seed scripts so it has tables and demo data. Never ask the owner to set up a database.",
+          "5. When the work is done and the tests pass, stop calling tools and reply with a short summary: what changed, which files, and the test result.",
+        ]),
     "",
     "Rules: read a file before editing it; never guess its contents. Do not ask the user to copy or apply anything; the review step does that. Keep replies short and plain.",
     "",

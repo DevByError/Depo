@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
+import { E2E_TMP } from "../playwright.config";
 import { fixtureCopy, seriousA11yViolations, useFakeOllamaAsCoder } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -70,3 +71,56 @@ for (const theme of ["dark", "light"] as const) {
     expect(await seriousA11yViolations(page)).toEqual([]);
   });
 }
+
+test("a request with sections shows Depo's plan first, then works through it step by step", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  // A project with a schema and a route table, and a request in sections (ADR-0086).
+  const project = path.join(mkdtempSync(path.join(E2E_TMP, "project ")), "notes-app");
+  mkdirSync(path.join(project, "be/src/db"), { recursive: true });
+  writeFileSync(
+    path.join(project, "be/src/db/schema.sql"),
+    "CREATE TABLE IF NOT EXISTS users (\n  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY\n);\n",
+  );
+  writeFileSync(
+    path.join(project, "be/src/app.ts"),
+    'export const routes = {\n  "GET /api/health": () => ({ ok: true }),\n};\n',
+  );
+  await page.goto("");
+  await expect(page.getByTestId("connection-status")).toHaveText(/Engine connected/);
+  await useFakeOllamaAsCoder(page);
+  await page.getByRole("button", { name: "Open a project folder", exact: true }).click();
+  await page.getByLabel("Project folder path").fill(project);
+  await page.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(page.getByRole("list", { name: "Projects", exact: true })).toContainText("notes-app");
+
+  await page.getByRole("tab", { name: "Chat" }).click();
+  await page
+    .getByLabel("Message the coding agent")
+    .fill(
+      "Build the notes app.\n\nKeep its structure: routes in be/src/app.ts, new tables at the end of be/src/db/schema.sql.\n\n## Database\n- notes: id, title, body\n- tags: id, name\n\n## API\n- GET /api/notes : the notes, newest first\n",
+    );
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const plan = page.getByRole("region", { name: "Depo's plan" });
+  await expect(plan).toBeVisible({ timeout: 30_000 });
+  await expect(plan.getByRole("listitem")).toHaveText([
+    /Add the notes table/,
+    /Add the tags table/,
+    /Build GET \/api\/notes/,
+    /Run the app and check it/,
+  ]);
+  // The card follows the work live.
+  await expect(plan.locator('li[data-status="done"]').first()).toBeVisible({ timeout: 30_000 });
+  if (process.env.DEPO_SHOT_DIR)
+    await page.screenshot({ path: path.join(process.env.DEPO_SHOT_DIR, "step-plan-running.png") });
+  await expect(page.getByTestId("task-status")).toContainText("Ready for review", { timeout: 60_000 });
+  await expect(plan).toContainText("4 of 4 done");
+  await expect(page.getByRole("list", { name: "Conversation" })).toContainText(
+    "Done: all 4 steps of the plan passed Depo's checks.",
+  );
+  if (process.env.DEPO_SHOT_DIR)
+    await page.screenshot({ path: path.join(process.env.DEPO_SHOT_DIR, "step-plan.png") });
+  expect(await seriousA11yViolations(page)).toEqual([]);
+});

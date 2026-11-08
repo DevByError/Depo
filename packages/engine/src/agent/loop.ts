@@ -16,7 +16,7 @@ import { getLogger, withLogContext } from "../logger";
 import { fallOf, smallerContext, waitForRuntime } from "../models/revive";
 import type { ModelScheduler } from "../scheduler/scheduler";
 import { normalizeArgs } from "../tools/args";
-import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
+import { executeTool, inferAppendPath, type ToolContext, toolDefinitions } from "../tools/index";
 import { aliasFor, aliasNote } from "./aliases";
 import { blockCalls, blockResults } from "./blocks";
 import { codeBlocks, dumpInProgress, dumpNudge, isCodeDump } from "./codedump";
@@ -506,6 +506,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     }
     if (calls.length) unreadable = 0;
     if (calls.length === 0) res.text = stripToolMarkup(res.text);
+    // A reply that is only an empty code fence ("```json") says nothing: it is an empty reply.
+    if (calls.length === 0 && /^\s*(?:```[\w-]*\s*)+$/.test(res.text)) res.text = "";
     // Asked twice already: keep the model's own words and drop the results it made up.
     if (calls.length === 0 && madeUpResults >= 2 && inventsToolResult(res.text))
       res.text =
@@ -535,8 +537,17 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         status: "running",
       });
     }
+    // append_file without a path: SQL goes to the schema, anything else to the step's main file.
+    const inferred = new Map<string, string>();
     calls = uniqueCalls(calls).map((c) => {
-      const args = normalizeArgs(c.name, c.arguments, ctx.root);
+      let args = normalizeArgs(c.name, c.arguments, ctx.root);
+      if (c.name === "append_file") {
+        const withPath = inferAppendPath(args, ctx);
+        if (withPath) {
+          args = withPath;
+          inferred.set(c.id, String(withPath.path));
+        }
+      }
       return args === c.arguments ? c : { ...c, arguments: args, rawArguments: JSON.stringify(args) };
     });
     const assistant: ChatMessage = {
@@ -571,11 +582,19 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       }
       const more = steps < maxSteps;
       // An empty reply is not an answer: small models stop like this in the middle of the work.
-      if (more && canEdit && !res.text.trim() && emptyAnswers < 2) {
+      if (more && canEdit && !res.text.trim() && emptyAnswers < 3) {
         emptyAnswers++;
+        // The second empty reply in a row: a larger installed model takes the step.
+        const bigger = emptyAnswers >= 2 && !!p.stepUp && model !== p.stepUp.model;
+        if (bigger && p.stepUp) {
+          model = p.stepUp.model;
+          stepUpFor = "call";
+        }
         emit({
           type: "retrying",
-          text: "The model stopped without a word. Asking it to go on.",
+          text: bigger
+            ? `The model stopped without a word again, so Depo asked ${model} to go on. Depo goes back to ${p.model} once a call runs.`
+            : "The model stopped without a word. Asking it to go on.",
           status: "running",
         });
         history.push({
@@ -792,6 +811,9 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       if (editKey && editPath && !again && !result.isError) edits.set(editKey, fileHash(editPath));
       if (!result.isError) ran++;
       let content = result.content;
+      const guessed = inferred.get(call.id);
+      if (guessed && !result.isError)
+        content = `Your append_file call had no path, so Depo used ${guessed}. Always give the path.\n${content}`;
       const madeUp = renamed[call.id];
       if (madeUp) content = `${aliasNote(madeUp, call.name)}\n${content}`;
       if (!LOOKS.has(call.name)) {

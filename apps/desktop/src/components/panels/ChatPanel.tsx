@@ -3,6 +3,7 @@ import {
   type DepoEvent,
   isRunReport,
   RUN_REPORT_HEADING,
+  type StepPlan,
   type Task,
   type TaskStatus,
 } from "@depo/shared";
@@ -24,6 +25,7 @@ import { Composer } from "@/components/chat/Composer";
 import { PlanCard } from "@/components/chat/PlanCard";
 import { MessageReferences } from "@/components/chat/References";
 import { SteerNote } from "@/components/chat/SteerNote";
+import { StepPlanCard } from "@/components/chat/StepPlanCard";
 import { type LiveStep, WorkLog, type WorkState } from "@/components/chat/WorkLog";
 import { RunningAppLink } from "@/components/qa/RunningAppLink";
 import { ReadinessCard } from "@/components/readiness/ReadinessCard";
@@ -119,7 +121,7 @@ export function ChatPanel() {
           >
             <div ref={stick.contentRef}>
               {open ? (
-                <Transcript task={open.task} items={open.messages} />
+                <Transcript task={open.task} items={open.messages} plans={open.plans ?? []} />
               ) : taskId && enabled && task.isPending ? null : (
                 <Welcome hasProject={!!projectId} />
               )}
@@ -265,7 +267,16 @@ function useLive(taskId: string): { stream: string | null; step: LiveStep | null
   }, [events, taskId]);
 }
 
-function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
+/** The step plan that answers a turn: the plan made for its message (the first turn's when none is named). */
+export function planForTurn(plans: StepPlan[], turn: Turn, index: number): StepPlan | null {
+  const id = turn.user?.id;
+  const mine = plans.filter((p) => (id ? p.messageId === id : false));
+  if (mine.length) return mine.at(-1) ?? null;
+  if (index === 0) return plans.filter((p) => p.messageId === null).at(-1) ?? null;
+  return null;
+}
+
+function Transcript({ task, items, plans }: { task: Task; items: ChatItem[]; plans: StepPlan[] }) {
   const active = isActive(task.status);
   const live = useLive(task.id);
   const enabled = useEngine((s) => s.status === "open");
@@ -306,6 +317,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
                 turn={t}
                 taskId={task.id}
                 id={t.user?.id ?? `${task.id}:${i}`}
+                stepPlan={planForTurn(plans, t, i)}
                 state={state}
                 live={latest && active ? live.step : null}
                 stream={latest && active ? live.stream : null}
@@ -435,6 +447,7 @@ function TurnView({
   turn,
   taskId,
   id,
+  stepPlan,
   state,
   live,
   stream,
@@ -442,6 +455,7 @@ function TurnView({
   turn: Turn;
   taskId: string;
   id: string;
+  stepPlan: StepPlan | null;
   state: WorkState;
   live: LiveStep | null;
   stream: string | null;
@@ -470,6 +484,7 @@ function TurnView({
         </div>
       )}
       {turn.plan && <PlanCard plan={turn.plan.plan} />}
+      {stepPlan && <StepPlanCard plan={stepPlan} active={working} />}
       {(turn.steps.length > 0 || working) && (
         <WorkLog
           id={id}

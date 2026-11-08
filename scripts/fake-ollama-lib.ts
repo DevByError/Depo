@@ -20,6 +20,42 @@ type Step =
   | { say: string; tool: string; args: Record<string, unknown> }
   | { final: (lastTool: string) => string };
 
+/**
+ * One step of Depo's step plan for "the notes app" (ADR-0086): the step prompt names the step;
+ * table steps append their table, the route step adds its route, anything else is already there.
+ */
+function planStepScript(title: string): Step[] {
+  const table = /^Add the (\w+) table$/.exec(title)?.[1];
+  if (table)
+    return [
+      {
+        say: `Adding the ${table} table.`,
+        tool: "append_file",
+        args: {
+          path: "be/src/db/schema.sql",
+          content: `CREATE TABLE IF NOT EXISTS ${table} (\n  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,\n  ${
+            table === "notes" ? "title VARCHAR(200) NOT NULL,\n  body TEXT" : "name VARCHAR(80) NOT NULL"
+          }\n);\n`,
+        },
+      },
+      { final: () => `Added the ${table} table.` },
+    ];
+  if (/GET \/api\/notes/.test(title))
+    return [
+      {
+        say: "Adding the route next to the others.",
+        tool: "write_file",
+        args: {
+          path: "be/src/app.ts",
+          content:
+            'export const routes = {\n  "GET /api/health": () => ({ ok: true }),\n  "GET /api/notes": () => [],\n};\n',
+        },
+      },
+      { final: () => "Added GET /api/notes." },
+    ];
+  return [{ final: () => "Done." }];
+}
+
 /** The scripted agent for "add a /<name> endpoint": explore, edit, add a test, run pytest, summarise. */
 function endpointScript(name: string): Step[] {
   const fn = name.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -169,6 +205,32 @@ function scriptedChat(messages: WireMessage[], stepDelayMs: number, timing: Timi
             line({ message: { role: "assistant", content: "Recovered after a broken tool call." } }),
           );
           finish(6);
+        }
+        ctl.close();
+        return;
+      }
+      // A step of Depo's plan for the notes app: one scripted step per conversation.
+      const planStep = /Build the notes app/.test(firstUser)
+        ? /Step \d+ of \d+: (.+)/.exec(firstUser)?.[1]
+        : undefined;
+      if (planStep) {
+        if (stepDelayMs > 0) await Bun.sleep(stepDelayMs);
+        const steps = planStepScript(planStep.trim());
+        const step = steps[Math.min(toolMsgs.length, steps.length - 1)] as Step;
+        if ("final" in step) {
+          ctl.enqueue(line({ message: { role: "assistant", content: step.final("") } }));
+          finish(10);
+        } else {
+          ctl.enqueue(
+            line({
+              message: {
+                role: "assistant",
+                content: step.say,
+                tool_calls: [{ function: { name: step.tool, arguments: step.args } }],
+              },
+            }),
+          );
+          finish(20);
         }
         ctl.close();
         return;

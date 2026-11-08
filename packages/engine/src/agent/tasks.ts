@@ -6,8 +6,11 @@ import {
   type JsonValue,
   newId,
   PlanSchema,
+  type PlanStep,
   type ProjectSettings,
   type ReferenceInput,
+  type StepPlan,
+  StepPlanSchema,
   type Task,
   TaskSchema,
   type TaskStatus,
@@ -55,10 +58,12 @@ import {
 import { compactEarlierTurns, copyRepoMap, copyTree, forRetry, isFollowUp } from "./followup";
 import { kickstart } from "./kickstart";
 import { FIX_STEPS, type LoopParams, type LoopResult, runAgentLoop } from "./loop";
+import { buildPlan, isGoOn, type RequestPlan } from "./plan";
 import { codingSystemPrompt, venvEnv } from "./prompt";
 import { missingParts } from "./request-check";
 import { isSmallModel, pickStepUp, SMALL_MODEL_TOOLS } from "./small";
 import { SteerInbox, type StoredNote, steerPrompt } from "./steer";
+import { newStepPlan, runStepPlan } from "./step-runner";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
@@ -328,7 +333,7 @@ export class TaskManager {
       .map((r) => toTask(r));
   }
 
-  get(id: string): { task: Task; messages: ChatItem[] } {
+  get(id: string): { task: Task; messages: ChatItem[]; plans: StepPlan[] } {
     const row = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!row) throw new Error(`Unknown task: ${id}`);
     const msgs = this.o.db
@@ -371,6 +376,17 @@ export class TaskManager {
             agent: c.agent ?? null,
             createdAt: m.createdAt,
           });
+      } else if ((c as { fromDepo?: boolean }).fromDepo) {
+        // Depo's own message to the model (a check that failed): a step of the work, not the owner.
+        items.push({
+          id: m.id,
+          role: "assistant",
+          text: c.content,
+          toolName: null,
+          isError: false,
+          agent: DEPO_TESTER,
+          createdAt: m.createdAt,
+        });
       } else {
         const steer = (c as Partial<StoredNote>).steer;
         const refIds = (c as { references?: string[] }).references ?? [];
@@ -394,7 +410,7 @@ export class TaskManager {
         });
       }
     }
-    return { task: toTask(row), messages: items };
+    return { task: toTask(row), messages: items, plans: this.plans(row) };
   }
 
   /**
@@ -765,12 +781,14 @@ export class TaskManager {
     finishLine: TaskManagerOptions["finishLine"],
     rounds: FixRounds,
     signal: AbortSignal,
+    observe?: (r: FinishResult, verdict: "fix" | "again" | "stop" | "ok") => void,
   ): FixCheck {
     return async () => {
       if (!finishLine) return null;
       const r = await this.finish(ctx, { ...finishLine, projectName }, signal);
       if (r.problems.length && !signal.aborted) {
         const step = rounds.next(r.problems);
+        observe?.(r, step);
         if (step !== "stop")
           return {
             // The lines each error points at go with it, so the model sees what to change.
@@ -781,6 +799,7 @@ export class TaskManager {
             ...(step === "again" ? { stepUp: true } : {}),
           };
       }
+      if (!r.problems.length) observe?.(r, "ok");
       const text = finishSummary(r, rounds.stopped);
       return text ? { append: text } : null;
     };
@@ -949,9 +968,23 @@ export class TaskManager {
     const settings = this.o.projectSettings?.(project.id);
     this.o.indexer?.ensure(project.id);
     const request = requestText(row.prompt, history);
+    // Depo's step plan for this turn (ADR-0086): from the request's own text, shown before any
+    // model starts. "go on" picks up the unfinished steps of the last plan.
+    const messageId = this.latestRequestId(taskId);
+    const earlier = followUp && isGoOn(asked) ? this.unfinishedPlan(row) : null;
+    const planned = earlier
+      ? earlier.plan
+      : buildPlan(followUp ? (history.at(-1)?.content ?? asked) : row.prompt);
+    const state = newStepPlan(planned, messageId);
+    if (earlier)
+      for (const s of state.steps)
+        if (earlier.done.has(`${s.id}|${s.title}`))
+          Object.assign(s, { status: "done", note: "Done in the last run" });
+    const stepMode = planned.steps.filter((s) => s.kind !== "check").length >= 2 || !!earlier;
+    this.savePlan(taskId, state);
     // A follow-up: the earlier turns become a short summary with the copy's files, so the model
     // builds on them instead of starting the first request again.
-    if (followUp) {
+    if (followUp && !stepMode) {
       history = compactEarlierTurns(history, {
         tree: copyTree(ws.root, promptBudgets(contextLength).repoMap),
         brief: this.o.references?.brief(taskId) ?? "",
@@ -980,7 +1013,7 @@ export class TaskManager {
     // The system prompt is rebuilt on every run so it carries the latest memory and repo map.
     const sys: ChatMessage = {
       role: "system",
-      content: this.systemPrompt(project.id, project.name, ws.root, contextLength, request, small),
+      content: this.systemPrompt(project.id, project.name, ws.root, contextLength, request, small, stepMode),
     };
     if (history[0]?.role !== "system") {
       history.unshift(sys);
@@ -998,83 +1031,190 @@ export class TaskManager {
     const maxSteps = this.o.maxSteps ?? settings?.maxSteps ?? DEFAULT_MAX_STEPS;
     const inbox = this.inboxes.get(taskId)?.reader(CODER_AGENT);
     const finishLine = this.o.settings?.get("agent.finish_line") === false ? undefined : this.o.finishLine;
-    // Depo runs the app; problems go back to the model for as long as fixing gets somewhere.
-    const checkApp = this.appChecker(ctx, project.name, finishLine, new FixRounds(), signal);
-    const beforeFinish = finishLine
-      ? async ({ changed }: { changed: string[] }) => {
-          // Depo's own starting project and earlier turns count too, not only this turn's edits.
-          if (!changed.length && !computeChanges(project.rootPath, ws.root, ws.manifest).length) return null;
-          return checkApp();
-        }
-      : undefined;
-    const loopParams: LoopParams = {
-      provider,
-      model,
-      contextLength,
-      history,
-      toolNames: [
-        ...TOOLS.map((t) => t.name).filter((n) => !small || SMALL_MODEL_TOOLS.includes(n)),
-        // A small model keeps the owner's skills and MCP tools, not the built-in scanners.
-        ...(extras?.allow ?? []).filter((n) => !small || /^mcp__|skill/.test(n)),
-      ],
-      ctx,
-      maxSteps,
-      ...(stepUp ? { stepUp: { model: stepUp } } : {}),
-      fileBlocks: small,
-      // Routes and pages the request names that the copy does not have yet.
-      checkDone: () => missingParts(request, ws.root),
-      signal,
-      scheduler: this.o.scheduler,
-      job: { projectId: project.id, taskId, label: row.title },
-      retryDelayMs: this.o.retryDelayMs,
-      emit,
-      persist: (m) => this.addMessage(taskId, m as ChatMessage),
-      lessons,
-      inbox,
-      ...(beforeFinish ? { beforeFinish } : {}),
-    };
-    const { result, steps, report } = await runUntilWorking({
-      params: loopParams,
-      checkApp: finishLine ? checkApp : null,
-      hasChanges: () => computeChanges(project.rootPath, ws.root, ws.manifest).length > 0,
-      addMessage: (m) => this.addMessage(taskId, m),
-      emit,
-      signal,
-    });
-    let finalText = result.finalText;
+    const toolNames = [
+      ...TOOLS.map((t) => t.name).filter((n) => !small || SMALL_MODEL_TOOLS.includes(n)),
+      // A small model keeps the owner's skills and MCP tools, not the built-in scanners.
+      ...(extras?.allow ?? []).filter((n) => !small || /^mcp__|skill/.test(n)),
+    ];
+    // Depo's feedback is saved as Depo's, so the chat shows it as a step and not as the owner.
+    const persist = (m: ChatMessage & { isError?: boolean }) =>
+      this.addMessage(taskId, (m.role === "user" ? { ...m, fromDepo: true } : m) as ChatMessage);
 
-    if (signal.aborted) {
-      this.setStatus(taskId, "cancelled");
-      emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
-      this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
-      return;
-    }
-    if (!finalText) {
-      finalText = `I stopped after ${steps} steps without finishing. The changes so far are ready for review; send a follow-up message to continue.`;
-      this.addMessage(taskId, { role: "assistant", content: finalText });
-      // What Depo found when it ran the app (installed, tested, started and checked).
-      if (report) {
-        finalText += `\n\n${report}`;
-        this.addMessage(taskId, { role: "assistant", content: report });
-      }
-    }
-    // Whatever the model said: parts the request names that are not in the code are not done.
-    const missing = missingParts(request, ws.root);
-    if (missing.length) {
-      const note = `Not finished: the request asks for ${missing.length === 1 ? "this, and it is" : "these, and they are"} not in the code yet:\n${missing
-        .slice(0, 12)
-        .map((m) => `- ${m}`)
-        .join(
-          "\n",
-        )}${missing.length > 12 ? `\n- and ${missing.length - 12} more` : ""}\nSend "go on" to continue from here.`;
-      emit({
-        type: "info",
-        text: `Not finished: ${missing.length} part${missing.length === 1 ? "" : "s"} of the request ${missing.length === 1 ? "is" : "are"} not in the code yet.`,
-        details: { missing },
-        status: "info",
+    let finalText = "";
+    if (stepMode) {
+      const r = await runStepPlan({
+        plan: planned,
+        state,
+        root: ws.root,
+        system: history[0]?.content ?? sys.content,
+        base: {
+          provider,
+          model,
+          contextLength,
+          toolNames,
+          ctx,
+          fileBlocks: small,
+          signal,
+          scheduler: this.o.scheduler,
+          job: { projectId: project.id, taskId, label: row.title },
+          retryDelayMs: this.o.retryDelayMs,
+          emit,
+          persist,
+          lessons,
+          inbox,
+        },
+        stepUp,
+        save: (p) => this.savePlan(taskId, p),
+        checkApp: finishLine
+          ? () => this.finish(ctx, { ...finishLine, projectName: project.name }, signal)
+          : null,
+        budget: Math.max(4000, Math.min(16_000, Math.round(contextLength * 0.9))),
       });
-      finalText += `\n\n${note}`;
-      this.addMessage(taskId, { role: "assistant", content: note });
+      if (signal.aborted) {
+        this.setStatus(taskId, "cancelled");
+        emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
+        this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+        return;
+      }
+      finalText = r.finalText;
+      this.addMessage(taskId, { role: "assistant", content: r.finalText });
+      if (r.report) {
+        finalText += `\n\n${r.report}`;
+        this.addMessage(taskId, { role: "assistant", content: r.report });
+      }
+    } else {
+      const build = state.steps.find((s) => s.kind !== "check");
+      const checkStep = state.steps.find((s) => s.kind === "check");
+      const mark = (id: string | undefined, patch: Partial<PlanStep>) => {
+        const s = state.steps.find((x) => x.id === id);
+        if (!s) return;
+        Object.assign(s, patch);
+        this.savePlan(taskId, state);
+      };
+      mark(build?.id, { status: "running", tries: 1, model });
+      // Depo runs the app; problems go back to the model for as long as fixing gets somewhere. The
+      // plan card follows: each round of problems is a fix step.
+      const checkApp = this.appChecker(
+        ctx,
+        project.name,
+        finishLine,
+        new FixRounds(),
+        signal,
+        (r, verdict) => {
+          for (const s of state.steps)
+            if (s.status === "running" && s.kind !== "check") Object.assign(s, { status: "done" });
+          if (verdict === "fix" || verdict === "again") {
+            state.steps.splice(state.steps.length - 1, 0, {
+              id: `f${state.steps.length + 1}`,
+              title: `Fix: ${(r.problems[0] ?? "").split("\n")[0]?.slice(0, 90) ?? ""}`,
+              kind: "fix",
+              status: "running",
+              note: r.problems.length > 1 ? `and ${r.problems.length - 1} more` : null,
+              tries: 1,
+              model,
+              added: true,
+            });
+            mark(checkStep?.id, { status: "pending", tries: (checkStep?.tries ?? 0) + 1 });
+          } else
+            mark(checkStep?.id, {
+              status: r.problems.length || r.blocked.length ? "blocked" : "done",
+              tries: (checkStep?.tries ?? 0) + 1,
+              note: r.problems.length
+                ? ((r.problems[0] ?? "").split("\n")[0]?.slice(0, 200) ?? null)
+                : r.blocked.length
+                  ? ((r.blocked[0] ?? "").split("\n")[0]?.slice(0, 200) ?? null)
+                  : null,
+            });
+        },
+      );
+      const beforeFinish = finishLine
+        ? async ({ changed }: { changed: string[] }) => {
+            // Depo's own starting project and earlier turns count too, not only this turn's edits.
+            if (!changed.length && !computeChanges(project.rootPath, ws.root, ws.manifest).length)
+              return null;
+            mark(checkStep?.id, { status: "running" });
+            return checkApp();
+          }
+        : undefined;
+      const loopParams: LoopParams = {
+        provider,
+        model,
+        contextLength,
+        history,
+        toolNames,
+        ctx,
+        maxSteps,
+        ...(stepUp ? { stepUp: { model: stepUp } } : {}),
+        fileBlocks: small,
+        // Routes and pages the request names that the copy does not have yet.
+        checkDone: () => missingParts(request, ws.root),
+        signal,
+        scheduler: this.o.scheduler,
+        job: { projectId: project.id, taskId, label: row.title },
+        retryDelayMs: this.o.retryDelayMs,
+        emit,
+        persist,
+        lessons,
+        inbox,
+        ...(beforeFinish ? { beforeFinish } : {}),
+      };
+      const { result, steps, report } = await runUntilWorking({
+        params: loopParams,
+        checkApp: finishLine ? checkApp : null,
+        hasChanges: () => computeChanges(project.rootPath, ws.root, ws.manifest).length > 0,
+        addMessage: (m) => this.addMessage(taskId, m),
+        emit,
+        signal,
+      });
+      finalText = result.finalText;
+
+      if (signal.aborted) {
+        this.setStatus(taskId, "cancelled");
+        emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
+        this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+        return;
+      }
+      if (!finalText) {
+        finalText = `I stopped after ${steps} steps without finishing. The changes so far are ready for review; send a follow-up message to continue.`;
+        this.addMessage(taskId, { role: "assistant", content: finalText });
+        // What Depo found when it ran the app (installed, tested, started and checked).
+        if (report) {
+          finalText += `\n\n${report}`;
+          this.addMessage(taskId, { role: "assistant", content: report });
+        }
+      }
+      // Whatever the model said: parts the request names that are not in the code are not done.
+      const missing = missingParts(request, ws.root);
+      if (missing.length) {
+        const note = `Not finished: the request asks for ${missing.length === 1 ? "this, and it is" : "these, and they are"} not in the code yet:\n${missing
+          .slice(0, 12)
+          .map((m) => `- ${m}`)
+          .join(
+            "\n",
+          )}${missing.length > 12 ? `\n- and ${missing.length - 12} more` : ""}\nSend "go on" to continue from here.`;
+        emit({
+          type: "info",
+          text: `Not finished: ${missing.length} part${missing.length === 1 ? "" : "s"} of the request ${missing.length === 1 ? "is" : "are"} not in the code yet.`,
+          details: { missing },
+          status: "info",
+        });
+        finalText += `\n\n${note}`;
+        this.addMessage(taskId, { role: "assistant", content: note });
+      }
+      // The plan card's end state: what is still running did not finish.
+      const unfinished = !result.finalText || missing.length > 0;
+      for (const s of state.steps) {
+        if (s.status === "running" || (s.status === "pending" && s.kind === "check"))
+          Object.assign(
+            s,
+            unfinished
+              ? { status: "blocked", note: s.note ?? "Not finished in this run" }
+              : { status: finishLine ? "done" : "skipped" },
+          );
+      }
+      if (build && build.status === "done" && missing.length)
+        Object.assign(build, { status: "blocked", note: `Missing: ${missing.slice(0, 3).join(", ")}` });
+      this.savePlan(taskId, state);
     }
     this.o.db
       .update(tasks)
@@ -1090,6 +1230,94 @@ export class TaskManager {
       root: ws.root,
       files: cs?.files ?? [],
     });
+  }
+
+  /** The newest message of the owner that is a request (not a note read while working, not Depo's). */
+  private latestRequestId(taskId: string): string | null {
+    const rows = this.o.db
+      .select()
+      .from(messages)
+      .where(eq(messages.taskId, taskId))
+      .orderBy(desc(messages.createdAt), desc(messages.id))
+      .all();
+    for (const m of rows) {
+      if (m.role !== "user") continue;
+      const c = JSON.parse(m.content) as { steer?: { state?: string }; fromDepo?: boolean };
+      if (c.fromDepo || (c.steer && c.steer.state !== "followup")) continue;
+      return m.id;
+    }
+    return null;
+  }
+
+  /** The step plans of a task, oldest first. */
+  private plans(row: Pick<typeof tasks.$inferSelect, "stepPlans">): StepPlan[] {
+    if (!row.stepPlans) return [];
+    try {
+      const raw = JSON.parse(row.stepPlans) as unknown[];
+      return raw.flatMap((p) => {
+        const r = StepPlanSchema.safeParse(p);
+        return r.success ? [r.data] : [];
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /** Saves a turn's plan (replacing the one for the same message) and tells the app. */
+  private savePlan(taskId: string, plan: StepPlan): void {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row) return;
+    const all = this.plans(row);
+    const i = all.findIndex((p) => p.messageId === plan.messageId && p.createdAt === plan.createdAt);
+    const copy = StepPlanSchema.parse(JSON.parse(JSON.stringify(plan)));
+    if (i >= 0) all[i] = copy;
+    else all.push(copy);
+    // The newest plans are enough: a long task keeps the last 20 turns' plans.
+    this.o.db
+      .update(tasks)
+      .set({ stepPlans: JSON.stringify(all.slice(-20)) })
+      .where(eq(tasks.id, taskId))
+      .run();
+    this.o.bus.emit({
+      agent: CODER_AGENT,
+      projectId: row.projectId,
+      taskId,
+      type: "planning",
+      text: "Plan updated",
+      // A progress "clear": the app refreshes the plan card, and the activity feed keeps no line.
+      details: { stepPlan: true, jobId: `plan-${taskId}`, clear: true },
+      ephemeral: true,
+      status: "info",
+    });
+  }
+
+  /**
+   * "go on": the last plan rebuilt from the request it answered, with the steps that were done
+   * then. Null when the last plan has nothing left to do.
+   */
+  private unfinishedPlan(row: typeof tasks.$inferSelect): { plan: RequestPlan; done: Set<string> } | null {
+    const all = this.plans(row);
+    // The last plan that was not itself only a "go on" of nothing.
+    const last = all.at(-1);
+    if (!last || last.steps.every((s) => s.status === "done" || s.status === "skipped")) return null;
+    let text = row.prompt;
+    // The request the plan answered: its message, or the first request of the task.
+    for (const p of [...all].reverse()) {
+      if (!p.messageId) break;
+      const m = this.o.db.select().from(messages).where(eq(messages.id, p.messageId)).get();
+      const content = m ? ((JSON.parse(m.content) as { content?: string }).content ?? "") : "";
+      if (content && !isGoOn(content)) {
+        text = content;
+        break;
+      }
+    }
+    const plan = buildPlan(text);
+    const done = new Set(
+      last.steps
+        .filter((s) => s.status === "done" || s.status === "skipped")
+        .map((s) => `${s.id}|${s.title}`),
+    );
+    return { plan, done };
   }
 
   /** Team modes: the Manager plans, the agents work through the task graph, reviewers sign off. */
@@ -1252,6 +1480,7 @@ export class TaskManager {
     contextLength: number = DEFAULT_CONTEXT,
     request = "",
     small = false,
+    steps = false,
   ): string {
     const budgets = promptBudgets(contextLength);
     const context: string[] = [];
@@ -1275,6 +1504,7 @@ export class TaskManager {
       remember: !!this.o.memory,
       context,
       small,
+      steps,
     });
   }
 
@@ -1347,11 +1577,13 @@ export class TaskManager {
       .all()) {
       const {
         isError: _e,
+        fromDepo: _d,
         steer,
         references,
         ...c
       } = JSON.parse(m.content) as ChatMessage & {
         isError?: boolean;
+        fromDepo?: boolean;
         steer?: StoredNote["steer"];
         references?: string[];
       };

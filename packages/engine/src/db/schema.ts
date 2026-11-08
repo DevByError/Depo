@@ -152,6 +152,8 @@ export const tasks = sqliteTable("tasks", {
   mode: text("mode").notNull().default("single"),
   /** JSON-encoded Plan (team modes) */
   plan: text("plan"),
+  /** JSON-encoded StepPlan[] (single-agent runs, one per turn; ADR-0086) */
+  stepPlans: text("step_plans"),
   ...timestamps,
 });
 

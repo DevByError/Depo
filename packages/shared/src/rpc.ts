@@ -41,6 +41,7 @@ import {
 } from "./extensions";
 import { GitMethods } from "./git";
 import { LogMethods } from "./logs";
+import { StepPlanSchema } from "./plan";
 import { PreviewMethods } from "./preview";
 import { QaMethods } from "./qa";
 import { ReadinessMethods } from "./readiness";
@@ -354,7 +355,12 @@ const TaskMethods = {
   },
   "tasks.get": {
     params: z.object({ id: z.string() }).strict(),
-    result: z.object({ task: TaskSchema, messages: z.array(ChatItemSchema) }),
+    result: z.object({
+      task: TaskSchema,
+      messages: z.array(ChatItemSchema),
+      /** Single-agent runs: the step plan of each turn (ADR-0086). */
+      plans: z.array(StepPlanSchema).default([]),
+    }),
   },
   "tasks.send": {
     params: z

@@ -59,6 +59,9 @@ export function startEngineConnection(): void {
       }
     } else if (e.taskId && e.details?.planUpdate === true) {
       void queryClient.invalidateQueries({ queryKey: ["team"] });
+    } else if (e.taskId && e.details?.stepPlan === true) {
+      // Depo's step plan moved: the chat's plan card reads it with the task.
+      void queryClient.invalidateQueries({ queryKey: ["tasks", "get", e.taskId] });
     }
   });
   engine.onStatus((status, error) => {

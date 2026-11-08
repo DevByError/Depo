@@ -264,3 +264,100 @@ export function matchForeignKeyTypes(existing: string, added: string): { sql: st
   }
   return { sql, changes };
 }
+
+/** MySQL's longest name for a table, column, index or constraint (ER_TOO_LONG_IDENT). */
+export const MAX_IDENTIFIER = 64;
+
+/**
+ * Names in the CREATE TABLE statements of `sql` that MySQL refuses as too long, as sentences for
+ * the model: table, column, index and constraint names, and the foreign key names MySQL makes up
+ * itself (`<table>_ibfk_1`) for foreign keys that have no name of their own.
+ */
+export function longIdentifiers(sql: string): string[] {
+  const out: string[] = [];
+  const text = sql.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const t of createTables(text)) {
+    if (t.name.length > MAX_IDENTIFIER) {
+      out.push(
+        `The table name ${t.name} is ${t.name.length} characters long; MySQL allows at most ${MAX_IDENTIFIER}. Use a short name.`,
+      );
+      continue;
+    }
+    const open = text.indexOf("(", t.start);
+    const block = open >= 0 ? inside(text, open) : null;
+    if (!block) continue;
+    let unnamed = 0;
+    for (const part of topLevel(block.body)) {
+      const named =
+        /^(?:CONSTRAINT|KEY|INDEX|UNIQUE(?:\s+(?:KEY|INDEX))?|FULLTEXT(?:\s+(?:KEY|INDEX))?)\s+([`"]?[\w$]+[`"]?)\s*\(/i.exec(
+          part,
+        );
+      if (named) {
+        const n = name(named[1] ?? "");
+        if (n.length > MAX_IDENTIFIER)
+          out.push(
+            `The name ${n} in ${t.name} is ${n.length} characters long; MySQL allows at most ${MAX_IDENTIFIER}. Use a shorter name.`,
+          );
+      }
+      const isFk = /^(?:CONSTRAINT\s+[`"]?[\w$]+[`"]?\s+)?FOREIGN\s+KEY\b/i.test(part);
+      const inlineFk = !isFk && !NOT_COLUMNS.test(part) && /\bREFERENCES\b/i.test(part);
+      if ((isFk && !/^CONSTRAINT\b/i.test(part)) || inlineFk) unnamed++;
+      if (!NOT_COLUMNS.test(part)) {
+        const col = /^([`"]?[\w$]+[`"]?)\s/.exec(part);
+        const n = name(col?.[1] ?? "");
+        if (n.length > MAX_IDENTIFIER)
+          out.push(
+            `The column name ${t.name}.${n} is ${n.length} characters long; MySQL allows at most ${MAX_IDENTIFIER}. Use a shorter name.`,
+          );
+      }
+    }
+    if (unnamed > 0) {
+      const implied = `${t.name}_ibfk_${unnamed}`;
+      if (implied.length > MAX_IDENTIFIER)
+        out.push(
+          `The table name ${t.name} is too long for its foreign keys: MySQL names them ${t.name}_ibfk_1 and so on (${implied.length} characters, at most ${MAX_IDENTIFIER} allowed), so the migration fails. Use a table name of at most ${MAX_IDENTIFIER - 7} characters.`,
+        );
+    }
+  }
+  return out;
+}
+
+const CREATE_INDEX =
+  /CREATE\s+(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?[\w$]+[`"]?\s+ON\s+([`"]?[\w$]+[`"]?)[^;]*;/gi;
+
+/**
+ * Only the statements of `added` that create the tables in `keep` (and their indexes); everything
+ * else (other tables, ALTER statements, stray lines) is left out. For a step that adds named tables.
+ */
+export function onlyTables(added: string, keep: string[]): { sql: string; dropped: string[]; other: number } {
+  const want = new Set(keep.map((k) => k.toLowerCase()));
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  const creates = createTables(added);
+  for (const t of creates) {
+    if (want.has(t.name)) kept.push(t.text);
+    else dropped.push(t.name);
+  }
+  const indexes: string[] = [];
+  for (const m of added.matchAll(new RegExp(CREATE_INDEX.source, "gi")))
+    if (want.has(name(m[1] ?? ""))) indexes.push(m[0].trim());
+  // Whatever is left once the kept statements are cut out, without comments and blank lines.
+  let rest = added;
+  for (const t of [...creates].reverse()) rest = `${rest.slice(0, t.start)}${rest.slice(t.end)}`;
+  rest = rest
+    .replace(new RegExp(CREATE_INDEX.source, "gi"), "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/--[^\n]*/g, "");
+  const other = rest.split(";").filter((s) => s.trim()).length;
+  return { sql: [...kept, ...indexes].join("\n\n"), dropped, other };
+}
+
+/** Statements MySQL cannot run that small models write ("ALTER TABLE IF NOT EXISTS …"). */
+export function invalidStatements(sql: string): { sql: string; dropped: string[] } {
+  const dropped: string[] = [];
+  const out = sql.replace(/^[ \t]*ALTER\s+TABLE\s+IF\s+NOT\s+EXISTS\b[^;]*;[ \t]*\r?\n?/gim, (m) => {
+    dropped.push(m.trim().split("\n")[0]?.slice(0, 80) ?? "");
+    return "";
+  });
+  return { sql: dropped.length ? out.replace(/\n{3,}/g, "\n\n") : sql, dropped };
+}

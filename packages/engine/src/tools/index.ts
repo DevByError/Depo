@@ -24,10 +24,18 @@ import { resolveInside, ToolError } from "./paths";
 import { PREVIEW_TOOLS, type PreviewHooks } from "./preview-tools";
 import type { QaHooks } from "./qa-tools";
 import { REFERENCE_TOOLS, type ReferenceHooks } from "./reference-tools";
+import { mainSchemaFile } from "./schema-files";
 import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
-import { foreignKeyProblems, matchForeignKeyTypes, withoutExistingTables } from "./sqlcheck";
+import {
+  foreignKeyProblems,
+  invalidStatements,
+  longIdentifiers,
+  matchForeignKeyTypes,
+  onlyTables,
+  withoutExistingTables,
+} from "./sqlcheck";
 import { checkable, compileProblem, describeCompileProblem } from "./syntax";
 
 export { ToolError } from "./paths";
@@ -73,6 +81,20 @@ export interface ToolContext {
   references?: ReferenceHooks;
   /** The project's test MySQL database (dev_database). */
   devdb?: DevDbHooks;
+  /**
+   * The step of Depo's plan being built (ADR-0086): a table step's appends to the schema keep
+   * only its tables, and an append_file call without a path goes to the step's main file.
+   */
+  step?: StepScope;
+}
+
+export interface StepScope {
+  /** Tables this step adds (lower case). */
+  tables?: string[];
+  /** The file the step works on first. */
+  mainFile?: string;
+  /** The project's schema file. */
+  schemaFile?: string;
 }
 
 export interface TeamHooks {
@@ -255,6 +277,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       mustHaveRead(ctx, a.path, "replacing");
       const before = currentText(ctx.root, a.path);
       const r = writeFileTool(ctx.root, a.path, a.content);
+      keepsNamesShort(ctx.root, r.path, before);
       const compiled = keepsCompiling(ctx.root, r.path, before);
       ctx.readPaths?.add(r.path);
       ctx.onFileChanged?.(r.path);
@@ -297,6 +320,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
           ...(e.replace_all ? { replaceAll: true } : {}),
         })),
       );
+      keepsNamesShort(ctx.root, r.path, before);
       const compiled = keepsCompiling(ctx.root, r.path, before);
       ctx.onFileChanged?.(r.path);
       emit(ctx, {
@@ -322,7 +346,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         );
       // New tables in a schema: the ones already there are left out, and integer foreign key
       // columns get the type of the column they reference (small models guess INT).
-      const { content, notes } = sqlAppend(ctx.root, a.path, a.content);
+      const { content, notes } = sqlAppend(ctx.root, a.path, a.content, ctx.step);
       const before = currentText(ctx.root, a.path);
       const r = appendFileTool(ctx.root, a.path, content);
       const compiled = keepsCompiling(ctx.root, r.path, before);
@@ -783,6 +807,43 @@ function keepsCompiling(root: string, rel: string, before: string | null): strin
   return `\nWarning from Depo: ${what}\nFix it now with an edit to ${rel}.`;
 }
 
+/**
+ * After a .sql file changed: a table, column, index or implied foreign key name longer than MySQL
+ * allows (64 characters) makes the migration fail, so a change that adds one is undone and refused.
+ */
+function keepsNamesShort(root: string, rel: string, before: string | null): void {
+  if (!/\.sql$/i.test(rel)) return;
+  const after = currentText(root, rel);
+  if (after === null) return;
+  const had = new Set(before === null ? [] : longIdentifiers(before));
+  const added = longIdentifiers(after).filter((p) => !had.has(p));
+  if (!added.length) return;
+  const { abs } = resolveInside(root, rel);
+  if (before === null) fs.rmSync(abs, { force: true });
+  else fs.writeFileSync(abs, before, "utf8");
+  throw new ToolError(
+    `Nothing was changed: ${added.join(" ")} ${rel} is as it was before. Make the change again with shorter names.`,
+  );
+}
+
+/**
+ * append_file called without a path (small models forget it): SQL goes to the project's schema
+ * file, anything else to the file the current step works on. Returns the arguments with the
+ * path, or null when there is nothing sensible to use.
+ */
+export function inferAppendPath(
+  args: unknown,
+  ctx: Pick<ToolContext, "root" | "step">,
+): Record<string, unknown> | null {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  const a = args as Record<string, unknown>;
+  if (typeof a.path === "string" && a.path.trim()) return null;
+  if (typeof a.content !== "string" || !a.content.trim()) return null;
+  const sql = /\b(CREATE|ALTER)\s+TABLE\b/i.test(a.content);
+  const target = sql ? (ctx.step?.schemaFile ?? mainSchemaFile(ctx.root)) : (ctx.step?.mainFile ?? null);
+  return target ? { ...a, path: target } : null;
+}
+
 /** Code with functions left empty for later ("// Add implementation here"). */
 const STUB =
   /^\s*(?:\/\/|#|\*|\/\*)\s*(?:TODO:?\s*)?(?:add|write|put|insert)?\s*(?:your|the)?\s*(?:real\s+)?(?:implementation|logic)\s*(?:here|goes here|later)[.!]?\s*(?:\*\/)?\s*$|^\s*(?:\/\/|#)\s*TODO:?\s*implement\b/im;
@@ -811,10 +872,49 @@ export function refuseWrongPlace(root: string, rel: string, content: string): vo
       );
     }
   }
+  const api = /^((?:[\w.-]+\/)*?)(?:src\/)?(?:app|pages)\/api\/.+\.(tsx|jsx|ts|js)$/.exec(norm);
+  if (api) {
+    const base = api[1] ?? "";
+    const routes = backendRouteFile(root, base);
+    if (routes)
+      throw new ToolError(
+        `Nothing was written: ${base || "this folder"} is not a Next.js app, so ${norm} would never be loaded. Its routes are in ${routes}: add the route there the way the other routes are added, and put its handler next to the code of its area (for example ${base}src/<area>/).`,
+      );
+  }
   if (checkable(norm) && STUB.test(content))
     throw new ToolError(
       `Nothing was written: ${norm} has code left for later ("${STUB.exec(content)?.[0].trim()}"). Write the real code of each function now, or leave a function out until you write it.`,
     );
+}
+
+/**
+ * The file that holds a backend's routes (src/app.ts, src/server.ts, src/index.ts) when the folder
+ * `base` (with a trailing slash, or "") is a Node/Bun backend rather than a Next.js app.
+ */
+function backendRouteFile(root: string, base: string): string | null {
+  let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> } = {};
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(root, base, "package.json"), "utf8")) as typeof pkg;
+  } catch {
+    return null;
+  }
+  if (pkg.dependencies?.next || pkg.devDependencies?.next) return null;
+  for (const f of [
+    "src/app.ts",
+    "src/app.js",
+    "src/server.ts",
+    "src/server.js",
+    "src/index.ts",
+    "src/index.js",
+  ]) {
+    const abs = path.join(root, base, f);
+    try {
+      if (fs.statSync(abs).isFile() && /\/api\//.test(fs.readFileSync(abs, "utf8"))) return `${base}${f}`;
+    } catch {
+      // not there
+    }
+  }
+  return null;
 }
 
 /**
@@ -836,7 +936,12 @@ export function onlyComments(text: string, rel = ""): boolean {
  * are left out (nothing left is an error), and integer foreign key columns are typed like the
  * columns they reference. Other files are added as they are.
  */
-function sqlAppend(root: string, rel: string, text: string): { content: string; notes: string[] } {
+function sqlAppend(
+  root: string,
+  rel: string,
+  text: string,
+  step?: StepScope,
+): { content: string; notes: string[] } {
   if (!/\.sql$/i.test(rel)) return { content: text, notes: [] };
   let before = "";
   try {
@@ -846,6 +951,40 @@ function sqlAppend(root: string, rel: string, text: string): { content: string; 
     return { content: text, notes: [] };
   }
   const notes: string[] = [];
+  // A step that adds named tables: only those tables (small models invent more, and ALTERs).
+  if (step?.tables?.length) {
+    const o = onlyTables(text, step.tables);
+    const want = step.tables.join(", ");
+    if (!o.sql.trim())
+      throw new ToolError(
+        `Nothing was added: this step adds the ${want} table${step.tables.length === 1 ? "" : "s"}, and the text has no CREATE TABLE for ${step.tables.length === 1 ? "it" : "them"}. Append one CREATE TABLE IF NOT EXISTS ${step.tables[0]} (...) statement with the columns the request lists.`,
+      );
+    if (o.dropped.length || o.other) {
+      const left = [
+        ...(o.dropped.length
+          ? [`the table${o.dropped.length === 1 ? "" : "s"} ${o.dropped.join(", ")}`]
+          : []),
+        ...(o.other ? [`${o.other} other statement${o.other === 1 ? "" : "s"}`] : []),
+      ].join(" and ");
+      notes.push(`Depo left out ${left}: this step adds only ${want}. Do not add anything else to ${rel}.`);
+    }
+    text = o.sql;
+  } else {
+    const bad = invalidStatements(text);
+    if (bad.dropped.length) {
+      text = bad.sql;
+      notes.push(
+        `Depo left out ${bad.dropped.length} ALTER TABLE IF NOT EXISTS statement${bad.dropped.length === 1 ? "" : "s"}: MySQL has no such statement.`,
+      );
+      if (!text.trim() || onlyComments(text, rel))
+        throw new ToolError(
+          "Nothing was added: MySQL has no ALTER TABLE IF NOT EXISTS. Put new columns in the CREATE TABLE of a new table, or go on with the next part of the request.",
+        );
+    }
+  }
+  const long = longIdentifiers(text);
+  if (long.length)
+    throw new ToolError(`Nothing was added: ${long.join(" ")} Write it again with shorter names.`);
   const w = withoutExistingTables(before, text);
   let content = w.sql;
   const names = w.skipped.join(", ");

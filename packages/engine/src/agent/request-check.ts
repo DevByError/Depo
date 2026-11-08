@@ -71,7 +71,7 @@ function sourceFiles(root: string): string[] {
 }
 
 /** Next.js app router folders (`app` with a layout or page), relative to the root. */
-function appDirs(root: string): string[] {
+export function appDirs(root: string): string[] {
   const found: string[] = [];
   for (const rel of [
     "app",
@@ -96,7 +96,7 @@ function appDirs(root: string): string[] {
 }
 
 /** Does a page file for `route` exist under one of the app folders (route groups like (shop) allowed)? */
-function hasPage(dirs: string[], route: string): boolean {
+export function hasPage(dirs: string[], route: string): boolean {
   const parts = route.split("/").filter(Boolean);
   const matchDir = (dir: string, i: number): boolean => {
     if (i === parts.length)
@@ -123,6 +123,32 @@ function hasPage(dirs: string[], route: string): boolean {
   return dirs.some((d) => matchDir(d, 0));
 }
 
+/** The copy's source code, joined (files over 512 KB left out). */
+export function sourceCode(root: string): string {
+  let code = "";
+  for (const f of sourceFiles(root)) {
+    try {
+      const st = fs.statSync(f);
+      if (st.size <= 512 * 1024) code += `${fs.readFileSync(f, "utf8")}\n`;
+    } catch {
+      // unreadable: skip
+    }
+  }
+  return code;
+}
+
+/**
+ * Is the route's path in the code? The fixed start of the path counts: "/api/users/:id" is there
+ * when "/api/users/" is. A path with no parameters must appear whole ("/api/skill" is not
+ * "/api/skills/search").
+ */
+export function routeIn(code: string, routePath: string): boolean {
+  const fixed = routePath.split(/[:{[*]/)[0] ?? routePath;
+  const exact = fixed === routePath;
+  const re = new RegExp(`${fixed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${exact ? "(?![\\w/-])" : ""}`);
+  return re.test(code);
+}
+
 /** The parts of the request that are not in the code yet, as short lines for the model. */
 export function missingParts(request: string, root: string): string[] {
   return requestStatus(request, root)
@@ -136,23 +162,9 @@ export function requestStatus(request: string, root: string): { text: string; ok
   if (!routes.length && !pages.length) return [];
   const status: { text: string; ok: boolean }[] = [];
   if (routes.length) {
-    let code = "";
-    for (const f of sourceFiles(root)) {
-      try {
-        const st = fs.statSync(f);
-        if (st.size <= 512 * 1024) code += `${fs.readFileSync(f, "utf8")}\n`;
-      } catch {
-        // unreadable: skip
-      }
-    }
-    for (const r of routes) {
-      // The fixed start of the path: "/api/users/:id" is there when "/api/users/" is. A path with
-      // no parameters must appear whole ("/api/skill" is not "/api/skills/search").
-      const fixed = r.path.split(/[:{[*]/)[0] ?? r.path;
-      const exact = fixed === r.path;
-      const re = new RegExp(`${fixed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${exact ? "(?![\\w/-])" : ""}`);
-      status.push({ text: `the route ${r.method} ${r.path}`, ok: re.test(code) });
-    }
+    const code = sourceCode(root);
+    for (const r of routes)
+      status.push({ text: `the route ${r.method} ${r.path}`, ok: routeIn(code, r.path) });
   }
   const dirs = appDirs(root);
   if (dirs.length)

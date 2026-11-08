@@ -408,16 +408,23 @@ export class FixRounds {
   private seen = new Map<string, number>();
   /** Why the last `next` said stop, for the owner. */
   stopped: string | null = null;
+  private readonly maxRounds: number;
+  private readonly sameLimit: number;
+
+  constructor(o: { maxRounds?: number; sameLimit?: number } = {}) {
+    this.maxRounds = o.maxRounds ?? MAX_FIX_ROUNDS;
+    this.sameLimit = o.sameLimit ?? SAME_PROBLEMS_LIMIT;
+  }
 
   next(problems: string[]): "fix" | "again" | "stop" {
     const key = problems.map(problemKey).sort().join("|");
     const n = (this.seen.get(key) ?? 0) + 1;
     this.seen.set(key, n);
-    if (this.rounds >= MAX_FIX_ROUNDS) {
+    if (this.rounds >= this.maxRounds) {
       this.stopped = `Depo stopped after ${this.rounds} rounds of fixing, the most it does in one run.`;
       return "stop";
     }
-    if (n > SAME_PROBLEMS_LIMIT) {
+    if (n > this.sameLimit) {
       this.stopped = `Depo stopped after ${this.rounds} rounds of fixing: the same problem came back ${n - 1} times after a fix.`;
       return "stop";
     }

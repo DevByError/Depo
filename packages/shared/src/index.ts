@@ -8,6 +8,7 @@ export * from "./extensions";
 export * from "./git";
 export * from "./ids";
 export * from "./logs";
+export * from "./plan";
 export * from "./preview";
 export * from "./qa";
 export * from "./readiness";
