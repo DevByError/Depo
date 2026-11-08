@@ -60,7 +60,9 @@ const STEP_UP_TRIES = 2;
 /** Sampling after an unreadable reply: careful, so the next call comes out well formed. */
 const CAREFUL_TEMPERATURE = 0.2;
 /** Times the model is asked to go on with parts of the request that are missing. */
-const MAX_DONE_NUDGES = 6;
+const MAX_DONE_NUDGES = 10;
+/** How often a larger model builds a missing part the small one stopped at. */
+const MAX_PART_STEP_UPS = 2;
 /** What stands in the history for a reply that could not be read (small models copy their own broken calls). */
 export const BROKEN_STUB = "(I wrote a tool call that Depo could not read, so nothing ran.)";
 const log = getLogger({ component: "agent" });
@@ -169,7 +171,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   // until a call runs) or on Depo's problem report ("report": until it says the fix is done).
   let model = p.model;
   let temperature = p.temperature;
-  let stepUpFor: "call" | "report" | null = null;
+  let stepUpFor: "call" | "report" | "part" | null = null;
+  let partStepUps = 0;
   // Depo's problem report from the finish line, and the calls that ran since it was sent.
   let reportOpen = false;
   let lastReport = "";
@@ -627,12 +630,42 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         history.push({ role: "user", content: nudge });
         continue;
       }
+      // The larger model says its part is built: the owner's model goes on from here.
+      if (stepUpFor === "part" && model !== p.model) {
+        emit({
+          type: "retrying",
+          text: `${model} finished its part; ${p.model} goes on.`,
+          details: { from: model, to: p.model },
+          status: "running",
+        });
+        model = p.model;
+        stepUpFor = null;
+        temperature = p.temperature;
+      }
       // Parts of the request that are not in the code yet: go on while that list gets shorter.
       if (more && canEdit && p.checkDone && doneNudges < MAX_DONE_NUDGES) {
         const missing = p.checkDone();
         if (missing.length) {
-          if (missingBefore !== null && missing.length >= missingBefore) doneStalls++;
+          const stalled = missingBefore !== null && missing.length >= missingBefore;
           missingBefore = missing.length;
+          // The small model stopped without building anything more: a larger installed model
+          // builds the next part, then hands back.
+          if (stalled && p.stepUp && model !== p.stepUp.model && partStepUps < MAX_PART_STEP_UPS) {
+            partStepUps++;
+            doneNudges++;
+            model = p.stepUp.model;
+            stepUpFor = "part";
+            log.warn("stepping up to a larger model for a missing part", { from: p.model, to: model });
+            emit({
+              type: "retrying",
+              text: `${p.model} stopped without building ${missing[0]}, so Depo asked ${model} to build it. Depo goes back to ${p.model} after that.`,
+              details: { from: p.model, to: model, missing },
+              status: "running",
+            });
+            history.push({ role: "user", content: notDoneNote(missing, !!p.fileBlocks, true) });
+            continue;
+          }
+          if (stalled) doneStalls++;
           if (doneStalls <= 1) {
             doneNudges++;
             emit({
@@ -758,8 +791,10 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       });
     callsSinceReport += ran;
     // A call ran: the stuck step is over, so the model (and its sampling) are the owner's again.
-    // A larger model fixing Depo's problem report keeps going until it says the fix is done.
-    if (ran > 0 && model !== p.model && stepUpFor !== "report") {
+    // A larger model fixing Depo's problem report, or building a missing part, keeps going until
+    // it says it is done.
+    const keepsGoing = stepUpFor === "report" || stepUpFor === "part";
+    if (ran > 0 && model !== p.model && !keepsGoing) {
       emit({
         type: "retrying",
         text: `${model} got past the step; Depo goes back to ${p.model}.`,
@@ -769,7 +804,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       model = p.model;
       stepUpFor = null;
     }
-    if (ran > 0 && stepUpFor !== "report") temperature = p.temperature;
+    if (ran > 0 && !keepsGoing) temperature = p.temperature;
     if (dumpNote) history.push({ role: "user", content: dumpNote });
     else if (repeated)
       history.push({

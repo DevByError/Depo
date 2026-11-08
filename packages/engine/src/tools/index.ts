@@ -27,7 +27,7 @@ import { REFERENCE_TOOLS, type ReferenceHooks } from "./reference-tools";
 import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
-import { foreignKeyProblems } from "./sqlcheck";
+import { foreignKeyProblems, matchForeignKeyTypes, withoutExistingTables } from "./sqlcheck";
 
 export { ToolError } from "./paths";
 
@@ -314,9 +314,10 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         throw new ToolError(
           `Nothing was added: that text is only a comment. Add the real content to ${a.path} (for example the CREATE TABLE statements), or go on with the next part of the request.`,
         );
-      // New tables must match the ones already there (types of the keys they reference).
-      mustHaveRead(ctx, a.path, "adding to");
-      const r = appendFileTool(ctx.root, a.path, a.content);
+      // New tables in a schema: the ones already there are left out, and integer foreign key
+      // columns get the type of the column they reference (small models guess INT).
+      const { content, notes } = sqlAppend(ctx.root, a.path, a.content);
+      const r = appendFileTool(ctx.root, a.path, content);
       ctx.readPaths?.add(r.path);
       ctx.onFileChanged?.(r.path);
       emit(ctx, {
@@ -325,7 +326,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         details: { path: r.path, created: r.created, added: r.added },
         status: "succeeded",
       });
-      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).${schemaWarnings(ctx.root, r.path)}`;
+      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).${notes.map((n) => ` ${n}`).join("")}${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -755,6 +756,42 @@ export function onlyComments(text: string, rel = ""): boolean {
     .split(/\r?\n/)
     .filter((l) => !/^\s*((--|#|\/\/|;).*)?$/.test(l));
   return body.length === 0;
+}
+
+/**
+ * What append_file adds to a .sql file: CREATE TABLE statements for tables the file already has
+ * are left out (nothing left is an error), and integer foreign key columns are typed like the
+ * columns they reference. Other files are added as they are.
+ */
+function sqlAppend(root: string, rel: string, text: string): { content: string; notes: string[] } {
+  if (!/\.sql$/i.test(rel)) return { content: text, notes: [] };
+  let before = "";
+  try {
+    const { abs } = resolveInside(root, rel);
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) before = fs.readFileSync(abs, "utf8");
+  } catch {
+    return { content: text, notes: [] };
+  }
+  const notes: string[] = [];
+  const w = withoutExistingTables(before, text);
+  let content = w.sql;
+  const names = w.skipped.join(", ");
+  if (w.skipped.length && (!content.trim() || onlyComments(content, rel)))
+    throw new ToolError(
+      `Nothing was added: ${names} ${w.skipped.length === 1 ? "is" : "are"} already in ${rel}. Go on with the next part of the request.`,
+    );
+  if (w.skipped.length)
+    notes.push(
+      `Depo left out ${names}: ${w.skipped.length === 1 ? "that table is" : "those tables are"} already in the file.`,
+    );
+  const m = matchForeignKeyTypes(before, content);
+  if (m.changes.length) {
+    content = m.sql;
+    notes.push(
+      `Depo changed ${m.changes.join("; ")}, because MySQL needs a foreign key column to have the same type as the column it references.`,
+    );
+  }
+  return { content, notes };
 }
 
 /** After a .sql file changed: foreign keys MySQL will refuse, as a warning in the tool result. */

@@ -20,6 +20,7 @@ export const READINESS_CHECK_IDS = [
   "security",
   "ux",
   "page",
+  "request",
   "plan",
   "reviews",
   "comments",

@@ -22,6 +22,7 @@ export const CHECK_LABEL: Record<ReadinessCheckId, string> = {
   security: "Security",
   ux: "UX",
   page: "Page check",
+  request: "The request",
   plan: "Plan criteria",
   reviews: "Reviews",
   comments: "Open comments",
@@ -547,6 +548,39 @@ export function pageCheck(o: {
 }
 
 // ---- Plan criteria and reviews (team tasks) ---------------------------------------------------
+
+/**
+ * The routes and pages the request names (agent/request-check.ts), checked in the copy: a part
+ * that is not in the code means the request is not done, whatever the model said.
+ */
+export function requestCheck(parts: { text: string; ok: boolean }[]): ReadinessCheck {
+  const missing = parts.filter((p) => !p.ok);
+  const items = [...missing, ...parts.filter((p) => p.ok)].map((p) => ({
+    text: p.text.charAt(0).toUpperCase() + p.text.slice(1),
+    ok: p.ok,
+  }));
+  const what = (n: number) => plural(n, "route or page", "routes and pages");
+  if (missing.length)
+    return check(
+      "request",
+      "fail",
+      `${missing.length} of the ${what(parts.length)} the request asks for ${missing.length === 1 ? "is" : "are"} not in the code.`,
+      {
+        evidence: [
+          `Not built: ${missing
+            .map((p) => p.text)
+            .slice(0, 4)
+            .join("; ")}${missing.length > 4 ? "; …" : ""}`,
+        ],
+        items,
+        reason: `${missing.length} of ${parts.length} requested routes and pages are missing`,
+      },
+    );
+  return check("request", "pass", `All ${what(parts.length)} the request asks for are in the code.`, {
+    items,
+    reason: "every requested route and page is in the code",
+  });
+}
 
 export function planCheck(plan: Plan, name: (owner: string) => string): ReadinessCheck {
   const items: ReadinessItem[] = [];

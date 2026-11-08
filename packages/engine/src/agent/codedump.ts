@@ -78,12 +78,13 @@ export function isCode(b: Block): boolean {
 export function dumpInProgress(streamed: string, toolNames: string[], root?: string): boolean {
   if (streamed.length < DUMP_CHARS) return false;
   if (looksLikeToolCall(streamed, toolNames) || /<tool_call>|<function_call>/i.test(streamed)) return false;
-  if (/^[ \t]*<{5,9}[ \t]*SEARCH\b/im.test(streamed)) return false;
+  if (/^[ \t]*(<{5,9}[ \t]*SEARCH\b|<{7}([ \t]|$))/im.test(streamed)) return false;
   return codeBlocks(streamed).some((b) => {
     if (!isCode(b) || lines(b.body) < STREAM_LINES) return false;
     if (!root) return true;
     const label = blockLabel(streamed, b);
-    return !label || fs.existsSync(path.join(root, label.path));
+    // A schema file is not a dump: Depo adds the new tables it lists (agent/blocks.ts).
+    return !label || (fs.existsSync(path.join(root, label.path)) && !/\.sql$/i.test(label.path));
   });
 }
 

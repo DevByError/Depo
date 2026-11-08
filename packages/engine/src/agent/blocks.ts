@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolCall } from "@depo/model-gateway";
+import { newTables } from "../tools/sqlcheck";
 import { blockLabel, codeBlocks, isCode, isWholeFile, pathIn, safe } from "./codedump";
 
 /**
@@ -31,9 +32,11 @@ export interface SearchReplace {
   end: number;
 }
 
-const OPEN = /^[ \t]*<{5,9}[ \t]*SEARCH\b.*$/i;
+// Git's conflict layout counts too (<<<<<<< HEAD … ======= … >>>>>>> 3f3b5e5): small models
+// trained on diffs write it instead of SEARCH/REPLACE. The first part is the old text.
+const OPEN = /^[ \t]*(?:<{5,9}[ \t]*SEARCH\b.*|<{7}(?:[ \t]+\S.*)?)$/i;
 const MID = /^[ \t]*={5,9}[ \t]*$/;
-const CLOSE = /^[ \t]*>{5,9}[ \t]*REPLACE\b.*$/i;
+const CLOSE = /^[ \t]*(?:>{5,9}[ \t]*REPLACE\b.*|>{7}(?:[ \t]+\S.*)?)$/i;
 const FENCE = /^[ \t]*(```+|~~~+)[ \t]*([^\n`]*)$/;
 
 /** The SEARCH/REPLACE blocks of a reply, and how many were left unfinished. */
@@ -138,8 +141,34 @@ export function blockCalls(
   type Item = { at: number; name: string; args: Record<string, unknown> };
   const items: Item[] = [];
   const cut: { start: number; end: number }[] = [];
+  // New tables for a schema file Depo can add even when the block around them is wrong: the
+  // file's text as it will be after this reply's earlier additions.
+  const added = new Map<string, string>();
+  const schemaText = (rel: string): string | null => {
+    if (!/\.sql$/i.test(rel) || !can.has("append_file")) return null;
+    try {
+      return `${fs.readFileSync(path.join(root, rel), "utf8")}\n${added.get(rel) ?? ""}`;
+    } catch {
+      return null;
+    }
+  };
+  const addTables = (rel: string, at: number, sql: string) => {
+    items.push({ at, name: "append_file", args: { path: rel, content: `${sql}\n` } });
+    added.set(rel, `${added.get(rel) ?? ""}\n${sql}`);
+  };
   for (const b of blocks) {
     const empty = !b.search.trim();
+    // A block for schema.sql whose old text is not in the file (a whole schema pasted as the
+    // "old" part, or the same tables on both sides): the tables it adds are what it means.
+    const sql = empty ? null : schemaText(b.path);
+    if (sql !== null && !looselyIncludes(sql, b.search)) {
+      const t = newTables(sql, b.replace);
+      if (t.tables.length) {
+        addTables(b.path, b.start, t.sql);
+        cut.push({ start: b.start, end: b.end });
+        continue;
+      }
+    }
     if (empty) {
       const there = exists(b.path);
       const tool = there ? "append_file" : "write_file";
@@ -162,12 +191,24 @@ export function blockCalls(
   }
   // Whole new files in labelled fences (outside the SEARCH/REPLACE blocks).
   const existing = new Set<string>();
-  if (can.has("write_file") && opts.newFiles !== false) {
+  if ((can.has("write_file") || can.has("append_file")) && opts.newFiles !== false) {
     for (const cb of codeBlocks(text)) {
-      if (!cb.closed || !isCode(cb) || cut.some((c) => cb.start >= c.start && cb.start < c.end)) continue;
+      if (!isCode(cb) || cut.some((c) => cb.start >= c.start && cb.start < c.end)) continue;
       if (cb.body.split("\n").filter((l) => l.trim()).length < 2) continue;
       const label = blockLabel(text, cb);
-      if (!label || !isWholeFile(label.body)) continue;
+      if (!label) continue;
+      // A pasted schema.sql: never saved over the file, but its new tables are added at the end
+      // (from a block cut off while streaming, only the statements that were finished).
+      const sql = fs.existsSync(path.join(root, label.path)) ? schemaText(label.path) : null;
+      if (sql !== null) {
+        const t = newTables(sql, label.body, { complete: !cb.closed });
+        if (t.tables.length) {
+          addTables(label.path, cb.start, t.sql);
+          cut.push({ start: cb.start, end: cb.end });
+          continue;
+        }
+      }
+      if (!cb.closed || !can.has("write_file") || !isWholeFile(label.body)) continue;
       if (fs.existsSync(path.join(root, label.path)) && !made.has(label.path)) {
         existing.add(label.path);
         continue;
@@ -203,6 +244,12 @@ export function blockCalls(
   }
   rest += text.slice(from);
   return { calls, rest: rest.replace(/\n{3,}/g, "\n\n").trim(), existing: [...existing], unfinished };
+}
+
+/** Is `part` in `text`, ignoring how the whitespace is laid out? */
+function looselyIncludes(text: string, part: string): boolean {
+  const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+  return squash(text).includes(squash(part));
 }
 
 /** One line per call for the model, after Depo ran its file blocks. */

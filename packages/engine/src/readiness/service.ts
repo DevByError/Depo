@@ -19,12 +19,13 @@ import {
 } from "@depo/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { venvEnv } from "../agent/prompt";
+import { requestStatus } from "../agent/request-check";
 import { detectStack } from "../agent/stack";
 import { clip, decisionDetails } from "../agents/decisions";
 import { agentTag, manifestOf } from "../agents/manifests";
 import type { ApprovalCenter } from "../approvals";
 import type { AppDb } from "../db";
-import { blackboard, changeSets, events, projects, tasks } from "../db/schema";
+import { blackboard, changeSets, events, messages, projects, tasks } from "../db/schema";
 import type { EventBus } from "../events/bus";
 import type { Logger } from "../logger";
 import type { ScanReport } from "../security/service";
@@ -45,6 +46,7 @@ import {
   pageEvidence,
   planCheck,
   type ReviewEvidence,
+  requestCheck,
   reviewsCheck,
   riskyCheck,
   type ScoreEvidence,
@@ -552,6 +554,10 @@ export class ReadinessService implements ReadinessHooks {
         uxCheck({ ui, score: this.boardScore(projectId, taskId, "scores/ux.json"), changedAfter, now }),
       );
     if (want("page")) checks.push(pageCheck({ page, ui, changedAfter, action: act.page, now }));
+    if (want("request")) {
+      const parts = this.requestParts(row, root);
+      if (parts.length) checks.push(requestCheck(parts));
+    }
     const plan = o.plan !== undefined ? o.plan : this.plan(row);
     if (row.mode !== "single" && plan) {
       const reviews = this.reviewEvidence(evs, plan);
@@ -587,6 +593,27 @@ export class ReadinessService implements ReadinessHooks {
       warnings: v.warnings,
       checks,
     };
+  }
+
+  /** The routes and pages the task's request (and its latest message) names, checked in the copy. */
+  private requestParts(row: TaskRow, root: string | null): { text: string; ok: boolean }[] {
+    if (!root || !fs.existsSync(root)) return [];
+    let request = row.prompt;
+    try {
+      const last = this.o.db
+        .select({ content: messages.content })
+        .from(messages)
+        .where(and(eq(messages.taskId, row.id), eq(messages.role, "user")))
+        .orderBy(desc(messages.createdAt))
+        .limit(1)
+        .get();
+      const text = last ? String((JSON.parse(last.content) as { content?: unknown }).content ?? "") : "";
+      if (text && text !== row.prompt) request = `${row.prompt}\n${text}`;
+      return requestStatus(request, root);
+    } catch (err) {
+      this.log.warn("request check failed", { taskId: row.id, err });
+      return [];
+    }
   }
 
   private plan(row: TaskRow): Plan | null {

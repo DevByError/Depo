@@ -125,9 +125,16 @@ function hasPage(dirs: string[], route: string): boolean {
 
 /** The parts of the request that are not in the code yet, as short lines for the model. */
 export function missingParts(request: string, root: string): string[] {
+  return requestStatus(request, root)
+    .filter((p) => !p.ok)
+    .map((p) => p.text);
+}
+
+/** Each route and page the request names that Depo can check, and whether the code has it. */
+export function requestStatus(request: string, root: string): { text: string; ok: boolean }[] {
   const { routes, pages } = requestedParts(request);
   if (!routes.length && !pages.length) return [];
-  const missing: string[] = [];
+  const status: { text: string; ok: boolean }[] = [];
   if (routes.length) {
     let code = "";
     for (const f of sourceFiles(root)) {
@@ -144,27 +151,35 @@ export function missingParts(request: string, root: string): string[] {
       const fixed = r.path.split(/[:{[*]/)[0] ?? r.path;
       const exact = fixed === r.path;
       const re = new RegExp(`${fixed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${exact ? "(?![\\w/-])" : ""}`);
-      if (!re.test(code)) missing.push(`the route ${r.method} ${r.path}`);
+      status.push({ text: `the route ${r.method} ${r.path}`, ok: re.test(code) });
     }
   }
   const dirs = appDirs(root);
   if (dirs.length)
     for (const p of pages) {
-      if (!hasPage(dirs, p)) {
-        const rel = path.relative(root, dirs[0] ?? root).replace(/\\/g, "/");
-        missing.push(`the page ${p} (${rel}${p === "/" ? "" : p}/page.tsx)`);
-      }
+      const rel = path.relative(root, dirs[0] ?? root).replace(/\\/g, "/");
+      status.push({ text: `the page ${p} (${rel}${p === "/" ? "" : p}/page.tsx)`, ok: hasPage(dirs, p) });
     }
-  return missing;
+  return status;
 }
 
-/** The note that asks the model to go on with what is missing. */
-export function notDoneNote(missing: string[], blocks: boolean): string {
+/**
+ * The note that asks the model to go on with what is missing; with `first`, to build only the
+ * first part (a larger model that takes over for one part).
+ */
+export function notDoneNote(missing: string[], blocks: boolean, first = false): string {
+  const how = `read the files it touches, then ${blocks ? "write the code as file blocks" : "write and edit the files"}`;
+  if (first)
+    return [
+      "Not done yet. The request asks for these, and they are not in the code:",
+      ...missing.slice(0, 12).map((m) => `- ${m}`),
+      `Build ${missing[0]} now (${how}). When it exists, say briefly what you built.`,
+    ].join("\n");
   const list = missing.slice(0, 12).map((m) => `- ${m}`);
   if (missing.length > 12) list.push(`- and ${missing.length - 12} more`);
   return [
     "Not done yet. The request asks for these, and they are not in the code:",
     ...list,
-    `Build the first one now (read the files it touches, then ${blocks ? "write the code as file blocks" : "write and edit the files"}), then the next. Finish only when all of them exist, and say briefly what you built.`,
+    `Build the first one now (${how}), then the next. Finish only when all of them exist, and say briefly what you built.`,
   ].join("\n");
 }

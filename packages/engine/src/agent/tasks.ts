@@ -919,6 +919,24 @@ export class TaskManager {
         }
       }
     }
+    // Whatever the model said: parts the request names that are not in the code are not done.
+    const missing = missingParts(request, ws.root);
+    if (missing.length) {
+      const note = `Not finished: the request asks for ${missing.length === 1 ? "this, and it is" : "these, and they are"} not in the code yet:\n${missing
+        .slice(0, 12)
+        .map((m) => `- ${m}`)
+        .join(
+          "\n",
+        )}${missing.length > 12 ? `\n- and ${missing.length - 12} more` : ""}\nSend "go on" to continue from here.`;
+      emit({
+        type: "info",
+        text: `Not finished: ${missing.length} part${missing.length === 1 ? "" : "s"} of the request ${missing.length === 1 ? "is" : "are"} not in the code yet.`,
+        details: { missing },
+        status: "info",
+      });
+      finalText += `\n\n${note}`;
+      this.addMessage(taskId, { role: "assistant", content: note });
+    }
     this.o.db
       .update(tasks)
       .set({ summary: finalText.slice(0, 4000), updatedAt: new Date().toISOString() })

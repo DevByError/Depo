@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## Second part-1 run (2026-11-08): "Ready for review" with nothing built
+
+- **Found from the owner's run:** qwen2.5-coder:3b's first call appended the four tables correctly except `favorites.user_id INT`, but the new read-first rule refused it; 3b then wrote the tables as a Git conflict block and as a pasted `schema.sql` (not saved), stopped twice without building anything, and Depo took that. The finish line ran the blueprint (2 tables migrated, its tests passed), and the run showed "Changes ready for review: 45 files" and "Ready with 3 warnings".
+- **Built:** schema additions are repaired instead of refused: no read needed, tables already there left out, key types matched to the referenced column; Git conflict blocks are read, and new tables in a pasted schema or a wrong block are added (ADR-0082). When 3b stalls on the missing parts, 7b builds the next one and hands back; a run that ends with parts missing says "Not finished" with the list, and the readiness report fails on a new "The request" check (ADR-0083).
+- **Verified:** 3b's two real replies as test fixtures (each now adds the four tables, with `favorites.user_id` typed `BIGINT UNSIGNED`), its first call through `append_file`, a cut-off schema block, the step-up for a missing part and back, and the readiness check. Engine 651, lint and types clean. Not yet run with the real 3b model.
+
 ## Finish guards (2026-11-08): "is this good?" (a 3b run that stopped after the tables)
 
 - **Found from the owner's run:** qwen2.5-coder:3b added four tables to `schema.sql` without reading it (`user_id INT` against `users.id BIGINT UNSIGNED`), appended "-- Additional tables as needed" twice, and gave an empty answer after three steps, which Depo accepted. The finish line's migrate failed with MySQL error 3780; the model then wrote made-up tool results, claimed the tables were fixed, and described a fix it never made.
