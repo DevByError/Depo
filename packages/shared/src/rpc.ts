@@ -378,6 +378,11 @@ const TaskMethods = {
     params: z.object({ id: z.string() }).strict(),
     result: z.object({ cancelled: z.boolean() }),
   },
+  /** Run a failed or stopped task's last message again (files changed so far are kept). */
+  "tasks.retry": {
+    params: z.object({ id: z.string() }).strict(),
+    result: TaskSchema,
+  },
   "agents.list": {
     params: z.object({}).strict(),
     result: z.object({ agents: z.array(AgentManifestSchema) }),

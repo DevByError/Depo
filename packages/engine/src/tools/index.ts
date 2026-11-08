@@ -7,10 +7,18 @@ import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
 import { firstLine, getLogger } from "../logger";
 import { readPlaybook } from "../playbooks";
+import { normalizeArgs } from "./args";
 import { CODE_MAP_TOOLS } from "./codemap-tools";
 import { DEVDB_TOOLS, type DevDbHooks } from "./devdb-tools";
 import { DIAGNOSTICS_TOOLS, type DiagnosticsHooks } from "./diagnostics-tools";
-import { deleteFileTool, editFileTool, listDirTool, readFileTool, writeFileTool } from "./fs-tools";
+import {
+  appendFileTool,
+  deleteFileTool,
+  editFileTool,
+  listDirTool,
+  readFileTool,
+  writeFileTool,
+} from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
 import { resolveInside, ToolError } from "./paths";
 import { PREVIEW_TOOLS, type PreviewHooks } from "./preview-tools";
@@ -292,6 +300,25 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       });
       ctx.readPaths?.add(r.path);
       return `Applied ${r.applied} edit(s) to ${r.path}.`;
+    },
+  }),
+  tool({
+    name: "append_file",
+    description:
+      "Add text to the end of a file (the file is created when it is missing). Use it to add new tables at the end of schema.sql or new entries at the end of a file, without copying the old text.",
+    schema: z.object({ path: z.string().min(1), content: z.string().min(1) }),
+    async run(a, ctx) {
+      refuseFolderOrPlaceholder(ctx.root, a.path, a.content);
+      const r = appendFileTool(ctx.root, a.path, a.content);
+      ctx.readPaths?.add(r.path);
+      ctx.onFileChanged?.(r.path);
+      emit(ctx, {
+        type: "editing_file",
+        text: `${r.created ? "Created" : "Added to the end of"} ${r.path}`,
+        details: { path: r.path, created: r.created, added: r.added },
+        status: "succeeded",
+      });
+      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).`;
     },
   }),
   tool({
@@ -782,7 +809,7 @@ async function runTool(name: string, rawArgs: unknown, ctx: ToolContext): Promis
       content: `Unknown tool "${name}". Available: ${all.map((x) => x.name).join(", ")}`,
       isError: true,
     };
-  const parsed = t.schema.safeParse(rawArgs ?? {});
+  const parsed = t.schema.safeParse(normalizeArgs(name, rawArgs ?? {}, ctx.root) ?? {});
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `${i.path.join(".") || "(arguments)"}: ${i.message}`)

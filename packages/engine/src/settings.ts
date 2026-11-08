@@ -34,6 +34,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "preview.auto_start": true,
   /** When an agent says it is done: install packages, start the test database and the app, open the page; problems go back to the agent. */
   "agent.finish_line": true,
+  /** When a small model keeps writing tool calls Depo cannot read, a larger installed model of the same kind takes that step. */
+  "agent.step_up": true,
   /** How long local runtimes keep a model loaded after a call: "5m", "30m", "2h", "-1" (until Depo closes) or "0". */
   "models.keep_alive": "30m",
   /** Load the model a task's first step uses while the task gets ready (warm-up). */

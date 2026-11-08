@@ -9,7 +9,7 @@ import {
   type ModelProvider,
 } from "@depo/model-gateway";
 import { codeBlocks, dumpInProgress, filesFromDump, isCodeDump } from "../src/agent/codedump";
-import { type LoopParams, runAgentLoop } from "../src/agent/loop";
+import { BROKEN_STUB, type LoopParams, runAgentLoop } from "../src/agent/loop";
 import {
   fixBadEscapes,
   inventsToolResult,
@@ -202,8 +202,9 @@ describe("tool calls a 3b model got wrong (seen on the owner's PC)", () => {
   });
 
   test("the reason a call could not be read is found", () => {
+    // A value that is not JSON at all (a bare name) cannot be repaired.
     const broken =
-      '{"name": "edit_file", "arguments": {"path": "a.txt", "edits": [{"search": "say "hi"", "replace": "x"}]}}';
+      '{"name": "edit_file", "arguments": {"path": "a.txt", "edits": [{"search": say.hi, "replace": "x"}]}}';
     expect(parseTextToolCalls(broken, TOOLS)).toEqual([]);
     expect(textCallProblem(broken, TOOLS)).toBeTruthy();
     expect(textCallProblem("All done.", TOOLS)).toBeNull();
@@ -286,7 +287,7 @@ describe("the agent loop and code pasted as text", () => {
       yield { type: "done", finishReason: "stop", usage: null };
     };
 
-  test("a long code dump is stopped early, its complete files are saved, and the model is told", async () => {
+  test("a long code dump of a file that exists is stopped early, new files are saved, and the model is told", async () => {
     const dump = [
       "Here are the files.",
       "",
@@ -305,19 +306,21 @@ describe("the agent loop and code pasted as text", () => {
       streaming(dump, sent),
       answer("Saved both route files."),
     ]);
+    // more.ts is there already: a whole copy of it pasted as text is a dump, not a new file.
+    fs.writeFileSync(path.join(root, "be", "src", "more.ts"), "export const more = 1;\n");
     const res = await runAgentLoop(params);
     expect(res.finalText).toBe("Saved both route files.");
     // Stopped long before the end of the 300-route file.
     expect(sent.chars).toBeLessThan(dump.length / 3);
     expect(fs.readFileSync(path.join(root, "be", "src", "routes.ts"), "utf8")).toBe(`${routes(4)}\n`);
-    // The file still being written when Depo stopped the reply is not saved half-done.
-    expect(fs.existsSync(path.join(root, "be", "src", "more.ts"))).toBe(false);
+    // The file still being written when Depo stopped the reply is left as it was.
+    expect(fs.readFileSync(path.join(root, "be", "src", "more.ts"), "utf8")).toBe("export const more = 1;\n");
     expect(res.changed).toEqual(["be/src/routes.ts"]);
     const asked = history.find((m) => m.role === "user" && m.content.includes("pasting code"));
     expect(asked?.content).toContain("be/src/routes.ts");
     // The reply kept in the history is the words, not the pasted code.
     const said = history.find((m) => m.role === "assistant" && m.toolCalls?.length);
-    expect(said?.content).toBe("Here are the files.\n\n**be/src/routes.ts**");
+    expect(said?.content).toBe("Here are the files.\n\n**be/src/more.ts**");
     expect(events.some((e) => e.type === "retrying" && e.text.includes("Depo stopped it"))).toBe(true);
   });
 
@@ -353,20 +356,29 @@ describe("the agent loop and code pasted as text", () => {
   });
 
   const BROKEN =
-    '{"name": "edit_file", "arguments": {"path": "be/src/db/schema.sql", "edits": [{"search": "say "hi"", "replace": "x"}]}}';
+    '{"name": "edit_file", "arguments": {"path": "be/src/db/schema.sql", "edits": [{"search": say.hi, "replace": "x"}]}}';
 
-  test("the same unreadable call stops the task after 3 tries, not after hours", async () => {
-    const { params, history, events } = setup([answer(BROKEN)]);
+  test("the same unreadable call stops the task after 4 tries, not after hours, asked differently each time", async () => {
+    const { params, history, events, requests } = setup([answer(BROKEN)]);
     params.maxSteps = 100;
     await expect(runAgentLoop(params)).rejects.toThrow(/could not be read/);
     expect(events.filter((e) => e.text.startsWith("The model's tool call could not be read"))).toHaveLength(
-      2,
+      3,
     );
     const asks = history.filter(
-      (m) => m.role === "user" && m.content.startsWith("That tool call could not be read"),
+      (m) => m.role === "user" && m.content.startsWith("Your tool call could not be read"),
     );
-    expect(asks).toHaveLength(2);
+    expect(asks).toHaveLength(3);
     expect(asks[0]?.content).toContain("Do not repeat the same call unchanged");
+    expect(asks[0]?.content).toContain('<tool_call>\n{"name":"edit_file"');
+    expect(asks[1]?.content).toContain("Make a smaller step");
+    expect(asks[2]?.content).toContain("Start with the simplest step");
+    // The broken call is never shown to the model again (it would copy it).
+    expect(history.some((m) => m.role === "assistant" && m.content.includes("say.hi"))).toBe(false);
+    expect(history.filter((m) => m.content === BROKEN_STUB)).toHaveLength(3);
+    // The first reply uses the model's own sampling; the retries are careful.
+    expect(requests[0]?.temperature).toBeUndefined();
+    expect(requests.slice(1).every((r) => r.temperature === 0.2)).toBe(true);
   });
 
   test("a call that runs in between starts the count again", async () => {

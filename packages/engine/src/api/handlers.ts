@@ -513,6 +513,7 @@ export const handlers: Handlers = {
   },
   "security.last": (p, ctx) => ({ report: ctx.security.lastReport(p.projectId) }),
   "tasks.cancel": (p, ctx) => ({ cancelled: ctx.tasks.cancel(p.id) }),
+  "tasks.retry": (p, ctx) => ctx.tasks.retry(p.id),
   "checkpoints.list": (p, ctx) => ({ checkpoints: ctx.projects.listCheckpoints(p.projectId) }),
   "checkpoints.restore": (p, ctx) => ctx.projects.restoreCheckpoint(p.id, p.force),
   "logs.query": (p, ctx) => needLogs(ctx).query(p),

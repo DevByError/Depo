@@ -23,7 +23,7 @@ vi.mock("@/lib/query", async () => {
 
 import { DiffReviewPanel } from "./DiffReviewPanel";
 import { MemoryPanel } from "./MemoryPanel";
-import { MemorySetting } from "./SettingsSections";
+import { MemorySetting, StepUpSetting } from "./SettingsSections";
 
 function wrap(node: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -67,6 +67,22 @@ test("settings: the memory toggle reads and saves memory.auto", async () => {
   expect(box.checked).toBe(true);
   fireEvent.click(box);
   await waitFor(() => expect(store["memory.auto"]).toBe(false));
+});
+
+test("settings: the small-model step-up toggle reads and saves agent.step_up", async () => {
+  const store: Record<string, unknown> = {};
+  responses["settings.get"] = (p) => ({ key: (p as { key: string }).key, value: null });
+  responses["settings.set"] = (p) => {
+    const { key, value } = p as { key: string; value: unknown };
+    store[key] = value;
+    return { key, value };
+  };
+  wrap(<StepUpSetting />);
+  const box = (await screen.findByLabelText(/Let a larger model take a step/)) as HTMLInputElement;
+  await waitFor(() => expect(box.disabled).toBe(false));
+  expect(box.checked).toBe(true);
+  fireEvent.click(box);
+  await waitFor(() => expect(store["agent.step_up"]).toBe(false));
 });
 
 test("memory panel: items Depo saved by itself carry an auto badge and can be deleted", async () => {

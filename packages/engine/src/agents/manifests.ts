@@ -11,7 +11,7 @@ const READ = [
   "semantic_search",
   "read_playbook",
 ];
-const WRITE = ["write_file", "edit_file", "delete_file"];
+const WRITE = ["write_file", "edit_file", "append_file", "delete_file"];
 const RUN = ["run_command", "git_status", "git_diff"];
 const BLOCK_TOOLS = ["list_blocks", "use_block"];
 const TEAM = ["bb_read", "bb_write", "send_message", "remember"];

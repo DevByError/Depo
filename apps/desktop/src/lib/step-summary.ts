@@ -351,6 +351,23 @@ export function summarizeStep(item: Pick<ChatItem, "toolName" | "text" | "isErro
         meta: n === null ? null : plural(n, "change"),
       });
     }
+    case "append_file": {
+      const done = text.match(
+        /^(Created|Added) (\d+) lines? (?:in|at the end of) (.+) \(now \d+ lines?\)\.$/m,
+      );
+      const path = done?.[3] ?? str(args, "path");
+      const content = typeof args?.content === "string" ? args.content : null;
+      const n = done
+        ? Number(done[2])
+        : content
+          ? content.replace(/\n…$/, "").trim().split("\n").length
+          : null;
+      return out({
+        kind: done?.[1] === "Created" ? "write" : "edit",
+        title: path ? (done?.[1] === "Created" ? `Created ${path}` : `Added to ${path}`) : "Added to a file",
+        meta: n === null ? null : plural(n, "line"),
+      });
+    }
     case "delete_file": {
       const done = text.match(/^Deleted (.+)\.$/);
       const path = done?.[1] ?? str(args, "path");

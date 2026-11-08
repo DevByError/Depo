@@ -68,6 +68,31 @@ export function topLevelListing(root: string): string {
   }
 }
 
+/**
+ * Steps 1 and 2 for a small model: look with the tools, write code as file blocks (no JSON to
+ * break). The loop turns the blocks into write_file, edit_file and append_file calls.
+ */
+export const SMALL_MODEL_STEPS = [
+  "1. Look first: list_dir and read_file show what is there. Read a file before you change it. Use only the tools you were given; there are no others.",
+  "2. Write code as file blocks in your reply, not inside JSON. Depo saves them and tells you the result.",
+  "   New file: its path on one line, then the whole file in a code block:",
+  "   be/src/hello.ts",
+  "   ```ts",
+  '   export const hello = "hi";',
+  "   ```",
+  "   Change a file: its path, then a SEARCH/REPLACE block. SEARCH holds a few exact lines copied from the file, REPLACE what they become:",
+  "   be/src/app.ts",
+  "   ```ts",
+  "   <<<<<<< SEARCH",
+  "   const port = 3000;",
+  "   =======",
+  "   const port = Number(process.env.PORT ?? 3000);",
+  "   >>>>>>> REPLACE",
+  "   ```",
+  "   Add to the end of a file (a new table at the end of schema.sql): the same block with nothing between SEARCH and =======.",
+  "   For everything else call a tool (read_file, run_command, start_preview, ...), one call at a time, and wait for its result.",
+];
+
 export function codingSystemPrompt(opts: {
   projectName: string;
   root: string;
@@ -79,6 +104,8 @@ export function codingSystemPrompt(opts: {
   remember?: boolean;
   /** Project memory and the repo map, placed after the project facts and before the task's topics. */
   context?: string[];
+  /** A small model (4B or less): fewer tools, so a shorter "how to work", and file blocks instead of JSON for code. */
+  small?: boolean;
 }): string {
   const info = detectProject(opts.root);
   const stack = detectStack(opts.root);
@@ -90,8 +117,12 @@ export function codingSystemPrompt(opts: {
     "Nothing you do touches the user's real files. When you finish, the user reviews a diff of your changes and decides what to apply.",
     "",
     "How to work:",
-    "1. Understand first: code_map shows the modules and which files import which; then read the relevant files (only the line ranges you need) and search for related code.",
-    "2. Make small, precise edits with edit_file. Copy the exact current text into `search` (without line numbers). Use write_file for new files.",
+    ...(opts.small
+      ? SMALL_MODEL_STEPS
+      : [
+          "1. Understand first: code_map shows the modules and which files import which; then read the relevant files (only the line ranges you need) and search for related code.",
+          "2. Make small, precise edits with edit_file. Copy the exact current text into `search` (without line numbers). Use write_file for new files; append_file adds to the end of a file.",
+        ]),
     "3. Follow the project's existing structure, style and libraries. Add a dependency only when there is no reasonable alternative.",
     "4. Add or update tests for what you change. Run the tests. If they fail, read the error, fix the cause, and run them again.",
     "   For an app with a server or web pages, also start it with start_preview, check the endpoints with http_check and the pages with check_page before you finish, then stop it with stop_preview.",

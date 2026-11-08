@@ -1750,7 +1750,9 @@ export class TeamRunner {
       const files = new Set<string>();
       const readOnly: AgentManifest = {
         ...reviewer,
-        tools: reviewer.tools.filter((t) => !["write_file", "edit_file", "delete_file"].includes(t)),
+        tools: reviewer.tools.filter(
+          (t) => !["write_file", "edit_file", "append_file", "delete_file"].includes(t),
+        ),
       };
       const ctx = this.toolContext(input, readOnly, emit, files, node.id);
       // The reviewer checks the work against the owner's notes too.

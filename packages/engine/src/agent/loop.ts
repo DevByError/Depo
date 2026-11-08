@@ -15,8 +15,11 @@ import type { EventBus } from "../events/bus";
 import { getLogger, withLogContext } from "../logger";
 import { fallOf, smallerContext, waitForRuntime } from "../models/revive";
 import type { ModelScheduler } from "../scheduler/scheduler";
+import { normalizeArgs } from "../tools/args";
 import { executeTool, type ToolContext, toolDefinitions } from "../tools/index";
-import { codeBlocks, dumpInProgress, dumpNudge, filesFromDump, isCodeDump } from "./codedump";
+import { aliasFor, aliasNote } from "./aliases";
+import { blockCalls, blockResults } from "./blocks";
+import { codeBlocks, dumpInProgress, dumpNudge, isCodeDump } from "./codedump";
 import { type Repetition, RepetitionGuard } from "./repetition";
 import {
   extractTextToolCalls,
@@ -46,6 +49,17 @@ const MAX_LOOPS = 3;
 const AFTER_CALL_CHARS = 400;
 /** Replies stopped for pasting code instead of saving it, per run, before Depo lets them finish. */
 const MAX_DUMP_CUTS = 3;
+/**
+ * Replies in a row with no tool call Depo could run (broken JSON, made-up tools, unfinished
+ * blocks) before the task stops. A larger model, when there is one, takes the last tries.
+ */
+const MAX_UNREADABLE = 4;
+const STEP_UP_AT = 3;
+const STEP_UP_TRIES = 2;
+/** Sampling after an unreadable reply: careful, so the next call comes out well formed. */
+const CAREFUL_TEMPERATURE = 0.2;
+/** What stands in the history for a reply that could not be read (small models copy their own broken calls). */
+export const BROKEN_STUB = "(I wrote a tool call that Depo could not read, so nothing ran.)";
 const log = getLogger({ component: "agent" });
 
 export type Emit = (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown;
@@ -73,6 +87,13 @@ export interface LoopParams {
     onTest(r: { passed: boolean; output: string }): string | undefined;
   };
   temperature?: number;
+  /**
+   * A larger installed model that takes a step the model keeps failing (no call it writes can be
+   * read). Depo goes back to the model as soon as a call runs.
+   */
+  stepUp?: { model: string } | undefined;
+  /** The model was taught file blocks (small models): nudges point to them rather than to JSON. */
+  fileBlocks?: boolean;
   /** Longest reply per step in tokens (default MAX_REPLY_TOKENS). */
   maxReplyTokens?: number;
   /**
@@ -136,7 +157,9 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   const changed = new Set<string>();
   let finalText = "";
   let steps = 0;
-  let badOutputs = 0;
+  // The model answering now: a larger one takes over while the model is stuck on a step.
+  let model = p.model;
+  let temperature = p.temperature;
   // Small models often say "tests passed" when they did not, so check before accepting the end.
   let lastTest = null as { command: string; passed: boolean } | null;
   let editedSinceTest = false;
@@ -175,7 +198,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     // Runtimes send nothing while they read the prompt; say so, since it can take minutes.
     emit({
       type: "planning",
-      text: `Waiting for ${p.model} to answer (step ${steps})`,
+      text: `Waiting for ${model} to answer (step ${steps})`,
       details: { jobId: `wait-${p.job.taskId}`, step: steps },
       ephemeral: true,
       status: "running",
@@ -198,13 +221,13 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       res = await chatWithRetry(
         p,
         {
-          model: p.model,
+          model,
           messages: history,
           tools,
           contextLength: runtime.contextLength,
           signal: stop.signal,
           maxTokens: p.maxReplyTokens ?? MAX_REPLY_TOKENS,
-          ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
+          ...(temperature !== undefined ? { temperature } : {}),
         },
         (delta) => {
           streamed += delta;
@@ -230,7 +253,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
             streamed.length - dump.checkedAt >= 200
           ) {
             dump.checkedAt = streamed.length;
-            if (dumpInProgress(streamed, toolNames)) {
+            if (dumpInProgress(streamed, toolNames, ctx.root)) {
               dump.cut = true;
               stop.abort();
             }
@@ -265,7 +288,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       loops++;
       repeated = true;
       log.warn("model reply repeated itself", {
-        model: p.model,
+        model,
         times: loop.found.times,
         chars: streamed.length,
       });
@@ -288,7 +311,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       const cut = Math.max(firstCallGroupEnd(streamed, toolNames), early.end);
       const after = streamed.slice(cut);
       log.warn("model reply went on after a tool call", {
-        model: p.model,
+        model,
         chars: streamed.length,
         inventedResult: /<tool_(response|result)>/i.test(after),
       });
@@ -304,32 +327,80 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     if (res === null && dump.cut && !signal.aborted) {
       dumpCuts++;
       dumped = true;
-      log.warn("model reply pasted code instead of saving it", { model: p.model, chars: streamed.length });
+      log.warn("model reply pasted code instead of saving it", { model, chars: streamed.length });
       res = { text: streamed, toolCalls: [], finishReason: "unknown", usage: null };
     }
     if (res === null) break; // cancelled
-    if ("badOutput" in res) {
-      // The runtime could not read the model's reply (usually a broken tool call). Tell the model
-      // and let it try again, unless it keeps happening.
-      badOutputs++;
-      if (badOutputs >= 3) throw new Error(`${res.badOutput} This happened 3 times in a row.`);
-      emit({ type: "retrying", text: `${res.badOutput} Asking the model to try again.`, status: "running" });
+    /**
+     * A reply with no call Depo could run, though the model meant to make one. The broken reply is
+     * not shown to the model again (small models copy it); the advice changes with each try, the
+     * next reply is sampled carefully, and a larger model takes the last tries when there is one.
+     */
+    const unreadableReply = (o: { event: string; problem: string; tool: string | null; final: string }) => {
+      unreadable++;
+      const limit = p.stepUp ? STEP_UP_AT + STEP_UP_TRIES : MAX_UNREADABLE;
+      if (unreadable >= limit) throw new Error(o.final);
+      history.push({ role: "assistant", content: BROKEN_STUB });
+      if (temperature === undefined || temperature > CAREFUL_TEMPERATURE) temperature = CAREFUL_TEMPERATURE;
+      emit({ type: "retrying", text: o.event, status: "running" });
+      if (p.stepUp && unreadable >= STEP_UP_AT && model !== p.stepUp.model) {
+        model = p.stepUp.model;
+        log.warn("stepping up to a larger model", { from: p.model, to: model });
+        emit({
+          type: "retrying",
+          text: `${p.model} is stuck on this step, so Depo asked ${model} to do it. Depo goes back to ${p.model} once a call runs.`,
+          details: { from: p.model, to: model },
+          status: "running",
+        });
+      }
       history.push({
         role: "user",
-        content:
-          "Your last reply could not be read: the tool call was malformed or cut off. Reply again and make exactly one complete, valid tool call.",
+        content: `${o.problem} ${retryAdvice(o.tool, unreadable, !!p.fileBlocks)}`,
+      });
+    };
+    if ("badOutput" in res) {
+      // The runtime could not read the model's reply (usually a broken tool call).
+      unreadableReply({
+        event: `${res.badOutput} Asking the model to try again.`,
+        problem: "Your last reply could not be read: the tool call was malformed or cut off, so nothing ran.",
+        tool: null,
+        final: `${res.badOutput} This kept happening.`,
       });
       continue;
     }
-    badOutputs = 0;
     if (!repeated) loops = 0;
     res.text = withoutStrayResultTag(res.text);
+    // The reply as the model wrote it: kept in the history when its file blocks become calls.
+    const written = res.text;
     let calls: ToolCall[] = res.toolCalls;
+    // Calls Depo ran under their real name (the model made up "create_file"): id → that name.
+    let renamed: Record<string, string> = {};
+    if (calls.length) ({ calls, renamed } = withAliases(calls, toolNames, ctx.root));
     if (calls.length === 0 && !dumped) {
-      const parsed = extractTextToolCalls(res.text, toolNames);
+      const parsed = extractTextToolCalls(res.text, toolNames, ctx.root);
       calls = parsed.calls;
+      renamed = parsed.renamed;
       if (calls.length) res.text = parsed.rest;
-      else if (repeated || res.finishReason === "length") {
+    }
+    // File blocks (a new file under its path, SEARCH/REPLACE edits): files without JSON.
+    let fromBlocks = false;
+    let unfinishedBlocks = 0;
+    let blockExisting: string[] = [];
+    if (canEdit) {
+      // New files from labelled code: always for a model taught file blocks; for others only in a
+      // reply Depo stopped for pasting code, or a code answer while nothing changed yet (as before).
+      const newFiles = !!p.fileBlocks || dumped || (changed.size === 0 && isCodeDump(res.text));
+      const b = blockCalls(res.text, ctx.root, toolNames, { newFiles });
+      unfinishedBlocks = b.unfinished;
+      blockExisting = b.existing;
+      if (b.calls.length) {
+        calls = [...b.calls, ...calls];
+        res.text = b.rest;
+        fromBlocks = true;
+      }
+    }
+    if (calls.length === 0 && !dumped) {
+      if (repeated || res.finishReason === "length") {
         // Cut off with no tool call: not a final answer. Show the model where it stopped.
         history.push({ role: "assistant", content: res.text });
         history.push({
@@ -339,46 +410,40 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
             : "Your reply was too long and was cut off. Make one tool call at a time, write big files in parts, and keep the final answer short.",
         });
         continue;
-      } else {
-        const unknown = unknownToolCalls(res.text, toolNames);
-        if (unknown.length) {
-          // Calls to tools that do not exist ("add_table"): nothing ran, so this is not an answer.
-          unreadable++;
-          if (unreadable >= 3)
-            throw new Error(
-              `The model kept calling tools that do not exist (${unknown.join(", ")}). Try a larger model.`,
-            );
-          emit({
-            type: "retrying",
-            text: `The model called ${unknown.length === 1 ? "a tool that does not exist" : "tools that do not exist"} (${unknown.join(", ")}), so nothing ran. Asking it to use its real tools.`,
-            status: "running",
-          });
-          history.push({ role: "assistant", content: res.text });
-          history.push({
-            role: "user",
-            content: `${unknown.map((n) => `"${n}"`).join(", ")} ${unknown.length === 1 ? "is not a tool" : "are not tools"}, so nothing ran and nothing changed. Your tools are: ${toolNames.join(", ")}. To change a file, read it with read_file and change it with edit_file (to add to the end, search for its last lines and replace them with those lines plus the new text); to create a file, use write_file. Make one call now.`,
-          });
-          continue;
-        }
-        if (looksLikeToolCall(res.text, toolNames)) {
-          // A tool call written as text that could not be read: not a final answer. The count only
-          // goes back to zero when a call runs, so the same broken call cannot repeat for hours.
-          unreadable++;
-          if (unreadable >= 3)
-            throw new Error("The model kept writing tool calls that could not be read. Try a larger model.");
-          const why = textCallProblem(res.text, toolNames);
-          emit({
-            type: "retrying",
-            text: `The model's tool call could not be read${why ? ` (${why})` : ""}. Asking it to try again.`,
-            status: "running",
-          });
-          history.push({ role: "assistant", content: res.text });
-          history.push({
-            role: "user",
-            content: `That tool call could not be read: it is not valid JSON${why ? ` (${why})` : ""}, so nothing ran. Write it again as one complete JSON object with every bracket closed and every " inside a text value written as \\". With edit_file, keep "search" short: a few exact lines copied from read_file. Do not repeat the same call unchanged.`,
-          });
-          continue;
-        }
+      }
+      const unknown = unknownToolCalls(res.text, toolNames);
+      if (unknown.length) {
+        // Calls to tools that do not exist ("add_table"): nothing ran, so this is not an answer.
+        unreadableReply({
+          event: `The model called ${unknown.length === 1 ? "a tool that does not exist" : "tools that do not exist"} (${unknown.join(", ")}), so nothing ran. Asking it to use its real tools.`,
+          problem: `${unknown.map((n) => `"${n}"`).join(", ")} ${unknown.length === 1 ? "is not a tool" : "are not tools"}, so nothing ran and nothing changed. Your tools are: ${toolNames.join(", ")}. To create a file use write_file, to add to the end of a file (a new table in schema.sql) append_file, to change a file edit_file${p.fileBlocks ? ", or write file blocks" : ""}.`,
+          tool: null,
+          final: `The model kept calling tools that do not exist (${unknown.join(", ")}). Try a larger model.`,
+        });
+        continue;
+      }
+      if (looksLikeToolCall(res.text, toolNames)) {
+        // A tool call written as text that could not be read: not a final answer. The count only
+        // goes back to zero when a call runs, so the same broken call cannot repeat for hours.
+        const why = textCallProblem(res.text, toolNames);
+        unreadableReply({
+          event: `The model's tool call could not be read${why ? ` (${why})` : ""}. Asking it to try again.`,
+          problem: `Your tool call could not be read: it is not valid JSON${why ? ` (${why})` : ""}, so nothing ran.`,
+          tool: toolNames.find((n) => res.text.includes(`"${n}"`)) ?? null,
+          final: "The model kept writing tool calls that could not be read. Try a larger model.",
+        });
+        continue;
+      }
+      if (unfinishedBlocks) {
+        unreadableReply({
+          event:
+            "The model's file block was not finished, so nothing was saved. Asking it to write it again.",
+          problem:
+            "Your SEARCH/REPLACE block was not finished (or had no path line above it), so nothing was saved. A block needs its path on the line above, then <<<<<<< SEARCH, the exact old lines, a line =======, the new lines, and a line >>>>>>> REPLACE.",
+          tool: "edit_file",
+          final: "The model kept writing file blocks that were not finished. Try a larger model.",
+        });
+        continue;
       }
     }
     if (calls.length) unreadable = 0;
@@ -388,50 +453,44 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       res.text =
         withoutInventedResults(res.text) ||
         "The model could not finish this step with its tools. The work so far is ready for review.";
-    // Code pasted into the reply instead of saved: save the complete files it labels, ask for tools.
+    // Code pasted into the reply instead of saved: the new files it labels were saved as blocks
+    // above; ask for tools (or blocks) for the rest.
     let dumpNote: string | null = null;
     if (
-      calls.length === 0 &&
       canEdit &&
-      (dumped || (changed.size === 0 && finalDumps < 2 && isCodeDump(res.text)))
+      (dumped || (calls.length === 0 && changed.size === 0 && finalDumps < 2 && isCodeDump(res.text)))
     ) {
       if (!dumped) finalDumps++;
-      const { files, existing } = p.toolNames.includes("write_file")
-        ? filesFromDump(res.text, ctx.root)
-        : { files: [], existing: [] };
-      calls = files.map((f, i) => {
-        const args = { path: f.path, content: f.content };
-        return {
-          id: `dump_${steps}_${i + 1}`,
-          name: "write_file",
-          arguments: args,
-          rawArguments: JSON.stringify(args),
-        };
-      });
+      const saved = calls
+        .filter((c) => c.name === "write_file" && c.id.startsWith("block_"))
+        .map((c) => String((c.arguments as { path?: unknown }).path));
       const firstBlock = codeBlocks(res.text)[0]?.start ?? res.text.length;
       res.text = res.text.slice(0, firstBlock).trim();
-      dumpNote = dumpNudge(
-        files.map((f) => f.path),
-        existing,
-        dumped,
-      );
+      dumpNote = dumpNudge(saved, blockExisting, dumped, !!p.fileBlocks);
       emit({
         type: "retrying",
         text: `The model ${dumped ? "was pasting" : "pasted"} code into its reply instead of saving files${dumped ? ", so Depo stopped it" : ""}. ${
-          files.length
-            ? `Depo saved the ${files.length === 1 ? "new file" : `${files.length} new files`} it named (${files.map((f) => f.path).join(", ")}) and asked it to use its tools.`
+          saved.length
+            ? `Depo saved the ${saved.length === 1 ? "new file" : `${saved.length} new files`} it named (${saved.join(", ")}) and asked it to use its tools.`
             : "Asking it to save files with its tools."
         }`,
         status: "running",
       });
     }
-    calls = uniqueCalls(calls);
+    calls = uniqueCalls(calls).map((c) => {
+      const args = normalizeArgs(c.name, c.arguments, ctx.root);
+      return args === c.arguments ? c : { ...c, arguments: args, rawArguments: JSON.stringify(args) };
+    });
     const assistant: ChatMessage = {
       role: "assistant",
       content: res.text,
       ...(calls.length ? { toolCalls: calls } : {}),
     };
-    history.push(assistant);
+    // File blocks stay in the history as the model wrote them, so it keeps writing blocks (shown
+    // as JSON calls, a small model goes back to JSON and breaks it); the transcript keeps the calls.
+    // A reply Depo stopped for pasting code keeps only its words.
+    const asWritten = fromBlocks && !dumped;
+    history.push(asWritten ? { role: "assistant", content: written } : assistant);
     p.persist(assistant);
     if (res.text.trim()) {
       emit({
@@ -524,10 +583,13 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       }
       break;
     }
+    const blockOut: { call: ToolCall; content: string; isError: boolean }[] = [];
+    let ran = 0;
     for (const call of calls) {
       if (signal.aborted) break;
       p.lessons?.onCall(call.name, (call.arguments ?? {}) as Record<string, unknown>);
-      if (call.name === "edit_file" || call.name === "write_file") editedSinceTest = true;
+      if (call.name === "edit_file" || call.name === "write_file" || call.name === "append_file")
+        editedSinceTest = true;
       const editKey =
         call.name === "edit_file" ? call.rawArguments || JSON.stringify(call.arguments ?? null) : null;
       const editPath = editKey ? fileOf(ctx.root, call.arguments) : null;
@@ -551,7 +613,10 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
               isError: true,
             };
       if (editKey && editPath && !again && !result.isError) edits.set(editKey, fileHash(editPath));
+      if (!result.isError) ran++;
       let content = result.content;
+      const madeUp = renamed[call.id];
+      if (madeUp) content = `${aliasNote(madeUp, call.name)}\n${content}`;
       if (!LOOKS.has(call.name)) {
         if (!again) looks.clear();
       } else if (!result.isError) {
@@ -569,9 +634,30 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         if (n >= 3) content += "\nThis exact call has failed 3 times. Try a different approach.";
       }
       const toolMsg: ChatMessage = { role: "tool", toolCallId: call.id, name: call.name, content };
-      history.push(toolMsg);
+      if (asWritten) blockOut.push({ call, content, isError: result.isError });
+      else history.push(toolMsg);
       p.persist({ ...toolMsg, ...(result.isError ? { isError: true } : {}) });
     }
+    if (asWritten)
+      history.push({
+        role: "user",
+        content:
+          blockResults(blockOut) +
+          (unfinishedBlocks
+            ? "\nOne of your SEARCH/REPLACE blocks was not finished, so it was not saved: write it again in full."
+            : ""),
+      });
+    // A call ran: the stuck step is over, so the model (and its sampling) are the owner's again.
+    if (ran > 0 && model !== p.model) {
+      emit({
+        type: "retrying",
+        text: `${model} got past the step; Depo goes back to ${p.model}.`,
+        details: { from: model, to: p.model },
+        status: "running",
+      });
+      model = p.model;
+    }
+    if (ran > 0) temperature = p.temperature;
     if (dumpNote) history.push({ role: "user", content: dumpNote });
     else if (repeated)
       history.push({
@@ -646,6 +732,59 @@ const LOOKS = new Set([
 
 const SAME_LOOK =
   "Note from Depo: you already made this exact call and nothing has changed since. Do not make it again: use the result you have. Make your change now (edit_file or write_file), or give your final answer.";
+
+/** Native calls to made-up tools that clearly mean a real one, renamed (id → the made-up name). */
+function withAliases(
+  calls: ToolCall[],
+  toolNames: string[],
+  root: string,
+): { calls: ToolCall[]; renamed: Record<string, string> } {
+  const known = new Set(toolNames);
+  const renamed: Record<string, string> = {};
+  const out = calls.map((c) => {
+    if (known.has(c.name)) return c;
+    const a = aliasFor(c.name, c.arguments, known, root);
+    if (!a) return c;
+    renamed[c.id] = c.name;
+    return { ...c, name: a.name, arguments: a.args, rawArguments: JSON.stringify(a.args) };
+  });
+  return { calls: out, renamed };
+}
+
+const FILE_TOOLS = new Set(["write_file", "edit_file", "append_file"]);
+
+/** Correct calls to copy, in the format Qwen-style models are trained on. */
+const EXAMPLES: Record<string, Record<string, unknown>> = {
+  read_file: { path: "be/src/app.ts" },
+  edit_file: { path: "be/src/app.ts", edits: [{ search: "exact old line", replace: "new line" }] },
+  write_file: { path: "be/src/new.ts", content: "line one\nline two\n" },
+  append_file: { path: "be/schema.sql", content: "CREATE TABLE IF NOT EXISTS notes (id INT PRIMARY KEY);\n" },
+  run_command: { command: "bun test", cwd: "be" },
+};
+
+function exampleCall(tool: string | null): string {
+  const name = tool && EXAMPLES[tool] ? tool : "read_file";
+  return `<tool_call>\n${JSON.stringify({ name, arguments: EXAMPLES[name] })}\n</tool_call>`;
+}
+
+/**
+ * What the model is asked to do after its reply could not be read, different on each try: the
+ * right shape first (file blocks for code when it was taught them), then a smaller step, then
+ * the simplest step there is.
+ */
+export function retryAdvice(tool: string | null, attempt: number, blocks: boolean): string {
+  const fileTool = !!tool && FILE_TOOLS.has(tool);
+  if (attempt <= 1) {
+    if (blocks && fileTool)
+      return "Write the change as a file block instead of JSON: the file's path on one line, then a code block. For a new file the block holds the whole file; to change a file it holds <<<<<<< SEARCH, a few exact lines from the file, =======, the new lines, >>>>>>> REPLACE (leave SEARCH empty to add to the end). Do not repeat the same call.";
+    return `Write one complete call, with every bracket closed and every " inside a text value written as \\". For example:\n${exampleCall(tool)}\nDo not repeat the same call unchanged.`;
+  }
+  if (attempt === 2)
+    return blocks
+      ? "Make a smaller step. To change code, use a file block (path line, then SEARCH/REPLACE with only two or three exact lines in SEARCH). For anything else make one tool call with short arguments."
+      : `Make a smaller step: one call with short arguments. With edit_file, put only two or three exact lines in "search". For example:\n${exampleCall(tool)}`;
+  return `Start with the simplest step: read the file you want to change, for example:\n${exampleCall("read_file")}`;
+}
 
 /** The same call twice in one reply (same tool, same arguments) runs once. */
 export function uniqueCalls(calls: ToolCall[]): ToolCall[] {
@@ -757,6 +896,9 @@ export function compressHistory(history: ChatMessage[], contextLength: number): 
         ...m,
         content: `${m.content.slice(0, 300)}\n[older output trimmed to save context; read the file again if needed]`,
       };
+    } else if (m?.role === "assistant" && i >= 2 && m.content.length > 1500) {
+      // An old reply with file blocks: the files are saved, the copy in the history is not needed.
+      history[i] = { ...m, content: `${m.content.slice(0, 300)}\n[older reply trimmed to save context]` };
     }
   }
   // Still too large: drop whole assistant+tool exchanges after the system prompt and first user message.

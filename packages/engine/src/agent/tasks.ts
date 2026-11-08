@@ -44,15 +44,18 @@ import type { PreviewHooks } from "../tools/preview-tools";
 import { computeChanges } from "../workspace/changes";
 import type { ProjectService, Workspace } from "../workspace/service";
 import { type FinishDeps, finishSummary, problemsPrompt, runFinishLine } from "./finish";
-import { compactEarlierTurns, copyRepoMap, copyTree, isFollowUp } from "./followup";
+import { compactEarlierTurns, copyRepoMap, copyTree, forRetry, isFollowUp } from "./followup";
 import { kickstart } from "./kickstart";
 import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
+import { isSmallModel, pickStepUp, SMALL_MODEL_TOOLS } from "./small";
 import { SteerInbox, type StoredNote, steerPrompt } from "./steer";
 
 export const CODER_AGENT = "coder@1.0.0";
 const DEFAULT_MAX_STEPS = 40;
 const DEFAULT_CONTEXT = 16_384;
+/** Tools that change one file named by `path`. */
+const FILE_WRITERS = new Set(["write_file", "edit_file", "append_file"]);
 
 export interface TaskManagerOptions {
   settings?: SettingsRepo;
@@ -470,6 +473,44 @@ export class TaskManager {
     return this.get(id).task;
   }
 
+  /** Tasks whose next run repeats the owner's last request (Retry). */
+  private retrying = new Set<string>();
+
+  /**
+   * Run the owner's last request again, after the task failed or was stopped, without typing it
+   * again. Files changed so far stay in the private copy; the failed attempt stays in the
+   * transcript but the model starts the request afresh.
+   */
+  retry(id: string): Task {
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (!row) throw new Error(`Unknown task: ${id}`);
+    if (this.running.has(id)) throw new Error("This task is still working. Wait for it or stop it first.");
+    if (row.status !== "failed" && row.status !== "cancelled")
+      throw new Error(
+        "Only a task that failed or was stopped can be retried. Send a message to continue it.",
+      );
+    const project = this.o.db.select().from(projects).where(eq(projects.id, row.projectId)).get();
+    if (!project) throw new Error(`Unknown project: ${row.projectId}`);
+    if (!fs.existsSync(project.rootPath))
+      throw new Error(`The project folder is missing: ${project.rootPath}`);
+    this.o.db
+      .update(tasks)
+      .set({ error: null, updatedAt: new Date().toISOString() })
+      .where(eq(tasks.id, id))
+      .run();
+    this.retrying.add(id);
+    this.o.bus.emit({
+      agent: CODER_AGENT,
+      projectId: row.projectId,
+      taskId: id,
+      type: "planning",
+      text: "Trying your last message again (files changed so far are kept)",
+      status: "info",
+    });
+    this.launch(id, row.projectId, "task retried", WorkModeSchema.parse(row.mode));
+    return this.get(id).task;
+  }
+
   private saveReferences(taskId: string, inputs: ReferenceInput[]): string[] {
     if (!inputs.length || !this.o.references) return [];
     return this.o.references.save(taskId, inputs).map((r) => r.id);
@@ -677,6 +718,7 @@ export class TaskManager {
   // ---- the loop --------------------------------------------------------------------------
 
   private async run(taskId: string, signal: AbortSignal): Promise<void> {
+    const retry = this.retrying.delete(taskId);
     const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
     if (!row) return;
     const project = this.o.db.select().from(projects).where(eq(projects.id, row.projectId)).get();
@@ -735,6 +777,7 @@ export class TaskManager {
       return;
     }
     let history = this.loadHistory(taskId);
+    if (retry) history = forRetry(history);
     const followUp = isFollowUp(history);
     const asked = followUp ? (history.at(-1)?.content ?? "").replace(/\s+/g, " ").trim() : "";
     emit({
@@ -760,10 +803,25 @@ export class TaskManager {
         status: "info",
       });
     }
+    // A small model (4B or less) gets fewer tools, a shorter prompt and file blocks for code; a
+    // larger installed model of the same kind takes a step it keeps failing.
+    const installed = await Promise.resolve()
+      .then(() => provider.listModels(AbortSignal.timeout(5000)))
+      .catch(() => []);
+    const small = isSmallModel(model, installed.find((m) => m.name === model)?.parameterSize);
+    const stepUp =
+      small && this.o.settings?.get("agent.step_up") !== false ? pickStepUp(model, installed) : null;
+    if (small)
+      emit({
+        type: "planning",
+        text: `${model} is a small model: Depo gives it a shorter list of tools and lets it write code as file blocks${stepUp ? `; ${stepUp} takes over a step it gets stuck on` : ""}.`,
+        details: { small: true, stepUp },
+        status: "info",
+      });
     // The system prompt is rebuilt on every run so it carries the latest memory and repo map.
     const sys: ChatMessage = {
       role: "system",
-      content: this.systemPrompt(project.id, project.name, ws.root, contextLength, request),
+      content: this.systemPrompt(project.id, project.name, ws.root, contextLength, request, small),
     };
     if (history[0]?.role !== "system") {
       history.unshift(sys);
@@ -818,9 +876,15 @@ export class TaskManager {
       model,
       contextLength,
       history,
-      toolNames: [...TOOLS.map((t) => t.name), ...(extras?.allow ?? [])],
+      toolNames: [
+        ...TOOLS.map((t) => t.name).filter((n) => !small || SMALL_MODEL_TOOLS.includes(n)),
+        // A small model keeps the owner's skills and MCP tools, not the built-in scanners.
+        ...(extras?.allow ?? []).filter((n) => !small || /^mcp__|skill/.test(n)),
+      ],
       ctx,
       maxSteps,
+      ...(stepUp ? { stepUp: { model: stepUp } } : {}),
+      fileBlocks: small,
       signal,
       scheduler: this.o.scheduler,
       job: { projectId: project.id, taskId, label: row.title },
@@ -1017,6 +1081,7 @@ export class TaskManager {
     root: string,
     contextLength: number = DEFAULT_CONTEXT,
     request = "",
+    small = false,
   ): string {
     const budgets = promptBudgets(contextLength);
     const context: string[] = [];
@@ -1027,7 +1092,7 @@ export class TaskManager {
     const map = copyRepoMap(root, this.o.indexer?.repoMap(projectId, FULL_MAP) ?? "", budgets.repoMap).trim();
     if (map) {
       context.push(
-        `# Files in your copy now (with their main symbols; use repo_map, find_symbol and search for more)\n${map}`,
+        `# Files in your copy now (with their main symbols; use ${small ? "list_dir, read_file" : "repo_map, find_symbol"} and search for more)\n${map}`,
       );
     }
     // Static parts first, then the project, memory and repo map, then the task's playbook topics,
@@ -1039,6 +1104,7 @@ export class TaskManager {
       request,
       remember: !!this.o.memory,
       context,
+      small,
     });
   }
 
@@ -1073,8 +1139,7 @@ export class TaskManager {
     const touched = new Set<string>();
     return {
       onCall: (name: string, args: Record<string, unknown>) => {
-        if (failure && (name === "edit_file" || name === "write_file") && typeof args.path === "string")
-          touched.add(args.path);
+        if (failure && FILE_WRITERS.has(name) && typeof args.path === "string") touched.add(args.path);
       },
       onTest: (r: { passed: boolean; output: string }): string | undefined => {
         if (!memory) return undefined;

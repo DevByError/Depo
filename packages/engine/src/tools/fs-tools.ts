@@ -152,6 +152,34 @@ export function writeFileTool(
   return { path: clean, created, bytes };
 }
 
+/** Add text at the end of a file, after a blank line (creates the file when it is missing). */
+export function appendFileTool(
+  root: string,
+  rel: string,
+  content: string,
+): { path: string; created: boolean; added: number; total: number } {
+  const { abs, rel: clean } = resolveInside(root, rel);
+  const created = !fs.existsSync(abs);
+  if (!created && fs.statSync(abs).isDirectory()) throw new ToolError(`${clean} is a folder`);
+  const before = created ? "" : fs.readFileSync(abs, "utf8");
+  const eol = created ? "\n" : detectEol(before);
+  const body = content.replace(/\r?\n/g, "\n").replace(/^\n+/, "").replace(/\n*$/, "\n");
+  const join = !before
+    ? ""
+    : before.endsWith("\n\n") || before.endsWith("\r\n\r\n")
+      ? ""
+      : /\r?\n$/.test(before)
+        ? "\n"
+        : "\n\n";
+  const text = `${before}${(join + body).replace(/\n/g, eol)}`;
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_WRITE_BYTES) throw new ToolError(`Refusing to grow ${clean} past the 2 MB limit.`);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, text, "utf8");
+  const lines = (t: string) => (t ? t.replace(/\r?\n$/, "").split(/\r?\n/).length : 0);
+  return { path: clean, created, added: lines(body), total: lines(text) };
+}
+
 export interface Edit {
   /** Exact text to find. Must match exactly once unless `replaceAll`. */
   search: string;

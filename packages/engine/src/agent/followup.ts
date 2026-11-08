@@ -184,6 +184,34 @@ export function isFollowUp(history: ChatMessage[]): boolean {
 
 const DEPO_PROMPT =
   /^(Depo tried to run your work|Note from the owner while you work|Notes from the owner while you work)/;
+const OWNER_NOTE = /^Notes? from the owner while you work/;
+
+/**
+ * The conversation for running the owner's last request again (Retry after a failed or stopped
+ * run): everything up to that request, without the attempt that followed. Notes the owner sent
+ * during the attempt go with the request, so they are not lost; the copy keeps the files the
+ * attempt changed.
+ */
+export function forRetry(history: ChatMessage[]): ChatMessage[] {
+  let last = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.role === "user" && !DEPO_PROMPT.test(m.content)) {
+      last = i;
+      break;
+    }
+  }
+  if (last < 0) return history;
+  const notes = history
+    .slice(last + 1)
+    .filter((m) => m.role === "user" && OWNER_NOTE.test(m.content))
+    .map((m) => m.content);
+  const request = history[last] as ChatMessage;
+  return [
+    ...history.slice(0, last),
+    notes.length ? { ...request, content: `${request.content}\n\n${notes.join("\n\n")}` } : request,
+  ];
+}
 
 /**
  * On a follow-up, the earlier turns (requests, tool calls, results, answers) become one short

@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## Small models (2026-11-08): "make the 3b model work, and add Retry"
+
+- **Found from the owner's log:** qwen2.5-coder:3b ended part 1 of the Skill Finder test in about two minutes: it called `create_table_skills`, which is not a tool, then wrote two `edit_file` calls whose JSON missed a `]`, and the third unreadable reply ended the task. Sent again with 7b it worked, but 7b writes 1.6 tokens a second on their GTX 1650 against 15 to 26 for 3b.
+- **Built:** file blocks, so a small model writes code without JSON (SEARCH/REPLACE under a path, a new file as its path and a code block), and `append_file` for adding to the end of a file (ADR-0074); repairs for missing brackets, missing and trailing commas, quotes inside values and Python literals, and made-up tool and argument names that clearly mean a real one (ADR-0075); small-model mode: 15 tools instead of 37 (about 6,000 tokens of prompt down to about 2,300), the broken reply is not shown again, the advice changes each try, careful sampling, and a larger installed model of the same kind does a step the small one keeps failing, then hands back (ADR-0076); a Retry bar under a failed or stopped run (ADR-0077).
+- **Verified:** the owner's failures as tests (the `create_table_skills` call now appends to `schema.sql`, the missing `]` call runs, a long edit with raw line breaks and a stray quote is read), loop tests for blocks, aliases, careful retries, the step-up and hand-back, unfinished blocks, a task-level test of the small tool list, prompt and step-up model, an engine Retry test and UI tests for the Retry bar and the Settings switch. Engine 635, UI 357, browser e2e 18; lint and types clean. Not yet run with the real 3b model.
+
 ## Fix (2026-11-08): a 3b run that repeated one broken call for 20 minutes
 
 - **Found from the owner's log:** with qwen2.5-coder:3b, part 1 ended "Finished with no file changes" after the model called `list_tables` and `add_table`, which are not tools; in part 2 it wrote one file, then sent the same unreadable `edit_file` (about 500 tokens, two minutes each) 15 times, because the stop-after-3 counter was reset by every reply.

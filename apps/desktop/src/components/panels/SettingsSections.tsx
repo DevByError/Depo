@@ -161,6 +161,30 @@ export function MemorySetting() {
   );
 }
 
+/** Whether a larger installed model takes a step a small model keeps failing (agent.step_up). */
+export function StepUpSetting() {
+  const s = useSetting<boolean>("agent.step_up", true);
+  return (
+    <fieldset className="mt-5">
+      <legend className="mb-1 text-xs font-medium text-fg">Small models</legend>
+      <label className="flex items-center gap-2 text-[13px] text-muted">
+        <input
+          type="checkbox"
+          checked={s.value}
+          disabled={s.disabled}
+          onChange={(e) => s.set(e.target.checked)}
+        />
+        Let a larger model take a step a small model is stuck on
+      </label>
+      <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+        For coders of 4B or less (such as qwen2.5-coder:3b): when it keeps writing tool calls Depo cannot
+        read, the next larger installed model of the same kind (such as qwen2.5-coder:7b) does that one step,
+        then the small model goes on. Small models also get a shorter tool list and write code as file blocks.
+      </p>
+    </fieldset>
+  );
+}
+
 /** Whether Depo starts a task's private copy when its changes are ready (preview.auto_start). */
 export function PreviewSetting() {
   const s = useSetting<boolean>("preview.auto_start", true);

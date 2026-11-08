@@ -11,6 +11,7 @@ import {
   ModelSpeedSettings,
   NotificationSetting,
   PreviewSetting,
+  StepUpSetting,
   TeamSettings,
   UpdateSetting,
 } from "./SettingsSections";
@@ -71,6 +72,7 @@ export function SettingsDialog() {
 
           <ParallelSetting />
           <ModelSpeedSettings />
+          <StepUpSetting />
           <TeamSettings />
           <MemorySetting />
           <PreviewSetting />

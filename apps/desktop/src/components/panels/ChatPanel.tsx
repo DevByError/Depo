@@ -6,7 +6,7 @@ import {
   type Task,
   type TaskStatus,
 } from "@depo/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowDown,
@@ -15,6 +15,7 @@ import {
   FlaskConical,
   HardDrive,
   Plus,
+  RotateCcw,
   ShieldCheck,
 } from "lucide-react";
 import { useMemo } from "react";
@@ -313,6 +314,7 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
           );
         })}
       </ol>
+      {(task.status === "failed" || task.status === "cancelled") && <RetryBar task={task} />}
       {mine.map((a) => (
         <ApprovalCard key={a.id} approval={a} />
       ))}
@@ -325,6 +327,40 @@ function Transcript({ task, items }: { task: Task; items: ChatItem[] }) {
       <p className="sr-only" role="status" aria-live="polite">
         {active ? (task.status === "waiting" ? "The agent needs you." : (live.step?.text ?? "Working")) : ""}
       </p>
+    </div>
+  );
+}
+
+/** After a failed or stopped run: run the last message again without typing it. */
+export function RetryBar({ task }: { task: Task }) {
+  const qc = useQueryClient();
+  const connected = useEngine((s) => s.status === "open");
+  const retry = useMutation({
+    mutationFn: () => call("tasks.retry", { id: task.id }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+  });
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="retry-bar">
+      <div className="flex items-center gap-3 rounded-md border border-border bg-raised px-3 py-2">
+        <p className="min-w-0 flex-1 text-[12px] leading-relaxed text-muted">
+          {task.status === "failed" ? "This run did not finish." : "You stopped this run."} Retry runs your
+          last message again; the files changed so far are kept.
+        </p>
+        <Button
+          size="sm"
+          onClick={() => retry.mutate()}
+          disabled={!connected || retry.isPending}
+          aria-label="Retry your last message"
+        >
+          <RotateCcw aria-hidden />
+          Retry
+        </Button>
+      </div>
+      {retry.error && (
+        <p role="alert" className="text-[12px] text-danger">
+          {retry.error instanceof Error ? retry.error.message : String(retry.error)}
+        </p>
+      )}
     </div>
   );
 }

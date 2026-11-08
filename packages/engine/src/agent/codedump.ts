@@ -19,13 +19,15 @@ const FINAL_LINES = 8;
 const SHELL =
   /^(bash|sh|shell|zsh|console|terminal|powershell|ps1?|pwsh|cmd|bat|batch|text|txt|plaintext|output|log)$/i;
 
-interface Block {
+export interface Block {
   /** The fence's info string (language and anything after it). */
   info: string;
   body: string;
   closed: boolean;
   /** Where the opening fence starts. */
   start: number;
+  /** Where the closing fence ends (the end of the text while the block is open). */
+  end: number;
 }
 
 /** The fenced code blocks of a text, the last one possibly still open. */
@@ -43,11 +45,19 @@ export function codeBlocks(text: string): Block[] {
         body: text.slice(open.bodyStart, m.index),
         closed: true,
         start: open.start,
+        end: m.index + m[0].length,
       });
       open = null;
     }
   }
-  if (open) out.push({ info: open.info, body: text.slice(open.bodyStart), closed: false, start: open.start });
+  if (open)
+    out.push({
+      info: open.info,
+      body: text.slice(open.bodyStart),
+      closed: false,
+      start: open.start,
+      end: text.length,
+    });
   return out;
 }
 
@@ -55,16 +65,26 @@ function lines(body: string): number {
   return body.split("\n").filter((l) => l.trim()).length;
 }
 
-function isCode(b: Block): boolean {
+export function isCode(b: Block): boolean {
   const lang = b.info.split(/[\s:{]/)[0] ?? "";
   return !SHELL.test(lang);
 }
 
-/** While streaming: a long reply with a big code block and no tool call in it. */
-export function dumpInProgress(streamed: string, toolNames: string[]): boolean {
+/**
+ * While streaming: a long reply with a big code block and no tool call in it. File blocks Depo
+ * saves (SEARCH/REPLACE edits, a new file under its path) are not a dump; with `root`, a block
+ * labelled with the path of a file that does not exist yet counts as such a new file.
+ */
+export function dumpInProgress(streamed: string, toolNames: string[], root?: string): boolean {
   if (streamed.length < DUMP_CHARS) return false;
   if (looksLikeToolCall(streamed, toolNames) || /<tool_call>|<function_call>/i.test(streamed)) return false;
-  return codeBlocks(streamed).some((b) => isCode(b) && lines(b.body) >= STREAM_LINES);
+  if (/^[ \t]*<{5,9}[ \t]*SEARCH\b/im.test(streamed)) return false;
+  return codeBlocks(streamed).some((b) => {
+    if (!isCode(b) || lines(b.body) < STREAM_LINES) return false;
+    if (!root) return true;
+    const label = blockLabel(streamed, b);
+    return !label || fs.existsSync(path.join(root, label.path));
+  });
 }
 
 /** A finished reply (no tool call) that carries code meant for a file. */
@@ -84,7 +104,7 @@ const PLACEHOLDER = [
 const PATH =
   /(?:^|[\s`*'"(:])((?:[\w@.-]+\/)*[\w@.-]*[\w-]\.[A-Za-z0-9]{1,10}|(?:[\w@.-]+\/)*(?:Dockerfile|Makefile|Procfile))(?=$|[\s`*'"):,])/g;
 
-function pathIn(line: string): string | null {
+export function pathIn(line: string): string | null {
   let last: string | null = null;
   for (const m of line.matchAll(PATH)) {
     const p = m[1] ?? "";
@@ -95,7 +115,7 @@ function pathIn(line: string): string | null {
   return last;
 }
 
-function safe(rel: string): string | null {
+export function safe(rel: string): string | null {
   const p = rel.replace(/\\/g, "/").replace(/^\.\//, "");
   if (!p || p.startsWith("/") || /^[A-Za-z]:/.test(p) || p.split("/").includes("..")) return null;
   if (/(^|\/)(node_modules|\.git)(\/|$)/.test(p)) return null;
@@ -103,12 +123,49 @@ function safe(rel: string): string | null {
 }
 
 /**
- * The complete files a code dump labels with a path: in the fence (```ts be/src/app.ts), on the
- * first line as a comment (// be/src/app.ts) or on the line just before the block (**be/app.ts**,
- * `be/app.ts`:, ### be/app.ts). Blocks that leave parts out, shell commands and blocks still open
- * are skipped. Only new files are saved: a block for a file that exists is usually just the part
- * the model meant to add or change (new tables without the old ones, a route file for another
- * framework), so saving it would lose the rest; those paths come back in `existing`.
+ * The path a code block is labelled with, and its body without a path comment: in the fence
+ * (```ts be/src/app.ts), on the first line as a comment (// be/src/app.ts) or on the line just
+ * before the block (**be/app.ts**, `be/app.ts`:, ### be/app.ts). Null when it names none.
+ */
+export function blockLabel(text: string, b: Block): { path: string; body: string } | null {
+  let body = b.body;
+  let rel: string | null = null;
+  const meta = b.info.replace(/^[\w+#-]*[\s:]*/, "").replace(/^(title|file|filename|path)=/i, "");
+  if (meta) rel = pathIn(` ${meta.replace(/["']/g, "")} `);
+  if (!rel) {
+    const first = body.split("\n", 1)[0] ?? "";
+    const m =
+      /^\s*(?:\/\/|#|--|\/\*|<!--|\{\/\*)\s*(?:file(?:name)?:\s*)?(\S+?)\s*(?:\*\/|-->|\*\/\})?\s*$/i.exec(
+        first,
+      );
+    if (m?.[1] && pathIn(` ${m[1]} `)) {
+      rel = pathIn(` ${m[1]} `);
+      body = body.slice(first.length + 1);
+    }
+  }
+  if (!rel) {
+    const before = text.slice(0, b.start).split("\n").slice(-3).reverse();
+    for (const l of before) {
+      if (!l.trim()) continue;
+      rel = pathIn(l);
+      break;
+    }
+  }
+  const p = rel ? safe(rel) : null;
+  return p ? { path: p, body } : null;
+}
+
+/** Code that is complete enough to be a whole file (no "// ... rest of the code"). */
+export function isWholeFile(body: string): boolean {
+  return !PLACEHOLDER.some((re) => re.test(body));
+}
+
+/**
+ * The complete files a code dump labels with a path (see blockLabel). Blocks that leave parts
+ * out, shell commands and blocks still open are skipped. Only new files are saved: a block for a
+ * file that exists is usually just the part the model meant to add or change (new tables without
+ * the old ones, a route file for another framework), so saving it would lose the rest; those
+ * paths come back in `existing`.
  */
 export function filesFromDump(
   text: string,
@@ -118,59 +175,39 @@ export function filesFromDump(
   const existing = new Set<string>();
   for (const b of codeBlocks(text)) {
     if (!b.closed || !isCode(b) || lines(b.body) < 3) continue;
-    let body = b.body;
-    let rel: string | null = null;
-    const meta = b.info.replace(/^[\w+#-]*[\s:]*/, "").replace(/^(title|file|filename|path)=/i, "");
-    if (meta) rel = pathIn(` ${meta.replace(/["']/g, "")} `);
-    if (!rel) {
-      const first = body.split("\n", 1)[0] ?? "";
-      const m =
-        /^\s*(?:\/\/|#|--|\/\*|<!--|\{\/\*)\s*(?:file(?:name)?:\s*)?(\S+?)\s*(?:\*\/|-->|\*\/\})?\s*$/i.exec(
-          first,
-        );
-      if (m?.[1] && pathIn(` ${m[1]} `)) {
-        rel = pathIn(` ${m[1]} `);
-        body = body.slice(first.length + 1);
-      }
-    }
-    if (!rel) {
-      const before = text.slice(0, b.start).split("\n").slice(-3).reverse();
-      for (const l of before) {
-        if (!l.trim()) continue;
-        rel = pathIn(l);
-        break;
-      }
-    }
-    const p = rel ? safe(rel) : null;
-    if (!p || PLACEHOLDER.some((re) => re.test(body))) continue;
-    const content = body.endsWith("\n") ? body : `${body}\n`;
-    if (fs.existsSync(path.join(root, p))) {
-      existing.add(p);
+    const label = blockLabel(text, b);
+    if (!label || !isWholeFile(label.body)) continue;
+    const content = label.body.endsWith("\n") ? label.body : `${label.body}\n`;
+    if (fs.existsSync(path.join(root, label.path))) {
+      existing.add(label.path);
       continue;
     }
-    found.set(p, content);
+    found.set(label.path, content);
   }
   return { files: [...found].map(([p, content]) => ({ path: p, content })), existing: [...existing] };
 }
 
-/** What the model reads after a reply that pasted code instead of saving it. */
-export function dumpNudge(saved: string[], existing: string[], stopped: boolean): string {
+/**
+ * What the model reads after a reply that pasted code instead of saving it. With `blocks`, the
+ * model was taught file blocks, so it is told to use those.
+ */
+export function dumpNudge(saved: string[], existing: string[], stopped: boolean, blocks = false): string {
   const parts = [
     stopped
       ? "Depo stopped your reply because you were pasting code into it. The owner cannot use code in a chat reply."
       : "You pasted code into your answer instead of saving it. The owner cannot use code in a chat reply.",
   ];
   if (saved.length)
-    parts.push(
-      `Depo saved the new files you named (${saved.join(", ")}) with write_file for you; see the results above.`,
-    );
+    parts.push(`Depo saved the new files you named (${saved.join(", ")}) for you; see the results above.`);
   if (existing.length)
     parts.push(
-      `Not saved: ${existing.join(", ")} already ${existing.length === 1 ? "exists" : "exist"}. Read ${existing.length === 1 ? "it" : "each one"} with read_file and change only what is needed with edit_file, keeping the rest of the file.`,
+      `Not saved: ${existing.join(", ")} already ${existing.length === 1 ? "exists" : "exist"}. Read ${existing.length === 1 ? "it" : "each one"} with read_file and change only what is needed with ${blocks ? "a SEARCH/REPLACE block under its path" : "edit_file"}, keeping the rest of the file.`,
     );
   if (!saved.length && !existing.length) parts.push("Nothing was saved.");
   parts.push(
-    "From now on, create each new file with write_file (path and the whole content) and change existing files with edit_file, one call per file, and keep your text short.",
+    blocks
+      ? "From now on, write each new file as its path on one line followed by a code block with the whole file, and change an existing file with a SEARCH/REPLACE block under its path (exact lines from read_file in SEARCH). Keep your text short."
+      : "From now on, create each new file with write_file (path and the whole content) and change existing files with edit_file, one call per file, and keep your text short.",
     saved.length
       ? "Continue with the rest of the work, and give a short final answer only when it is all done."
       : "Start now.",
