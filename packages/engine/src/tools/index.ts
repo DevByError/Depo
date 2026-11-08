@@ -28,6 +28,7 @@ import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
 import { foreignKeyProblems, matchForeignKeyTypes, withoutExistingTables } from "./sqlcheck";
+import { checkable, compileProblem, describeCompileProblem } from "./syntax";
 
 export { ToolError } from "./paths";
 
@@ -250,8 +251,11 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     schema: z.object({ path: z.string().min(1), content: z.string() }),
     async run(a, ctx) {
       refuseFolderOrPlaceholder(ctx.root, a.path, a.content);
+      refuseWrongPlace(ctx.root, a.path, a.content);
       mustHaveRead(ctx, a.path, "replacing");
+      const before = currentText(ctx.root, a.path);
       const r = writeFileTool(ctx.root, a.path, a.content);
+      const compiled = keepsCompiling(ctx.root, r.path, before);
       ctx.readPaths?.add(r.path);
       ctx.onFileChanged?.(r.path);
       emit(ctx, {
@@ -260,7 +264,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         details: { path: r.path, created: r.created, bytes: r.bytes },
         status: "succeeded",
       });
-      return `${r.created ? "Created" : "Wrote"} ${r.path} (${r.bytes} bytes).${schemaWarnings(ctx.root, r.path)}`;
+      return `${r.created ? "Created" : "Wrote"} ${r.path} (${r.bytes} bytes).${compiled}${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -283,6 +287,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
           `${a.path} does not exist yet, so there is nothing to edit. Create it with write_file (path and the whole content).`,
         );
       mustHaveRead(ctx, a.path, "editing");
+      const before = currentText(ctx.root, a.path);
       const r = editFileTool(
         ctx.root,
         a.path,
@@ -292,6 +297,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
           ...(e.replace_all ? { replaceAll: true } : {}),
         })),
       );
+      const compiled = keepsCompiling(ctx.root, r.path, before);
       ctx.onFileChanged?.(r.path);
       emit(ctx, {
         type: "editing_file",
@@ -300,7 +306,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         status: "succeeded",
       });
       ctx.readPaths?.add(r.path);
-      return `Applied ${r.applied} edit(s) to ${r.path}.${schemaWarnings(ctx.root, r.path)}`;
+      return `Applied ${r.applied} edit(s) to ${r.path}.${compiled}${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -317,7 +323,9 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
       // New tables in a schema: the ones already there are left out, and integer foreign key
       // columns get the type of the column they reference (small models guess INT).
       const { content, notes } = sqlAppend(ctx.root, a.path, a.content);
+      const before = currentText(ctx.root, a.path);
       const r = appendFileTool(ctx.root, a.path, content);
+      const compiled = keepsCompiling(ctx.root, r.path, before);
       ctx.readPaths?.add(r.path);
       ctx.onFileChanged?.(r.path);
       emit(ctx, {
@@ -326,7 +334,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         details: { path: r.path, created: r.created, added: r.added },
         status: "succeeded",
       });
-      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).${notes.map((n) => ` ${n}`).join("")}${schemaWarnings(ctx.root, r.path)}`;
+      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).${notes.map((n) => ` ${n}`).join("")}${compiled}${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -741,6 +749,71 @@ export function refuseFolderOrPlaceholder(root: string, rel: string, content: st
   if (PLACEHOLDER.test(content))
     throw new ToolError(
       `Nothing was written: "${content.trim().slice(0, 40)}" is not file content. Write the whole, real content of ${norm} (the code or text the file should hold).`,
+    );
+}
+
+/** A file's text now, or null when it does not exist (or cannot be read). */
+function currentText(root: string, rel: string): string | null {
+  try {
+    const { abs } = resolveInside(root, rel);
+    return fs.statSync(abs).isFile() ? fs.readFileSync(abs, "utf8") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After a JS/TS file changed: when it compiled before and does not now, the change is undone and
+ * refused with the compile error and its lines (a broken file breaks the whole app). A new file,
+ * or one that did not compile before either, is kept with a warning to fix it.
+ */
+function keepsCompiling(root: string, rel: string, before: string | null): string {
+  if (!checkable(rel)) return "";
+  const after = currentText(root, rel);
+  if (after === null) return "";
+  const problem = compileProblem(rel, after);
+  if (!problem) return "";
+  const what = describeCompileProblem(rel, after, problem);
+  if (before !== null && !compileProblem(rel, before)) {
+    fs.writeFileSync(resolveInside(root, rel).abs, before, "utf8");
+    throw new ToolError(
+      `Nothing was changed: with this change ${what}\n${rel} is as it was before. Make the change again without that mistake${/already been declared/i.test(problem.message) ? " (leave out what the file already has)" : ""}.`,
+    );
+  }
+  return `\nWarning from Depo: ${what}\nFix it now with an edit to ${rel}.`;
+}
+
+/** Code with functions left empty for later ("// Add implementation here"). */
+const STUB =
+  /^\s*(?:\/\/|#|\*|\/\*)\s*(?:TODO:?\s*)?(?:add|write|put|insert)?\s*(?:your|the)?\s*(?:real\s+)?(?:implementation|logic)\s*(?:here|goes here|later)[.!]?\s*(?:\*\/)?\s*$|^\s*(?:\/\/|#)\s*TODO:?\s*implement\b/im;
+
+/**
+ * Files a small model puts where the project does not look for them: Next.js pages in pages/
+ * when the app uses the app router (app/), and code files left as stubs.
+ */
+export function refuseWrongPlace(root: string, rel: string, content: string): void {
+  const norm = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  const m = /^(.*?)(?:^|\/)pages\/(.+)\.(tsx|jsx|ts|js)$/.exec(norm);
+  if (m) {
+    const base = m[1] ? `${m[1]}/` : "";
+    const appDir = ["app", "src/app"]
+      .map((d) => `${base}${d}`)
+      .find((d) =>
+        ["layout", "page"].some((f) =>
+          [".tsx", ".jsx", ".ts", ".js"].some((x) => fs.existsSync(path.join(root, d, f + x))),
+        ),
+      );
+    if (appDir && !/^api\//.test(m[2] ?? "")) {
+      const route = (m[2] ?? "").replace(/(^|\/)(index|page)$/, "").replace(/\/$/, "");
+      const target = `${appDir}/${route ? `${route}/` : ""}page.${m[3] === "js" || m[3] === "jsx" ? "jsx" : "tsx"}`;
+      throw new ToolError(
+        `Nothing was written: this Next.js app uses the app router (${appDir}), so ${norm} would not be a page (and can clash with ${appDir}). Write the page as ${target}, a file whose default export is the page component.`,
+      );
+    }
+  }
+  if (checkable(norm) && STUB.test(content))
+    throw new ToolError(
+      `Nothing was written: ${norm} has code left for later ("${STUB.exec(content)?.[0].trim()}"). Write the real code of each function now, or leave a function out until you write it.`,
     );
 }
 

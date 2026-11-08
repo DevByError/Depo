@@ -18,6 +18,7 @@ import {
   type RunRecipe,
 } from "@depo/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { testCommands } from "../agent/finish";
 import { venvEnv } from "../agent/prompt";
 import { requestStatus } from "../agent/request-check";
 import { detectStack } from "../agent/stack";
@@ -804,15 +805,37 @@ export class ReadinessService implements ReadinessHooks {
       status: "started",
     });
     const timeoutMs = this.o.testTimeoutMs ?? TEST_TIMEOUT_MS;
-    const res = await runShell({
-      command: cmd.command,
-      cwd: root,
-      timeoutMs,
-      signal: this.closing.signal,
-      memoryLimitBytes: 8 * 1024 ** 3,
-      env: venvEnv(root),
-    });
-    const summary = summarizeTests(res.output);
+    // A project in parts (fe/, be/) has its tests in the parts, not at the top: run each there.
+    const runs = cmd.source === "memory" ? [{ cwd: ".", command: cmd.command }] : testRuns(root, cmd.command);
+    const results: Awaited<ReturnType<typeof runShell>>[] = [];
+    for (const r of runs) {
+      const one = await runShell({
+        command: r.command,
+        cwd: r.cwd === "." ? root : path.join(root, r.cwd),
+        timeoutMs,
+        signal: this.closing.signal,
+        memoryLimitBytes: 8 * 1024 ** 3,
+        env: venvEnv(root),
+      });
+      results.push(runs.length > 1 ? { ...one, output: `[${r.cwd}] ${r.command}\n${one.output}` } : one);
+      if (one.cancelled || one.timedOut) break;
+    }
+    const res = {
+      exitCode: results.find((r) => r.exitCode !== 0)?.exitCode ?? results.at(-1)?.exitCode ?? null,
+      timedOut: results.some((r) => r.timedOut),
+      cancelled: results.some((r) => r.cancelled),
+      containment: results[0]?.containment ?? "none",
+      durationMs: results.reduce((n, r) => n + r.durationMs, 0),
+      output: results.map((r) => r.output).join("\n"),
+    };
+    const parts = results.map((r) => summarizeTests(r.output));
+    const summary = parts.every((p) => p)
+      ? (() => {
+          const passed = parts.reduce((n, p) => n + (p?.passed ?? 0), 0);
+          const failed = parts.reduce((n, p) => n + (p?.failed ?? 0), 0);
+          return parts.length === 1 ? parts[0] : { passed, failed, text: `${passed} pass, ${failed} fail` };
+        })()
+      : null;
     const ok = res.exitCode === 0 && !res.timedOut && !res.cancelled;
     this.log[ok || res.cancelled ? "info" : "warn"]("readiness test run", {
       taskId: row.id,
@@ -832,7 +855,7 @@ export class ReadinessService implements ReadinessHooks {
             ? "Tests stopped"
             : "Tests failed",
       details: {
-        command: cmd.command,
+        command: runs.length > 1 ? runs.map((r) => `${r.command} (${r.cwd})`).join(", ") : cmd.command,
         exitCode: res.exitCode,
         timedOut: res.timedOut,
         cancelled: res.cancelled,
@@ -966,4 +989,35 @@ export class ReadinessService implements ReadinessHooks {
       message: `Scanned the private copy: ${r.score.overall}/100${serious ? `, ${serious} high or critical finding${serious === 1 ? "" : "s"}` : ", nothing high or critical"}.`,
     };
   }
+}
+
+/**
+ * Where to run a project's tests: at the top when its package.json has a test script (or it is
+ * not a JavaScript project), else in each part folder that has one (fe/, be/), as the finish line does.
+ */
+export function testRuns(root: string, command: string): { cwd: string; command: string }[] {
+  const top = [{ cwd: ".", command }];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    if (pkg.scripts?.test) return top;
+  } catch {
+    // no package.json at the top: look in the parts
+  }
+  let dirs: string[] = [];
+  try {
+    dirs = fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+      .map((e) => e.name)
+      .filter((d) => fs.existsSync(path.join(root, d, "package.json")));
+  } catch {
+    return top;
+  }
+  const parts = testCommands(
+    root,
+    dirs.map((cwd) => ({ cwd })),
+  );
+  return parts.length ? parts : top;
 }

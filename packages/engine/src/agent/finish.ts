@@ -11,6 +11,7 @@ import {
 import { dataSteps } from "../devdb/hooks";
 import type { DevDbInfo } from "../devdb/service";
 import { executeTool, type ToolContext } from "../tools/index";
+import { codeFrame } from "../tools/syntax";
 import { packageManagerFor } from "./stack";
 
 /**
@@ -308,6 +309,55 @@ export async function runFinishLine(
     }
   }
   return { problems, running, notes, blocked };
+}
+
+/**
+ * A problem with the lines it points at: for each "file:line" in the copy that the output names
+ * (absolute Windows or POSIX paths, or relative to a part such as be/), the numbered lines around
+ * it, so a small model sees exactly what to change. At most two per problem.
+ */
+export function withCodeFrames(problem: string, root: string): string {
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  // The copy's own path (it may have spaces or accents) is cut first, so what is left is relative.
+  const top = norm(root).replace(/\/+$/, "");
+  const text = norm(problem).replace(new RegExp(`${top.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`, "gi"), "");
+  const parts = (() => {
+    try {
+      return fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  })();
+  const frames: string[] = [];
+  const seen = new Set<string>();
+  const ref =
+    /(^|[\s([`'"=])((?:[\w@.[\]()-]+\/)*[\w@.-]*[\w-]\.(?:tsx?|jsx?|mjs|cjs|py|sql)):(\d+)(?::\d+)?/gm;
+  for (const m of text.matchAll(ref)) {
+    if (frames.length >= 2) break;
+    const rel = (m[2] ?? "").replace(/^\.\//, "");
+    const line = Number(m[3]);
+    const found = [rel, ...parts.map((p) => `${p}/${rel}`)].find((c) => {
+      try {
+        return !c.split("/").includes("..") && fs.statSync(path.join(root, c)).isFile();
+      } catch {
+        return false;
+      }
+    });
+    if (!found || seen.has(`${found}:${line}`)) continue;
+    seen.add(`${found}:${line}`);
+    let body = "";
+    try {
+      body = fs.readFileSync(path.join(root, found), "utf8");
+    } catch {
+      continue;
+    }
+    const frame = codeFrame(body, line);
+    if (frame) frames.push(`${found} around line ${line}:\n${frame}`);
+  }
+  return frames.length ? `${problem}\n${frames.join("\n")}` : problem;
 }
 
 /** What the agent reads when the finish line found problems; `again` when the same ones came back. */

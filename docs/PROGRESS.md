@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## Third part-1 run (2026-11-08): "why why why" (backend tests broken, three fix rounds failed)
+
+- **Found from the owner's run:** qwen2.5-coder:3b appended a second `import { createApp } from './app'` and a default export to `be/src/app.ts`, so the backend tests failed with "createApp has already been declared". In three fix rounds neither 3b nor 7b removed the lines (they wrote SEARCH/REPLACE blocks with no SEARCH part), and Depo stopped as designed. The run also put pages in `fe/pages/` (the app uses `fe/app/`), stub files, and files at the top of the copy; 3 of 6 requested parts were missing. The readiness card's "Run tests" ran in the top folder ("Script not found").
+- **Built (ADR-0085):** a change that breaks a JS/TS file that compiled is undone and refused with the error and the lines; the problem report shows the lines each error points at; pages in the wrong router folder and stub code are refused with the right path; "Run tests" runs in be/ and fe/.
+- **Verified:** `test/compile-guard.test.ts` with the blueprint's real `app.ts` and 3b's exact append (refused, file unchanged, error at line 58 with lines 55 to 61), an edit that breaks it, a new broken file kept with a warning and then fixed, the pages/ and stub refusals, code frames from the owner's Windows output, and the per-part test folders. Engine 667, lint and types clean.
+
 ## Keep fixing (2026-11-08): "the agents should fix the errors again and again until everything is working"
 
 - **Found:** Depo gave up on errors in three places: after two rounds of "Depo ran the app and found problems", when the step limit ran out (errors were only listed), and in team modes (errors found at the end were only reported).

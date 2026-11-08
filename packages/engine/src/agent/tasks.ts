@@ -50,6 +50,7 @@ import {
   finishSummary,
   problemsPrompt,
   runFinishLine,
+  withCodeFrames,
 } from "./finish";
 import { compactEarlierTurns, copyRepoMap, copyTree, forRetry, isFollowUp } from "./followup";
 import { kickstart } from "./kickstart";
@@ -772,7 +773,11 @@ export class TaskManager {
         const step = rounds.next(r.problems);
         if (step !== "stop")
           return {
-            retry: problemsPrompt(r, { again: step === "again" }),
+            // The lines each error points at go with it, so the model sees what to change.
+            retry: problemsPrompt(
+              { ...r, problems: r.problems.map((p) => withCodeFrames(p, ctx.root)) },
+              { again: step === "again" },
+            ),
             ...(step === "again" ? { stepUp: true } : {}),
           };
       }
@@ -811,7 +816,10 @@ export class TaskManager {
     const ctx = this.coderContext(project, ws, taskId, signal, extras);
     const rounds = new FixRounds();
     rounds.next(first.problems);
-    const report = problemsPrompt(first);
+    const report = problemsPrompt({
+      ...first,
+      problems: first.problems.map((p) => withCodeFrames(p, ws.root)),
+    });
     emit({
       type: "retrying",
       text: `Depo ran the team's work and found ${first.problems.length === 1 ? "a problem" : `${first.problems.length} problems`}; the Coder (${model}) fixes ${first.problems.length === 1 ? "it" : "them"}.`,
