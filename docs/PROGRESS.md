@@ -2,7 +2,13 @@
 
 **Current phase:** All nine phases are built. The 2026-11-07 upgrade (three rounds) adds the Team view, previews, agent playbooks, self-memory, structured logs and a new look (round 1), then steering, pull-request review, visual QA, the code map, the Project home, team replay, time estimates, universal search and git commits (round 2), then speed on a modest PC, a real Terminal with Test results and Problems, blueprints, the readiness report and syntax highlighting with line actions (round 3), and design references: a picture or a link the agents copy the look of. Depo now also builds, runs and checks apps by itself, with a test MySQL database and demo data, and follow-up messages build on the work already done. Everything passes with scripted models in the development container; real-model runs happen on the owner's PC.
 
-_Last updated: 2026-11-07_
+_Last updated: 2026-11-08_
+
+## Fix (2026-11-08): a 3b run that repeated one broken call for 20 minutes
+
+- **Found from the owner's log:** with qwen2.5-coder:3b, part 1 ended "Finished with no file changes" after the model called `list_tables` and `add_table`, which are not tools; in part 2 it wrote one file, then sent the same unreadable `edit_file` (about 500 tokens, two minutes each) 15 times, because the stop-after-3 counter was reset by every reply.
+- **Fixed (ADR-0073):** the count of broken or made-up calls only resets when a call runs, and the third ends the task with a plain reason; calls to tools that do not exist get a nudge with the real tools instead of being taken as the answer; the "could not be read" note says what is wrong; `\'` inside a JSON string is repaired.
+- **Verified:** the owner's exact replies as tests (the `\'` call now runs, the made-up tools are named), plus loop tests for the limit, the reset and the nudge. Engine 611 tests, lint and types clean.
 
 ## Fix (2026-11-07): the Skill Finder test on the owner's PC (MySQL 8, qwen2.5-coder:7b)
 

@@ -86,17 +86,98 @@ function changeDir(dir: string[], args: unknown): string[] {
   return out;
 }
 
-/** JSON.parse, then again after escaping raw newlines and tabs inside strings (a common slip). */
+/**
+ * JSON.parse, then again after the slips small models make: raw newlines and tabs inside strings,
+ * escapes JSON does not have (`\'`), and closing brackets left off the end.
+ */
 function parseLoose(s: string): unknown {
+  return parseWithRepairs(s).value;
+}
+
+function parseWithRepairs(s: string): { value: unknown; error: string | null } {
   const fixed = escapeControlCharsInStrings(s);
-  for (const attempt of [s, fixed, closeBrackets(fixed)]) {
+  const escapes = fixBadEscapes(fixed);
+  let error: string | null = null;
+  for (const attempt of [s, fixed, escapes, closeBrackets(escapes)]) {
     try {
-      return JSON.parse(attempt);
-    } catch {
-      // try the next repair
+      return { value: JSON.parse(attempt), error: null };
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
     }
   }
-  return undefined;
+  return { value: undefined, error };
+}
+
+/**
+ * Backslash escapes that JSON does not have, inside strings: `\'` becomes `'` (models copy it from
+ * JavaScript), any other (`\d`, `\.`, `\$`) a literal backslash, which is what the code meant.
+ */
+export function fixBadEscapes(s: string): string {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i] ?? "";
+    if (!inStr) {
+      if (ch === '"') inStr = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "\\") {
+      const next = s[i + 1] ?? "";
+      if (next && '"\\/bfnrt'.includes(next)) {
+        out += ch + next;
+        i++;
+      } else if (next === "u" && /^[0-9a-fA-F]{4}$/.test(s.slice(i + 2, i + 6))) {
+        out += s.slice(i, i + 6);
+        i += 5;
+      } else if (next === "'") {
+        out += "'";
+        i++;
+      } else out += "\\\\";
+      continue;
+    }
+    if (ch === '"') inStr = false;
+    out += ch;
+  }
+  return out;
+}
+
+/** The text tool calls that name a tool Depo does not have ("add_table"), by name. */
+export function unknownToolCalls(text: string, toolNames: string[]): string[] {
+  const known = new Set(toolNames);
+  const names = new Set<string>();
+  const sources = [
+    ...[...text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)].map((m) => m[1] ?? ""),
+    ...jsonObjects(text),
+  ];
+  for (const json of sources) {
+    const j = parseLoose(json);
+    if (!j || typeof j !== "object" || Array.isArray(j)) continue;
+    const o = j as Record<string, unknown>;
+    const name = typeof o.name === "string" ? o.name : typeof o.tool === "string" ? o.tool : null;
+    // Only something shaped like a call: a package.json also has a "name".
+    const hasArgs = ["arguments", "args", "parameters", "input"].some((k) => k in o);
+    if (name && hasArgs && !known.has(name) && !CD_TOOLS.has(name) && /^[\w.-]{1,64}$/.test(name))
+      names.add(name);
+  }
+  return [...names];
+}
+
+/** Why the first tool call written as text could not be read (a JSON error), or null. */
+export function textCallProblem(text: string, toolNames: string[]): string | null {
+  for (const json of [...text.matchAll(/```(?:json|tool_call)?\s*(\{[\s\S]*?)\s*```/g)].map(
+    (m) => m[1] ?? "",
+  ))
+    if (toolNames.some((n) => json.includes(`"${n}"`))) {
+      const r = parseWithRepairs(json);
+      if (r.error) return r.error;
+    }
+  for (const json of jsonObjects(text))
+    if (toolNames.some((n) => json.includes(`"${n}"`))) {
+      const r = parseWithRepairs(json);
+      if (r.error) return r.error;
+    }
+  return null;
 }
 
 /** Append the closing brackets a model forgot at the end (a common slip with long calls). */
@@ -239,7 +320,8 @@ export function firstCallGroupEnd(text: string, toolNames: string[]): number {
 }
 
 function parseStrict(s: string): unknown {
-  for (const attempt of [s, escapeControlCharsInStrings(s)]) {
+  const fixed = escapeControlCharsInStrings(s);
+  for (const attempt of [s, fixed, fixBadEscapes(fixed)]) {
     try {
       return JSON.parse(attempt);
     } catch {

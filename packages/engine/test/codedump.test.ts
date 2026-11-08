@@ -10,7 +10,14 @@ import {
 } from "@depo/model-gateway";
 import { codeBlocks, dumpInProgress, filesFromDump, isCodeDump } from "../src/agent/codedump";
 import { type LoopParams, runAgentLoop } from "../src/agent/loop";
-import { inventsToolResult, withoutStrayResultTag } from "../src/agent/textcalls";
+import {
+  fixBadEscapes,
+  inventsToolResult,
+  parseTextToolCalls,
+  textCallProblem,
+  unknownToolCalls,
+  withoutStrayResultTag,
+} from "../src/agent/textcalls";
 import { ApprovalCenter } from "../src/approvals";
 import { openDatabase } from "../src/db";
 import { EventBus } from "../src/events/bus";
@@ -167,6 +174,42 @@ describe("code pasted into a reply", () => {
   });
 });
 
+describe("tool calls a 3b model got wrong (seen on the owner's PC)", () => {
+  test("a \\' inside a JSON string is read as a plain quote", () => {
+    const reply =
+      '```json\n{"name": "edit_file", "arguments": {"path": "be/src/app.ts", "edits": [{"search": "import { getSession } from \\\'next-auth/react\\\';", "replace": "import { getSession } from \'next-auth/react\'; import { FakeGitHub } from \'./github/client\';"}]}}\n\n```';
+    const calls = parseTextToolCalls(reply, TOOLS);
+    expect(calls).toHaveLength(1);
+    const edit = (calls[0]?.arguments as { edits: { search: string }[] } | undefined)?.edits[0];
+    expect(edit?.search).toBe("import { getSession } from 'next-auth/react';");
+    // Other escapes JSON does not have keep their backslash (a regex in code).
+    expect(JSON.parse(fixBadEscapes('{"a": "\\d+\\.\\$ \\u00e9 \\n"}'))).toEqual({ a: "\\d+\\.\\$ é \n" });
+  });
+
+  test("calls to tools that do not exist are named; a package.json is not a call", () => {
+    const reply = [
+      "```json",
+      '{"name": "list_tables", "arguments": {"folder": "/be"}}',
+      '{"name": "add_table", "arguments": {"path": "be/src/db/schema.sql", "action": "append", "content": "CREATE TABLE IF NOT EXISTS scans (id INT);"}}',
+      '{"name": "add_table", "arguments": {"path": "be/src/db/schema.sql", "action": "append", "content": "CREATE TABLE IF NOT EXISTS favorites (user_id INT);"}}',
+      "```",
+    ].join("\n");
+    expect(unknownToolCalls(reply, TOOLS)).toEqual(["list_tables", "add_table"]);
+    expect(
+      unknownToolCalls('```json\n{"name": "fe", "version": "1.0.0", "scripts": {}}\n```', TOOLS),
+    ).toEqual([]);
+    expect(unknownToolCalls('{"name": "edit_file", "arguments": {}}', TOOLS)).toEqual([]);
+  });
+
+  test("the reason a call could not be read is found", () => {
+    const broken =
+      '{"name": "edit_file", "arguments": {"path": "a.txt", "edits": [{"search": "say "hi"", "replace": "x"}]}}';
+    expect(parseTextToolCalls(broken, TOOLS)).toEqual([]);
+    expect(textCallProblem(broken, TOOLS)).toBeTruthy();
+    expect(textCallProblem("All done.", TOOLS)).toBeNull();
+  });
+});
+
 describe("the agent loop and code pasted as text", () => {
   let cleanup: (() => void) | null = null;
   afterEach(() => {
@@ -307,5 +350,55 @@ describe("the agent loop and code pasted as text", () => {
     expect(history.some((m) => m.role === "user" && m.content.includes("You wrote a <tool_response>"))).toBe(
       false,
     );
+  });
+
+  const BROKEN =
+    '{"name": "edit_file", "arguments": {"path": "be/src/db/schema.sql", "edits": [{"search": "say "hi"", "replace": "x"}]}}';
+
+  test("the same unreadable call stops the task after 3 tries, not after hours", async () => {
+    const { params, history, events } = setup([answer(BROKEN)]);
+    params.maxSteps = 100;
+    await expect(runAgentLoop(params)).rejects.toThrow(/could not be read/);
+    expect(events.filter((e) => e.text.startsWith("The model's tool call could not be read"))).toHaveLength(
+      2,
+    );
+    const asks = history.filter(
+      (m) => m.role === "user" && m.content.startsWith("That tool call could not be read"),
+    );
+    expect(asks).toHaveLength(2);
+    expect(asks[0]?.content).toContain("Do not repeat the same call unchanged");
+  });
+
+  test("a call that runs in between starts the count again", async () => {
+    const write = '{"name": "write_file", "arguments": {"path": "be/notes.md", "content": "notes"}}';
+    const { params } = setup([
+      answer(BROKEN),
+      answer(BROKEN),
+      answer(write),
+      answer(BROKEN),
+      answer(BROKEN),
+      answer("Done."),
+    ]);
+    const res = await runAgentLoop(params);
+    expect(res.finalText).toBe("Done.");
+    expect(res.changed).toEqual(["be/notes.md"]);
+  });
+
+  test("calls to tools that do not exist are not taken as the answer", async () => {
+    const madeUp =
+      '```json\n{"name": "add_table", "arguments": {"path": "be/src/db/schema.sql", "action": "append", "content": "CREATE TABLE IF NOT EXISTS scans (id INT);"}}\n```';
+    const write =
+      '{"name": "write_file", "arguments": {"path": "be/src/db/extra.sql", "content": "CREATE TABLE IF NOT EXISTS scans (id INT);"}}';
+    const { params, history, events } = setup([
+      answer(madeUp),
+      answer(write),
+      answer("Added the scans table."),
+    ]);
+    const res = await runAgentLoop(params);
+    expect(res.finalText).toBe("Added the scans table.");
+    expect(res.changed).toEqual(["be/src/db/extra.sql"]);
+    const asked = history.find((m) => m.role === "user" && m.content.includes('"add_table" is not a tool'));
+    expect(asked?.content).toContain("Your tools are: read_file, write_file, edit_file, run_command");
+    expect(events.some((e) => e.text.includes("a tool that does not exist (add_table)"))).toBe(true);
   });
 });

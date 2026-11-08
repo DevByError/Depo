@@ -25,6 +25,8 @@ import {
   inventsToolResult,
   looksLikeToolCall,
   stripToolMarkup,
+  textCallProblem,
+  unknownToolCalls,
   withoutInventedResults,
   withoutStrayResultTag,
 } from "./textcalls";
@@ -141,6 +143,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   let finishNudges = 0;
   let doItNudges = 0;
   let madeUpResults = 0;
+  // Replies in a row whose tool calls could not be read or named a tool that does not exist.
+  let unreadable = 0;
   let dumpCuts = 0;
   let finalDumps = 0;
   let loops = 0;
@@ -335,25 +339,49 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
             : "Your reply was too long and was cut off. Make one tool call at a time, write big files in parts, and keep the final answer short.",
         });
         continue;
-      } else if (looksLikeToolCall(res.text, toolNames)) {
-        // A tool call written as text that could not be read: not a final answer.
-        badOutputs++;
-        if (badOutputs >= 3)
-          throw new Error("The model kept writing tool calls that could not be read. Try a larger model.");
-        emit({
-          type: "retrying",
-          text: "The model's tool call could not be read. Asking it to try again.",
-          status: "running",
-        });
-        history.push({ role: "assistant", content: res.text });
-        history.push({
-          role: "user",
-          content:
-            "That tool call could not be read: it is not complete, valid JSON. Make exactly one tool call, using the tool-calling format, with every bracket closed.",
-        });
-        continue;
+      } else {
+        const unknown = unknownToolCalls(res.text, toolNames);
+        if (unknown.length) {
+          // Calls to tools that do not exist ("add_table"): nothing ran, so this is not an answer.
+          unreadable++;
+          if (unreadable >= 3)
+            throw new Error(
+              `The model kept calling tools that do not exist (${unknown.join(", ")}). Try a larger model.`,
+            );
+          emit({
+            type: "retrying",
+            text: `The model called ${unknown.length === 1 ? "a tool that does not exist" : "tools that do not exist"} (${unknown.join(", ")}), so nothing ran. Asking it to use its real tools.`,
+            status: "running",
+          });
+          history.push({ role: "assistant", content: res.text });
+          history.push({
+            role: "user",
+            content: `${unknown.map((n) => `"${n}"`).join(", ")} ${unknown.length === 1 ? "is not a tool" : "are not tools"}, so nothing ran and nothing changed. Your tools are: ${toolNames.join(", ")}. To change a file, read it with read_file and change it with edit_file (to add to the end, search for its last lines and replace them with those lines plus the new text); to create a file, use write_file. Make one call now.`,
+          });
+          continue;
+        }
+        if (looksLikeToolCall(res.text, toolNames)) {
+          // A tool call written as text that could not be read: not a final answer. The count only
+          // goes back to zero when a call runs, so the same broken call cannot repeat for hours.
+          unreadable++;
+          if (unreadable >= 3)
+            throw new Error("The model kept writing tool calls that could not be read. Try a larger model.");
+          const why = textCallProblem(res.text, toolNames);
+          emit({
+            type: "retrying",
+            text: `The model's tool call could not be read${why ? ` (${why})` : ""}. Asking it to try again.`,
+            status: "running",
+          });
+          history.push({ role: "assistant", content: res.text });
+          history.push({
+            role: "user",
+            content: `That tool call could not be read: it is not valid JSON${why ? ` (${why})` : ""}, so nothing ran. Write it again as one complete JSON object with every bracket closed and every " inside a text value written as \\". With edit_file, keep "search" short: a few exact lines copied from read_file. Do not repeat the same call unchanged.`,
+          });
+          continue;
+        }
       }
     }
+    if (calls.length) unreadable = 0;
     if (calls.length === 0) res.text = stripToolMarkup(res.text);
     // Asked twice already: keep the model's own words and drop the results it made up.
     if (calls.length === 0 && madeUpResults >= 2 && inventsToolResult(res.text))
