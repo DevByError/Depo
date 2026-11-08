@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## Finish guards (2026-11-08): "is this good?" (a 3b run that stopped after the tables)
+
+- **Found from the owner's run:** qwen2.5-coder:3b added four tables to `schema.sql` without reading it (`user_id INT` against `users.id BIGINT UNSIGNED`), appended "-- Additional tables as needed" twice, and gave an empty answer after three steps, which Depo accepted. The finish line's migrate failed with MySQL error 3780; the model then wrote made-up tool results, claimed the tables were fixed, and described a fix it never made.
+- **Built:** foreign key types are checked whenever a `.sql` file changes, with the exact type to use (ADR-0078); adding to a file needs a read first, and comment-only or repeated additions are refused (ADR-0079); an empty answer is never accepted, and before finishing Depo checks that the routes and pages the request names exist in the copy and keeps the model going while that list shrinks (ADR-0080); an answer to Depo's problem report that changes nothing is pushed back with the error, and a larger installed model takes that step (ADR-0081).
+- **Verified:** the owner's schema as a test (warning, then the edit that fixes it), the part-1 request (3 routes, 2 pages found; missing ones listed until built), loop tests for the empty answer, the stall limit, the push-back with the step-up to 7b and back, and the repeated append. Engine 645, lint and types clean. Not yet run with the real 3b model.
+
 ## Small models (2026-11-08): "make the 3b model work, and add Retry"
 
 - **Found from the owner's log:** qwen2.5-coder:3b ended part 1 of the Skill Finder test in about two minutes: it called `create_table_skills`, which is not a tool, then wrote two `edit_file` calls whose JSON missed a `]`, and the third unreadable reply ended the task. Sent again with 7b it worked, but 7b writes 1.6 tokens a second on their GTX 1650 against 15 to 26 for 3b.

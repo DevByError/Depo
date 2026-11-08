@@ -1,0 +1,170 @@
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * What the owner's request names that is not in the code yet: API routes ("GET /api/skills/search")
+ * and, in a Next.js app, pages ("- /skills/[id] : …"). Small models stop after the first part of a
+ * long request (the tables) and say they are done; Depo lists what is still missing and asks them
+ * to go on. A route counts as there when its path appears in a source file; a page when its
+ * page file exists.
+ */
+
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".data",
+  "dist",
+  "build",
+  "out",
+  ".depo",
+  "coverage",
+  ".venv",
+  "venv",
+  "__pycache__",
+]);
+const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|php|java|kt|cs)$/i;
+const MAX_FILES = 3000;
+
+export interface RequestedParts {
+  routes: { method: string; path: string }[];
+  pages: string[];
+}
+
+/** The routes and pages a request names. */
+export function requestedParts(request: string): RequestedParts {
+  const routes = new Map<string, { method: string; path: string }>();
+  for (const m of request.matchAll(/\b(GET|POST|PUT|PATCH|DELETE)\s+`?(\/[^\s?`'"),;]*)/g)) {
+    const p = (m[2] ?? "").replace(/[.:]+$/, "");
+    if (p.length < 2) continue;
+    routes.set(`${m[1]} ${p}`, { method: m[1] ?? "GET", path: p });
+  }
+  const pages = new Set<string>();
+  // A list item that starts with a page path followed by " : " or " - " ("- /skills/[id] : name, …").
+  for (const m of request.matchAll(/^[ \t]*[-*][ \t]+`?(\/[\w\-[\]/.]*)`?[ \t]+[:–—-][ \t]/gm)) {
+    const p = m[1] ?? "";
+    if (/^\/api(\/|$)/.test(p)) continue;
+    pages.add(p.length > 1 ? p.replace(/\/+$/, "") : p);
+  }
+  return { routes: [...routes.values()], pages: [...pages] };
+}
+
+/** Source files of the copy (not dependencies, builds or Depo's data), up to a limit. */
+function sourceFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (out.length >= MAX_FILES || depth > 8) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) walk(path.join(dir, e.name), depth + 1);
+      } else if (SOURCE.test(e.name)) out.push(path.join(dir, e.name));
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+/** Next.js app router folders (`app` with a layout or page), relative to the root. */
+function appDirs(root: string): string[] {
+  const found: string[] = [];
+  for (const rel of [
+    "app",
+    "src/app",
+    "fe/app",
+    "fe/src/app",
+    "frontend/app",
+    "frontend/src/app",
+    "web/app",
+    "web/src/app",
+    "client/app",
+  ]) {
+    const dir = path.join(root, rel);
+    if (
+      ["layout", "page"].some((f) =>
+        [".tsx", ".jsx", ".ts", ".js"].some((x) => fs.existsSync(path.join(dir, f + x))),
+      )
+    )
+      found.push(dir);
+  }
+  return found;
+}
+
+/** Does a page file for `route` exist under one of the app folders (route groups like (shop) allowed)? */
+function hasPage(dirs: string[], route: string): boolean {
+  const parts = route.split("/").filter(Boolean);
+  const matchDir = (dir: string, i: number): boolean => {
+    if (i === parts.length)
+      return [".tsx", ".jsx", ".ts", ".js", ".mdx"].some((x) => fs.existsSync(path.join(dir, `page${x}`)));
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    const want = (parts[i] ?? "").toLowerCase();
+    // [id] in the request matches any dynamic folder ([id], [slug]).
+    const dynamic = /^\[.+\]$/.test(want);
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const n = e.name.toLowerCase();
+      if (/^\(.+\)$/.test(n) && matchDir(path.join(dir, e.name), i)) return true;
+      if (n === want || (dynamic && /^\[.+\]$/.test(n))) {
+        if (matchDir(path.join(dir, e.name), i + 1)) return true;
+      }
+    }
+    return false;
+  };
+  return dirs.some((d) => matchDir(d, 0));
+}
+
+/** The parts of the request that are not in the code yet, as short lines for the model. */
+export function missingParts(request: string, root: string): string[] {
+  const { routes, pages } = requestedParts(request);
+  if (!routes.length && !pages.length) return [];
+  const missing: string[] = [];
+  if (routes.length) {
+    let code = "";
+    for (const f of sourceFiles(root)) {
+      try {
+        const st = fs.statSync(f);
+        if (st.size <= 512 * 1024) code += `${fs.readFileSync(f, "utf8")}\n`;
+      } catch {
+        // unreadable: skip
+      }
+    }
+    for (const r of routes) {
+      // The fixed start of the path: "/api/users/:id" is there when "/api/users/" is. A path with
+      // no parameters must appear whole ("/api/skill" is not "/api/skills/search").
+      const fixed = r.path.split(/[:{[*]/)[0] ?? r.path;
+      const exact = fixed === r.path;
+      const re = new RegExp(`${fixed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${exact ? "(?![\\w/-])" : ""}`);
+      if (!re.test(code)) missing.push(`the route ${r.method} ${r.path}`);
+    }
+  }
+  const dirs = appDirs(root);
+  if (dirs.length)
+    for (const p of pages) {
+      if (!hasPage(dirs, p)) {
+        const rel = path.relative(root, dirs[0] ?? root).replace(/\\/g, "/");
+        missing.push(`the page ${p} (${rel}${p === "/" ? "" : p}/page.tsx)`);
+      }
+    }
+  return missing;
+}
+
+/** The note that asks the model to go on with what is missing. */
+export function notDoneNote(missing: string[], blocks: boolean): string {
+  const list = missing.slice(0, 12).map((m) => `- ${m}`);
+  if (missing.length > 12) list.push(`- and ${missing.length - 12} more`);
+  return [
+    "Not done yet. The request asks for these, and they are not in the code:",
+    ...list,
+    `Build the first one now (read the files it touches, then ${blocks ? "write the code as file blocks" : "write and edit the files"}), then the next. Finish only when all of them exist, and say briefly what you built.`,
+  ].join("\n");
+}

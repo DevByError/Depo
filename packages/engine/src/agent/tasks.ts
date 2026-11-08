@@ -48,6 +48,7 @@ import { compactEarlierTurns, copyRepoMap, copyTree, forRetry, isFollowUp } from
 import { kickstart } from "./kickstart";
 import { runAgentLoop } from "./loop";
 import { codingSystemPrompt, venvEnv } from "./prompt";
+import { missingParts } from "./request-check";
 import { isSmallModel, pickStepUp, SMALL_MODEL_TOOLS } from "./small";
 import { SteerInbox, type StoredNote, steerPrompt } from "./steer";
 
@@ -885,6 +886,8 @@ export class TaskManager {
       maxSteps,
       ...(stepUp ? { stepUp: { model: stepUp } } : {}),
       fileBlocks: small,
+      // Routes and pages the request names that the copy does not have yet.
+      checkDone: () => missingParts(request, ws.root),
       signal,
       scheduler: this.o.scheduler,
       job: { projectId: project.id, taskId, label: row.title },

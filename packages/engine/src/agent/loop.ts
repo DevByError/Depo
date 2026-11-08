@@ -21,6 +21,7 @@ import { aliasFor, aliasNote } from "./aliases";
 import { blockCalls, blockResults } from "./blocks";
 import { codeBlocks, dumpInProgress, dumpNudge, isCodeDump } from "./codedump";
 import { type Repetition, RepetitionGuard } from "./repetition";
+import { notDoneNote } from "./request-check";
 import {
   extractTextToolCalls,
   firstCallGroupEnd,
@@ -58,6 +59,8 @@ const STEP_UP_AT = 3;
 const STEP_UP_TRIES = 2;
 /** Sampling after an unreadable reply: careful, so the next call comes out well formed. */
 const CAREFUL_TEMPERATURE = 0.2;
+/** Times the model is asked to go on with parts of the request that are missing. */
+const MAX_DONE_NUDGES = 6;
 /** What stands in the history for a reply that could not be read (small models copy their own broken calls). */
 export const BROKEN_STUB = "(I wrote a tool call that Depo could not read, so nothing ran.)";
 const log = getLogger({ component: "agent" });
@@ -101,6 +104,11 @@ export interface LoopParams {
    * only between steps (before each model call, and before a final answer is accepted).
    */
   inbox?: () => ChatMessage[];
+  /**
+   * What the request names that is not in the code yet (routes, pages). Asked when the model says
+   * it is done, before the finish line: while parts are missing, the model is asked to go on.
+   */
+  checkDone?: () => string[];
   /**
    * Called when the model says it is done (after the test checks): Depo runs the work. `retry`
    * sends the problems back to the model; `append` adds lines to the final answer.
@@ -157,9 +165,20 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
   const changed = new Set<string>();
   let finalText = "";
   let steps = 0;
-  // The model answering now: a larger one takes over while the model is stuck on a step.
+  // The model answering now: a larger one takes over while the model is stuck on a step ("call":
+  // until a call runs) or on Depo's problem report ("report": until it says the fix is done).
   let model = p.model;
   let temperature = p.temperature;
+  let stepUpFor: "call" | "report" | null = null;
+  // Depo's problem report from the finish line, and the calls that ran since it was sent.
+  let reportOpen = false;
+  let lastReport = "";
+  let callsSinceReport = 0;
+  let idleReports = 0;
+  let emptyAnswers = 0;
+  let doneNudges = 0;
+  let doneStalls = 0;
+  let missingBefore: number | null = null;
   // Small models often say "tests passed" when they did not, so check before accepting the end.
   let lastTest = null as { command: string; passed: boolean } | null;
   let editedSinceTest = false;
@@ -345,6 +364,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       emit({ type: "retrying", text: o.event, status: "running" });
       if (p.stepUp && unreadable >= STEP_UP_AT && model !== p.stepUp.model) {
         model = p.stepUp.model;
+        stepUpFor = "call";
         log.warn("stepping up to a larger model", { from: p.model, to: model });
         emit({
           type: "retrying",
@@ -401,8 +421,14 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     }
     if (calls.length === 0 && !dumped) {
       if (repeated || res.finishReason === "length") {
-        // Cut off with no tool call: not a final answer. Show the model where it stopped.
-        history.push({ role: "assistant", content: res.text });
+        // Cut off with no tool call: not a final answer. Show the model where it stopped (without
+        // tool results it wrote itself: it would take them as real next time).
+        history.push({
+          role: "assistant",
+          content: inventsToolResult(res.text)
+            ? withoutInventedResults(res.text) || "(I started writing tool results myself.)"
+            : res.text,
+        });
         history.push({
           role: "user",
           content: repeated
@@ -511,6 +537,52 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         history.push(...notes);
         continue;
       }
+      const more = steps < p.maxSteps;
+      // An empty reply is not an answer: small models stop like this in the middle of the work.
+      if (more && canEdit && !res.text.trim() && emptyAnswers < 2) {
+        emptyAnswers++;
+        emit({
+          type: "retrying",
+          text: "The model stopped without a word. Asking it to go on.",
+          status: "running",
+        });
+        history.push({
+          role: "user",
+          content:
+            "You stopped without saying anything. If the request is not finished, go on with the next part now. When all of it is done and checked, say briefly what you did.",
+        });
+        continue;
+      }
+      // Depo reported problems and nothing has run since: "it works now" is not a fix.
+      if (more && reportOpen && callsSinceReport === 0 && idleReports < 2) {
+        idleReports++;
+        history[history.length - 1] = {
+          role: "assistant",
+          content: "(I answered without changing anything.)",
+        };
+        if (temperature === undefined || temperature > CAREFUL_TEMPERATURE) temperature = CAREFUL_TEMPERATURE;
+        if (p.stepUp && model !== p.stepUp.model) {
+          model = p.stepUp.model;
+          stepUpFor = "report";
+          log.warn("stepping up to a larger model for the problem report", { from: p.model, to: model });
+          emit({
+            type: "retrying",
+            text: `${p.model} answered Depo's problem report without changing anything, so Depo asked ${model} to fix it. Depo goes back to ${p.model} after the fix.`,
+            details: { from: p.model, to: model },
+            status: "running",
+          });
+        } else
+          emit({
+            type: "retrying",
+            text: "The model answered Depo's problem report without changing anything. Asking it to fix the problem.",
+            status: "running",
+          });
+        history.push({
+          role: "user",
+          content: `You changed nothing since Depo's report, so the problem is still there:\n${lastReport}\nDo not say it works until a tool shows it. Read the file the error points to, fix the cause${p.fileBlocks ? " (with a SEARCH/REPLACE block)" : " (with edit_file)"}, and run the failing command again.`,
+        });
+        continue;
+      }
       // A reply made of a tool result the model wrote itself is not an answer.
       if (madeUpResults < 2 && inventsToolResult(res.text)) {
         madeUpResults++;
@@ -555,6 +627,37 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         history.push({ role: "user", content: nudge });
         continue;
       }
+      // Parts of the request that are not in the code yet: go on while that list gets shorter.
+      if (more && canEdit && p.checkDone && doneNudges < MAX_DONE_NUDGES) {
+        const missing = p.checkDone();
+        if (missing.length) {
+          if (missingBefore !== null && missing.length >= missingBefore) doneStalls++;
+          missingBefore = missing.length;
+          if (doneStalls <= 1) {
+            doneNudges++;
+            emit({
+              type: "retrying",
+              text: `Not done yet: ${missing.length} part${missing.length === 1 ? "" : "s"} of the request ${missing.length === 1 ? "is" : "are"} not in the code (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", …" : ""}). Asking the model to go on.`,
+              details: { missing },
+              status: "running",
+            });
+            history.push({ role: "user", content: notDoneNote(missing, !!p.fileBlocks) });
+            continue;
+          }
+        }
+      }
+      // The larger model says its fix is done: the owner's model goes on from here.
+      if (stepUpFor === "report" && model !== p.model) {
+        emit({
+          type: "retrying",
+          text: `${model} finished its fix; Depo checks the app again and goes back to ${p.model}.`,
+          details: { from: model, to: p.model },
+          status: "running",
+        });
+        model = p.model;
+        stepUpFor = null;
+        temperature = p.temperature;
+      }
       let appended = "";
       if (p.beforeFinish && !signal.aborted) {
         const r = await p.beforeFinish({ changed: [...changed] });
@@ -567,8 +670,12 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
           });
           history.push({ role: "user", content: r.retry });
           p.persist({ role: "user", content: r.retry });
+          reportOpen = true;
+          lastReport = reportSummary(r.retry);
+          callsSinceReport = 0;
           continue;
         }
+        reportOpen = false;
         if (r && "append" in r) appended = r.append;
       }
       finalText = res.text.trim();
@@ -591,7 +698,9 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       if (call.name === "edit_file" || call.name === "write_file" || call.name === "append_file")
         editedSinceTest = true;
       const editKey =
-        call.name === "edit_file" ? call.rawArguments || JSON.stringify(call.arguments ?? null) : null;
+        call.name === "edit_file" || call.name === "append_file"
+          ? `${call.name}:${call.rawArguments || JSON.stringify(call.arguments ?? null)}`
+          : null;
       const editPath = editKey ? fileOf(ctx.root, call.arguments) : null;
       const again = !!editKey && !!editPath && edits.get(editKey) === fileHash(editPath);
       if (again)
@@ -647,8 +756,10 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
             ? "\nOne of your SEARCH/REPLACE blocks was not finished, so it was not saved: write it again in full."
             : ""),
       });
+    callsSinceReport += ran;
     // A call ran: the stuck step is over, so the model (and its sampling) are the owner's again.
-    if (ran > 0 && model !== p.model) {
+    // A larger model fixing Depo's problem report keeps going until it says the fix is done.
+    if (ran > 0 && model !== p.model && stepUpFor !== "report") {
       emit({
         type: "retrying",
         text: `${model} got past the step; Depo goes back to ${p.model}.`,
@@ -656,8 +767,9 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
         status: "running",
       });
       model = p.model;
+      stepUpFor = null;
     }
-    if (ran > 0) temperature = p.temperature;
+    if (ran > 0 && stepUpFor !== "report") temperature = p.temperature;
     if (dumpNote) history.push({ role: "user", content: dumpNote });
     else if (repeated)
       history.push({
@@ -732,6 +844,15 @@ const LOOKS = new Set([
 
 const SAME_LOOK =
   "Note from Depo: you already made this exact call and nothing has changed since. Do not make it again: use the result you have. Make your change now (edit_file or write_file), or give your final answer.";
+
+/** The first problem of a finish-line report, short (the model gets the full report once). */
+function reportSummary(report: string): string {
+  const lines = report.split("\n").filter((l) => l.trim());
+  const first = lines.findIndex((l) => /^\s*-\s/.test(l));
+  const pick = first >= 0 ? lines.slice(first, first + 1) : lines.slice(1, 2);
+  const err = lines.find((l) => /\b(error|failed|refused|cannot|not found)\b/i.test(l) && !pick.includes(l));
+  return [...pick, ...(err ? [err.trim()] : [])].join("\n").slice(0, 600);
+}
 
 /** Native calls to made-up tools that clearly mean a real one, renamed (id → the made-up name). */
 function withAliases(

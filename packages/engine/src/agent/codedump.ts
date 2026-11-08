@@ -101,8 +101,12 @@ const PLACEHOLDER = [
   /^\s*(\/\/|#|\/\*|<!--|--|\{\/\*|\*)[^\n]*\b(rest of (the |your )?\w+|existing (code|routes|imports|logic|\w+ code)|same as (before|above)|unchanged|omitted|(goes|go) here|your (code|logic) here|add (your|more|other) |keep (the )?(rest|existing)|previous code)/im,
 ];
 
-const PATH =
-  /(?:^|[\s`*'"(:])((?:[\w@.-]+\/)*[\w@.-]*[\w-]\.[A-Za-z0-9]{1,10}|(?:[\w@.-]+\/)*(?:Dockerfile|Makefile|Procfile))(?=$|[\s`*'"):,])/g;
+// Folders may be Next.js dynamic segments ([id], [...slug]) or route groups ((shop)).
+const DIR = String.raw`(?:(?:[\w@.[\]-]+|\([\w-]+\))\/)*`;
+const PATH = new RegExp(
+  String.raw`(?:^|[\s\`*'"(:])(${DIR}[\w@.-]*[\w-]\.[A-Za-z0-9]{1,10}|${DIR}(?:Dockerfile|Makefile|Procfile))(?=$|[\s\`*'"):,])`,
+  "g",
+);
 
 export function pathIn(line: string): string | null {
   let last: string | null = null;

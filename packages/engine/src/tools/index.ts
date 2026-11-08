@@ -27,6 +27,7 @@ import { REFERENCE_TOOLS, type ReferenceHooks } from "./reference-tools";
 import { findFilesTool, searchTool } from "./search";
 import { classifyCommand } from "./shell/policy";
 import { runShell } from "./shell/run";
+import { foreignKeyProblems } from "./sqlcheck";
 
 export { ToolError } from "./paths";
 
@@ -259,7 +260,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         details: { path: r.path, created: r.created, bytes: r.bytes },
         status: "succeeded",
       });
-      return `${r.created ? "Created" : "Wrote"} ${r.path} (${r.bytes} bytes).`;
+      return `${r.created ? "Created" : "Wrote"} ${r.path} (${r.bytes} bytes).${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -299,7 +300,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         status: "succeeded",
       });
       ctx.readPaths?.add(r.path);
-      return `Applied ${r.applied} edit(s) to ${r.path}.`;
+      return `Applied ${r.applied} edit(s) to ${r.path}.${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -309,6 +310,12 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     schema: z.object({ path: z.string().min(1), content: z.string().min(1) }),
     async run(a, ctx) {
       refuseFolderOrPlaceholder(ctx.root, a.path, a.content);
+      if (onlyComments(a.content, a.path))
+        throw new ToolError(
+          `Nothing was added: that text is only a comment. Add the real content to ${a.path} (for example the CREATE TABLE statements), or go on with the next part of the request.`,
+        );
+      // New tables must match the ones already there (types of the keys they reference).
+      mustHaveRead(ctx, a.path, "adding to");
       const r = appendFileTool(ctx.root, a.path, a.content);
       ctx.readPaths?.add(r.path);
       ctx.onFileChanged?.(r.path);
@@ -318,7 +325,7 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         details: { path: r.path, created: r.created, added: r.added },
         status: "succeeded",
       });
-      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).`;
+      return `${r.created ? "Created" : "Added"} ${r.added} line${r.added === 1 ? "" : "s"} ${r.created ? "in" : "at the end of"} ${r.path} (now ${r.total} lines).${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -734,6 +741,33 @@ export function refuseFolderOrPlaceholder(root: string, rel: string, content: st
     throw new ToolError(
       `Nothing was written: "${content.trim().slice(0, 40)}" is not file content. Write the whole, real content of ${norm} (the code or text the file should hold).`,
     );
+}
+
+/**
+ * Text with nothing but comments and blank lines ("-- Additional tables as needed"). Prose and
+ * data files have no comments ("# Notes" is a Markdown heading), so they never count.
+ */
+export function onlyComments(text: string, rel = ""): boolean {
+  if (/\.(md|mdx|markdown|txt|rst|csv|tsv|json|log)$/i.test(rel)) return false;
+  const body = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*((--|#|\/\/|;).*)?$/.test(l));
+  return body.length === 0;
+}
+
+/** After a .sql file changed: foreign keys MySQL will refuse, as a warning in the tool result. */
+function schemaWarnings(root: string, rel: string): string {
+  if (!/\.sql$/i.test(rel)) return "";
+  try {
+    const problems = foreignKeyProblems(fs.readFileSync(resolveInside(root, rel).abs, "utf8"));
+    return problems.length
+      ? `\nWarning from Depo: the migration will fail. ${problems.join(" ")} Fix it now with an edit to ${rel}.`
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {
