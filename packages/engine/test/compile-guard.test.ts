@@ -6,7 +6,7 @@ import { ApprovalCenter } from "../src/approvals";
 import { openDatabase } from "../src/db";
 import { EventBus } from "../src/events/bus";
 import { createLogger } from "../src/logger";
-import { testRuns } from "../src/readiness/service";
+import { isScriptTest, testRuns } from "../src/readiness/service";
 import { executeTool, type ToolContext } from "../src/tools/index";
 import { codeFrame, compileProblem } from "../src/tools/syntax";
 import { tempDir } from "./helpers";
@@ -202,5 +202,9 @@ describe("the readiness card runs tests where they are", () => {
     ]);
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "bun test" } }));
     expect(testRuns(root, "bun run test")).toEqual([{ cwd: ".", command: "bun run test" }]);
+    // A remembered "bun run test" (learned from the parts' runs) runs in the parts too.
+    expect(isScriptTest("bun run test")).toBe(true);
+    expect(isScriptTest("npm test")).toBe(true);
+    expect(isScriptTest("python -m pytest -q")).toBe(false);
   });
 });

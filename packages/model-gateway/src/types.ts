@@ -47,6 +47,12 @@ export interface ChatRequest {
    * closes, "0" = unload at once). Ollama only; other runtimes ignore it or map it when harmless.
    */
   keepAlive?: string;
+  /**
+   * Ask a thinking model (Qwen3, DeepSeek-R1 and the like) to think first (true) or to answer
+   * straight away (false). Unset leaves it to the model. Ollama only; a model that always thinks
+   * may think anyway, and its thinking then comes as `thinking` chunks.
+   */
+  think?: boolean;
 }
 
 export interface Usage {
@@ -64,6 +70,8 @@ export interface Usage {
 
 export type ChatChunk =
   | { type: "text"; delta: string }
+  /** A thinking model's reasoning before its answer: shown as progress, never part of the answer. */
+  | { type: "thinking"; delta: string }
   | { type: "tool_call"; call: ToolCall }
   | { type: "done"; finishReason: "stop" | "length" | "tool_calls" | "unknown"; usage: Usage | null };
 

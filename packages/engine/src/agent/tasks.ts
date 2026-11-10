@@ -85,6 +85,8 @@ export interface TaskManagerOptions {
   projectSettings?: (projectId: string) => ProjectSettings;
   maxSteps?: number;
   retryDelayMs?: number;
+  /** How long the Manager may think about a team plan, and take for it in all (tests shorten them). */
+  planLimits?: { thinkMs?: number; totalMs?: number };
   /** Skills and MCP tools for team agents (Phase 5). */
   extras?: NonNullable<ConstructorParameters<typeof TeamRunner>[0]["extras"]>;
   /** Active agent manifests from the Agent Lab (Phase 7). */
@@ -172,6 +174,7 @@ export class TaskManager {
       blackboard: this.blackboard,
       retryDelayMs: o.retryDelayMs,
       maxSteps: o.maxSteps,
+      ...(o.planLimits ? { planLimits: o.planLimits } : {}),
       options: () => this.teamOptions(),
       projectSettings: (id) => o.projectSettings?.(id),
       addMessage: (taskId, msg, agent) => this.addMessage(taskId, msg as ChatMessage, undefined, agent),
@@ -677,6 +680,20 @@ export class TaskManager {
     // Everything logged while the task runs carries its id and project.
     const run = withLogContext({ taskId: id, projectId }, () => this.run(id, ctl.signal))
       .catch((err: unknown) => {
+        // The owner pressed Stop and the model call ended with "Cancelled": a stop, not a crash.
+        if (ctl.signal.aborted) {
+          this.log.info("task stopped while a model call was running", { taskId: id });
+          this.setStatus(id, "cancelled");
+          this.o.bus.emit({
+            agent: CODER_AGENT,
+            projectId,
+            taskId: id,
+            type: "info",
+            text: "Stopped by the user",
+            status: "cancelled",
+          });
+          return;
+        }
         this.log.error("task crashed", { taskId: id, err });
         this.fail(id, projectId, err instanceof Error ? err.message : String(err));
       })

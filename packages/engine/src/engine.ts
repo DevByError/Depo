@@ -63,7 +63,7 @@ export interface EngineOptions {
   /** Test hooks for the model manager (fake hardware, fake providers). */
   models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
   /** Test hooks for the agent loop. */
-  tasks?: { maxSteps?: number; retryDelayMs?: number };
+  tasks?: { maxSteps?: number; retryDelayMs?: number; planLimits?: { thinkMs?: number; totalMs?: number } };
   /** Run the finish line after agents finish (default on; DEPO_FINISH_LINE=0 turns it off for tests). */
   finishLine?: boolean;
   /** Test hooks for downloads (GitHub archives, OSV dumps). */
@@ -184,7 +184,13 @@ export function createEngine(opts: EngineOptions): Engine {
     bus,
     logger,
     maxParallel: () => {
-      const v = settings.get("scheduler.max_parallel");
+      // A held job can wake the scheduler after the engine closed its database: one at a time then.
+      let v: unknown;
+      try {
+        v = settings.get("scheduler.max_parallel");
+      } catch {
+        return 1;
+      }
       return typeof v === "number" && v >= 1 ? Math.floor(v) : 1;
     },
     projectCap: (id) => safeSettings(registry, id)?.maxParallel ?? 1,

@@ -6,6 +6,7 @@ import {
   extractJson,
   generateObject,
   type ModelProvider,
+  type StructuredProgress,
 } from "@depo/model-gateway";
 import {
   AGENT_IDS,
@@ -68,6 +69,47 @@ import { applyNoteChange, NoteChangeSchema, noteSystemPrompt, noteUserPrompt } f
 
 const DEFAULT_CONTEXT = 16_384;
 const DIGEST_BUDGET = 4500;
+/**
+ * The Manager's structured answers (the plan, a note, a review read back) are short JSON. A model
+ * that has not started its answer after `thinkMs`, or not finished it after `totalMs`, is stopped
+ * and Depo goes on without it (the plan falls back to the standard steps), so planning never hangs.
+ */
+export const MANAGER_LIMITS = { thinkMs: 3 * 60_000, totalMs: 10 * 60_000 };
+/** Tokens a Manager answer may take: a 15-task plan is about 1,500. */
+const MANAGER_MAX_TOKENS = 4096;
+
+const minutes = (ms: number) =>
+  ms >= 60_000
+    ? `${Math.round(ms / 60_000)} minute${Math.round(ms / 60_000) === 1 ? "" : "s"}`
+    : `${Math.round(ms / 1000)} seconds`;
+
+/** How often the Manager's planning progress is shown. */
+const PROGRESS_EVERY_MS = 2000;
+
+/** "Manager is thinking about the plan (about 420 words, 1 min 20 s)". */
+export function planProgressText(p: StructuredProgress, elapsedMs: number): string {
+  const s = Math.round(elapsedMs / 1000);
+  const time = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+  const again = p.attempt > 1 ? ", fixing its JSON" : "";
+  if (p.textChars > 0)
+    return `Manager is writing the plan (${p.textChars.toLocaleString("en-US")} characters, ${time}${again})`;
+  if (p.thinkingChars > 0) {
+    const words = Math.max(1, Math.round(p.thinkingChars / 6));
+    return `Manager is thinking about the plan (about ${words.toLocaleString("en-US")} words, ${time}${again})`;
+  }
+  return `Manager is reading the request (${time})`;
+}
+
+/** The Manager's model took too long on a structured answer and was stopped. */
+export class ManagerTooSlow extends Error {
+  constructor(
+    readonly model: string,
+    readonly why: string,
+  ) {
+    super(`${model} ${why}`);
+    this.name = "ManagerTooSlow";
+  }
+}
 
 /** What the team needs from the task manager (kept narrow so both can be tested apart). */
 export interface TeamHost {
@@ -82,6 +124,8 @@ export interface TeamHost {
   manifest?: ((id: AgentId) => AgentManifest) | undefined;
   retryDelayMs?: number | undefined;
   maxSteps?: number | undefined;
+  /** Limits for the Manager's structured answers (plan, notes, reviews read back); see MANAGER_LIMITS. */
+  planLimits?: { thinkMs?: number; totalMs?: number } | undefined;
   /** Global team settings (read at run time). */
   options(): {
     approvePlan: boolean;
@@ -784,6 +828,24 @@ export class TeamRunner {
         ]
           .filter(Boolean)
           .join("\n\n");
+        // The plan streams as live progress (one line in the chat and in Activity), so a slow
+        // model shows it is working instead of sitting on "planning" for minutes.
+        const jobId = `manager-plan-${input.taskId}`;
+        const planStart = Date.now();
+        let latest: StructuredProgress = { thinkingChars: 0, textChars: 0, attempt: 1 };
+        // Runtimes send nothing while they read the prompt, so the line ticks on its own too.
+        const ticker = setInterval(() => {
+          emit({
+            type: "planning",
+            text: planProgressText(latest, Date.now() - planStart),
+            details: { jobId, ...latest },
+            ephemeral: true,
+            status: "running",
+          });
+        }, PROGRESS_EVERY_MS);
+        const progress = (p: StructuredProgress) => {
+          latest = p;
+        };
         try {
           const res = await this.callStructured(
             r.provider,
@@ -793,6 +855,7 @@ export class TeamRunner {
             input.text,
             DraftSchema,
             input,
+            progress,
           );
           drafts = sanitizePlan(res, input.mode, template);
           summary = res.summary;
@@ -804,14 +867,33 @@ export class TeamRunner {
               : null;
         } catch (err) {
           if (input.signal.aborted) throw err;
-          standard = "The Manager's plan could not be read, so it kept the standard steps.";
-          emit({
-            type: "warning",
-            text: "The Manager's plan could not be read, so the standard pipeline is used.",
-            details: { error: err instanceof Error ? err.message : String(err) },
-            status: "info",
-          });
+          if (err instanceof ManagerTooSlow) {
+            standard = `The Manager's model (${err.model}) ${err.why}, so Depo kept the standard steps.`;
+            emit({
+              type: "warning",
+              text: `${err.model} ${err.why}, so Depo uses the standard steps and starts the work`,
+              details: { model: err.model, reason: err.why },
+              status: "info",
+            });
+          } else {
+            standard = "The Manager's plan could not be read, so it kept the standard steps.";
+            emit({
+              type: "warning",
+              text: "The Manager's plan could not be read, so the standard pipeline is used.",
+              details: { error: err instanceof Error ? err.message : String(err) },
+              status: "info",
+            });
+          }
           this.h.logger.warn("manager plan failed", { err });
+        } finally {
+          clearInterval(ticker);
+          emit({
+            type: "planning",
+            text: "Manager finished planning",
+            details: { jobId, clear: true },
+            ephemeral: true,
+            status: "succeeded",
+          });
         }
       }
     }
@@ -977,18 +1059,53 @@ export class TeamRunner {
     user: string,
     schema: z.ZodType<T>,
     input: TeamInput,
+    onProgress?: (p: StructuredProgress, elapsedMs: number) => void,
   ): Promise<T> {
-    const run = () =>
-      generateObject(provider, {
-        model,
-        contextLength,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        schema,
-        signal: input.signal,
-      });
+    const limits = { ...MANAGER_LIMITS, ...this.h.planLimits };
+    const run = async () => {
+      // The limits count from when the model starts on it, not from the wait in the queue.
+      const started = Date.now();
+      const ctl = new AbortController();
+      let answering = false;
+      let tooSlow: string | null = null;
+      const stop = (why: string) => {
+        tooSlow = why;
+        ctl.abort();
+      };
+      const thinkTimer = setTimeout(() => {
+        if (!answering) stop(`thought for ${minutes(limits.thinkMs)} without starting its answer`);
+      }, limits.thinkMs);
+      const totalTimer = setTimeout(
+        () => stop(`did not finish its answer in ${minutes(limits.totalMs)}`),
+        limits.totalMs,
+      );
+      try {
+        return await generateObject(provider, {
+          model,
+          contextLength,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          schema,
+          // A short JSON answer: a thinking model answers straight away, and a reply that runs on
+          // (a loop of spaces under the JSON grammar) ends at a length a plan never needs.
+          think: false,
+          maxTokens: MANAGER_MAX_TOKENS,
+          signal: AbortSignal.any([input.signal, ctl.signal]),
+          onProgress: (p) => {
+            if (p.textChars > 0) answering = true;
+            onProgress?.(p, Date.now() - started);
+          },
+        });
+      } catch (err) {
+        if (tooSlow && !input.signal.aborted) throw new ManagerTooSlow(model, tooSlow);
+        throw err;
+      } finally {
+        clearTimeout(thinkTimer);
+        clearTimeout(totalTimer);
+      }
+    };
     const r = await (this.h.scheduler
       ? this.h.scheduler.run(
           {

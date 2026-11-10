@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## First team run (2026-11-10): "Manager is planning the work" for 11 minutes, and drafts that disappeared
+
+- **Found from the owner's run:** in Full system mode qwen3:4b (the reasoning model) was asked for the plan and never answered in 11 minutes; the log shows the job starting and no model call after it. qwen3 thinks before answering, Depo did not turn that off, did not read the thinking (so nothing was shown), and had no limit on the plan call. The owner's Stop was then recorded as a crash. Separately, the chat box lost its text and pictures on a tab change, and a new task's text showed up in the old task.
+- **Built (ADR-0088, ADR-0089):** the Manager answers without thinking, within 3 minutes to start and 10 to finish, or Depo uses the standard steps and says why; a live line shows what the Manager is doing; thinking from Ollama, llama.cpp and LM Studio is read as thinking, never as the answer; Stop is a stop. Each task keeps its own unsent text and pictures, and the new-task box its own. The readiness card's test run, which always failed (it ran a remembered `bun run test` at the top of the copy), now runs in be/ and fe/.
+- **Verified:** `model-gateway/test/thinking.test.ts` (think sent, thinking chunks, the retry without think, reasoning_content, progress, `<think>` in the answer), `engine/test/manager-limits.test.ts` (a Manager that only thinks is stopped and the standard steps start, with the progress line; Stop while planning marks the task stopped), `drafts.test.tsx` (a tab change, a new task and back, sending and the saved text). Not yet tried with the real qwen3:4b on the owner's PC.
+
 ## Plan first, step by step (2026-11-08): "it should work like Claude: show all the process before it starts, add more when needed, and fix everything"
 
 - **Found from the owner's fourth run:** qwen2.5-coder:3b got the whole 6,000-character request at once. It invented tables with names too long for MySQL (`ER_TOO_LONG_IDENT` from the implied foreign key name), wrote `ALTER TABLE IF NOT EXISTS`, called `append_file` without a path, put a Next.js route file in the Bun backend, and stopped with replies that were only "```json". Nothing showed what Depo meant to do or how far it was.

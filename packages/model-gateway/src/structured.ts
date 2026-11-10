@@ -1,12 +1,20 @@
 import { z } from "zod";
 import { collectChat } from "./collect";
 import { ModelGatewayError } from "./errors";
-import type { ChatMessage, ChatRequest, ModelProvider, Usage } from "./types";
+import type { ChatChunk, ChatMessage, ChatRequest, ModelProvider, Usage } from "./types";
 
 export interface StructuredOptions<T> extends Omit<ChatRequest, "jsonSchema" | "tools"> {
   schema: z.ZodType<T>;
   /** Repair attempts after the first try. Default 2. */
   maxRepairs?: number;
+  /** Called as the reply streams: characters of thinking and of answer so far (this attempt). */
+  onProgress?: (p: StructuredProgress) => void;
+}
+
+export interface StructuredProgress {
+  thinkingChars: number;
+  textChars: number;
+  attempt: number;
 }
 
 export interface StructuredResult<T> {
@@ -31,9 +39,11 @@ export async function generateObject<T>(
   let lastError = "";
 
   for (let attempt = 1; attempt <= maxRepairs + 1; attempt++) {
-    const { schema: _schema, maxRepairs: _m, ...rest } = opts;
-    const res = await collectChat(provider.chat({ ...rest, messages, jsonSchema }));
+    const { schema: _schema, maxRepairs: _m, onProgress, ...rest } = opts;
+    const stream = provider.chat({ ...rest, messages, jsonSchema });
+    const res = await collectChat(onProgress ? withProgress(stream, onProgress, attempt) : stream);
     if (res.usage) usage.push(res.usage);
+    res.text = withoutThinking(res.text);
     const raw = extractJson(res.text);
     let parsed: unknown;
     try {
@@ -59,6 +69,37 @@ export async function generateObject<T>(
     undefined,
     lastError,
   );
+}
+
+/** Passes the chunks on and reports how much thinking and answer came so far. */
+async function* withProgress(
+  stream: AsyncIterable<ChatChunk>,
+  onProgress: (p: StructuredProgress) => void,
+  attempt: number,
+): AsyncGenerator<ChatChunk> {
+  let thinkingChars = 0;
+  let textChars = 0;
+  // Some runtimes send the thinking inside the answer, between <think> tags.
+  let text = "";
+  for await (const chunk of stream) {
+    if (chunk.type === "thinking") thinkingChars += chunk.delta.length;
+    else if (chunk.type === "text") {
+      text += chunk.delta;
+      const open = text.lastIndexOf("<think>");
+      if (open < 0) textChars = text.length;
+      else if (text.indexOf("</think>", open) < 0) thinkingChars += chunk.delta.length;
+      else textChars = withoutThinking(text).length;
+    }
+    onProgress({ thinkingChars, textChars, attempt });
+    yield chunk;
+  }
+}
+
+/** The answer without a thinking model's <think>…</think> part (also one that never closed). */
+export function withoutThinking(text: string): string {
+  const out = text.replace(/<think>[\s\S]*?<\/think>/g, "");
+  const open = out.indexOf("<think>");
+  return (open >= 0 ? out.slice(0, open) : out).trim();
 }
 
 /** Pull a JSON object out of a reply that may wrap it in prose or a ``` fence. */

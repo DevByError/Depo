@@ -256,6 +256,8 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
     });
     let streamed = "";
     let lastEmit = 0;
+    let thought = 0;
+    let lastThought = 0;
     // A reply that starts repeating itself is stopped here, without cancelling the task.
     const guard = new RepetitionGuard();
     const loop: { found: Repetition | null } = { found: null };
@@ -322,6 +324,21 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
           }
         },
         runtime,
+        // A thinking model's thinking is not the reply; the waiting line counts it, so a model
+        // that thinks for minutes shows it is working.
+        (delta) => {
+          thought += delta.length;
+          const now = Date.now();
+          if (now - lastThought < 1000) return;
+          lastThought = now;
+          emit({
+            type: "planning",
+            text: `Waiting for ${model} to answer (step ${steps}): thinking, about ${Math.max(1, Math.round(thought / 6)).toLocaleString("en-US")} words`,
+            details: { jobId: `wait-${p.job.taskId}`, step: steps, thinkingChars: thought },
+            ephemeral: true,
+            status: "running",
+          });
+        },
       );
     } finally {
       signal.removeEventListener("abort", relay);
@@ -1016,10 +1033,11 @@ async function chatWithRetry(
   req: Parameters<ModelProvider["chat"]>[0],
   onText: (d: string) => void,
   runtime: { contextLength: number; crashes: number } = { contextLength: req.contextLength ?? 0, crashes: 0 },
+  onThinking?: (d: string) => void,
 ): Promise<ChatResult | { badOutput: string } | null> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const call = () => collectChat(p.provider.chat(req), onText);
+      const call = () => collectChat(p.provider.chat(req), onText, onThinking);
       return await (p.scheduler
         ? p.scheduler.run({ ...p.job, model: req.model, priority: "task" }, call, req.signal)
         : call());

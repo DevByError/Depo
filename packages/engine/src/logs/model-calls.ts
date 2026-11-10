@@ -214,6 +214,7 @@ async function* measuredChat(
   const start = performance.now();
   let firstAt: number | null = null;
   let chars = 0;
+  let thinkingChars = 0;
   let toolCalls = 0;
   let done: Extract<ChatChunk, { type: "done" }> | null = null;
   const ctx = currentLogContext();
@@ -225,6 +226,7 @@ async function* measuredChat(
     tools: req.tools?.length ?? 0,
     contextLength: req.contextLength ?? null,
     keepAlive: req.keepAlive ?? null,
+    ...(req.think !== undefined ? { think: req.think } : {}),
   };
   log.debug("model call started", base);
   const finish = (ok: boolean, err?: unknown) => {
@@ -254,12 +256,14 @@ async function* measuredChat(
       promptTokensPerSec,
       cachedPromptTokens,
       replyChars: chars,
+      ...(thinkingChars ? { thinkingChars } : {}),
       toolCalls,
       finishReason: done?.finishReason ?? null,
       ...(err ? { err } : {}),
     };
     if (ok) log.info("model call", fields);
-    else if (cancelled) log.debug("model call cancelled", fields);
+    // Kept at info: a call stopped after minutes says how far the model got.
+    else if (cancelled) log.info("model call cancelled", fields);
     else log.warn("model call failed", fields);
     if (cancelled) return;
     stats?.record({
@@ -291,6 +295,7 @@ async function* measuredChat(
     for await (const chunk of provider.chat(req)) {
       if (firstAt === null) firstAt = performance.now();
       if (chunk.type === "text") chars += chunk.delta.length;
+      else if (chunk.type === "thinking") thinkingChars += chunk.delta.length;
       else if (chunk.type === "tool_call") toolCalls++;
       else done = chunk;
       yield chunk;

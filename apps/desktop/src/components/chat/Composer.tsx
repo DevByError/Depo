@@ -38,7 +38,7 @@ import {
   pictureDraft,
   releaseDraft,
 } from "@/lib/references";
-import { useComposer } from "@/store/composer";
+import { draftKey, draftOf, useComposer, useDrafts } from "@/store/composer";
 import { useEngine } from "@/store/engine";
 import { useUi } from "@/store/ui";
 
@@ -199,26 +199,37 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const projectId = useUi((s) => s.projectId);
   const setTaskId = useUi((s) => s.setTaskId);
   const qc = useQueryClient();
-  const [text, setText] = useState("");
-  const [mode, setMode] = useState<WorkMode>("single");
+  // The draft belongs to this task (or to the new-task composer of this project): it stays when
+  // the chat screen closes or another task opens, and never shows up in another task.
+  const key = draftKey(projectId, task?.id);
+  const draft = useDrafts((s) => draftOf(s.drafts, key));
+  const updateDraft = useDrafts((s) => s.update);
+  const { text, mode, refs: drafts } = draft;
+  const setText = (v: string) => updateDraft(key, { text: v });
+  const setMode = (m: WorkMode) => updateDraft(key, { mode: m });
+  const keyRef = useRef(key);
+  keyRef.current = key;
   const running = isRunning(task?.status);
   // While the task works, the composer adds a note the agents read at their next step.
   const steering = running && !!task;
   const team = !!task && task.mode !== "single";
   const [sentNote, setSentNote] = useState(false);
   const boxRef = useRef<HTMLTextAreaElement>(null);
-  // Design references waiting to be sent: pictures and links.
-  const [drafts, setDrafts] = useState<DraftReference[]>([]);
+  // Design references waiting to be sent (pictures and links) are part of the draft.
+  const setRefs = (k: string, list: DraftReference[]) => updateDraft(k, { refs: list });
   const [refError, setRefError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkText, setLinkText] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const linkRef = useRef<HTMLInputElement>(null);
-  const draftsRef = useRef(drafts);
-  draftsRef.current = drafts;
-  // Thumbnails are object URLs: free them when the composer goes away.
-  useEffect(() => () => draftsRef.current.forEach(releaseDraft), []);
+  // A switch to another task closes the link box and the last error, which were about this one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the draft's owner changes
+  useEffect(() => {
+    setRefError(null);
+    setLinkOpen(false);
+    setLinkText("");
+  }, [key]);
   useEffect(() => {
     if (linkOpen) linkRef.current?.focus();
   }, [linkOpen]);
@@ -230,8 +241,7 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
     const p = useComposer.getState().take();
     if (!p) return;
     caret.current = p.cursor;
-    setText(p.text);
-    if (p.mode) setMode(p.mode);
+    useDrafts.getState().update(keyRef.current, { text: p.text, ...(p.mode ? { mode: p.mode } : {}) });
   }, [prefilled]);
 
   // "Note sent" shows for a few seconds, then the usual hint comes back.
@@ -258,7 +268,14 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   }, [text]);
 
   const send = useMutation({
-    mutationFn: async (body: string): Promise<{ taskId: string; queued: boolean }> => {
+    mutationFn: async ({
+      body,
+      refs,
+    }: {
+      body: string;
+      key: string;
+      refs: DraftReference[];
+    }): Promise<{ taskId: string; queued: boolean }> => {
       // A working task gets a steering note (it becomes a follow-up if the task just finished).
       if (task && steering) {
         const r = await call("tasks.steer", { taskId: task.id, text: body });
@@ -269,14 +286,14 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
         text: body,
         ...(task ? { taskId: task.id } : {}),
         ...(!task && mode !== "single" ? { mode } : {}),
-        ...(drafts.length ? { references: drafts.map((d) => d.input) } : {}),
+        ...(refs.length ? { references: refs.map((d) => d.input) } : {}),
       });
       return { taskId: t.id, queued: false };
     },
-    onSuccess: (r) => {
-      setText("");
-      for (const d of drafts) releaseDraft(d);
-      setDrafts([]);
+    onSuccess: (r, sent) => {
+      // Only the draft that was sent is cleared (the owner may have opened another task since).
+      for (const d of sent.refs) releaseDraft(d);
+      useDrafts.getState().clear(sent.key);
       setRefError(null);
       setLinkOpen(false);
       setTaskId(r.taskId);
@@ -297,7 +314,7 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const tooLong = steering && body.length > STEER_MAX_CHARS;
   const canSend = connected && !!projectId && body.length > 0 && !tooLong && !send.isPending;
   const submit = () => {
-    if (canSend) send.mutate(body);
+    if (canSend) send.mutate({ body, key, refs: steering ? [] : drafts });
   };
 
   const addPictures = async (files: File[]) => {
@@ -306,7 +323,9 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
       return;
     }
     setRefError(null);
-    let list = draftsRef.current;
+    // Pictures load one by one: they go to the draft that was open when they were added.
+    const k = key;
+    let list = draftOf(useDrafts.getState().drafts, k).refs;
     for (const f of files) {
       const full = limitReason(list, "image");
       if (full) {
@@ -315,8 +334,8 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
       }
       try {
         const d = await pictureDraft(f);
-        list = [...list, d];
-        setDrafts(list);
+        list = [...draftOf(useDrafts.getState().drafts, k).refs, d];
+        setRefs(k, list);
       } catch (err) {
         setRefError(err instanceof Error ? err.message : String(err));
       }
@@ -328,7 +347,7 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
       setRefError("That does not look like a web address. Try something like https://example.com.");
       return false;
     }
-    const list = draftsRef.current;
+    const list = draftOf(useDrafts.getState().drafts, key).refs;
     if (list.some((d) => d.input.kind === "link" && d.input.url === url)) return true;
     const full = limitReason(list, "link");
     if (full) {
@@ -336,13 +355,16 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
       return false;
     }
     setRefError(null);
-    setDrafts([...list, linkDraft(url)]);
+    setRefs(key, [...list, linkDraft(url)]);
     return true;
   };
-  const removeDraft = (key: string) => {
-    const d = drafts.find((x) => x.key === key);
+  const removeDraft = (refKey: string) => {
+    const d = drafts.find((x) => x.key === refKey);
     if (d) releaseDraft(d);
-    setDrafts(drafts.filter((x) => x.key !== key));
+    setRefs(
+      key,
+      drafts.filter((x) => x.key !== refKey),
+    );
     setRefError(null);
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {

@@ -143,6 +143,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
         const choice = json.choices?.[0];
         if (!choice) continue;
         const delta = choice.delta ?? {};
+        // llama.cpp and LM Studio send a thinking model's reasoning apart from its answer.
+        const reasoning = delta.reasoning_content ?? delta.reasoning;
+        if (typeof reasoning === "string" && reasoning.length > 0)
+          yield { type: "thinking", delta: reasoning };
         if (typeof delta.content === "string" && delta.content.length > 0)
           yield { type: "text", delta: delta.content };
         for (const tc of delta.tool_calls ?? []) {
@@ -177,6 +181,8 @@ interface OpenAIChunk {
   choices?: {
     delta?: {
       content?: string | null;
+      reasoning_content?: string | null;
+      reasoning?: string | null;
       tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
     };
     finish_reason?: string | null;

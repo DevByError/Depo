@@ -806,7 +806,12 @@ export class ReadinessService implements ReadinessHooks {
     });
     const timeoutMs = this.o.testTimeoutMs ?? TEST_TIMEOUT_MS;
     // A project in parts (fe/, be/) has its tests in the parts, not at the top: run each there.
-    const runs = cmd.source === "memory" ? [{ cwd: ".", command: cmd.command }] : testRuns(root, cmd.command);
+    // A remembered "bun run test" is such a command too (it was learned from the parts' runs);
+    // only another remembered command (pytest, go test …) runs at the top as it is.
+    const runs =
+      cmd.source === "memory" && !isScriptTest(cmd.command)
+        ? [{ cwd: ".", command: cmd.command }]
+        : testRuns(root, cmd.command);
     const results: Awaited<ReturnType<typeof runShell>>[] = [];
     for (const r of runs) {
       const one = await runShell({
@@ -989,6 +994,11 @@ export class ReadinessService implements ReadinessHooks {
       message: `Scanned the private copy: ${r.score.overall}/100${serious ? `, ${serious} high or critical finding${serious === 1 ? "" : "s"}` : ", nothing high or critical"}.`,
     };
   }
+}
+
+/** "bun run test", "npm test", "pnpm run test" …: a package's test script. */
+export function isScriptTest(command: string): boolean {
+  return /^(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?test\b/i.test(command.trim());
 }
 
 /**

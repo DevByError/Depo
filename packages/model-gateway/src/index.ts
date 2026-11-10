@@ -7,5 +7,12 @@ export * from "./keep-alive";
 export { OllamaProvider, PARSE_ERROR } from "./ollama";
 export { OpenAICompatibleProvider } from "./openai-compatible";
 export { createProvider, DEFAULT_PROVIDERS, isLocalUrl, type ProviderConfig } from "./registry";
-export { extractJson, generateObject, type StructuredOptions, type StructuredResult } from "./structured";
+export {
+  extractJson,
+  generateObject,
+  type StructuredOptions,
+  type StructuredProgress,
+  type StructuredResult,
+  withoutThinking,
+} from "./structured";
 export * from "./types";

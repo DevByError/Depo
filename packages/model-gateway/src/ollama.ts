@@ -184,13 +184,24 @@ export class OllamaProvider implements ModelProvider {
       }));
     }
     if (req.jsonSchema) body.format = req.jsonSchema;
+    if (req.think !== undefined) body.think = req.think;
 
-    const res = await request(this.url("/api/chat"), {
-      kind: this.kind,
-      signal: req.signal,
-      body,
-      timeoutMs: req.firstByteTimeoutMs ?? DEFAULT_FIRST_BYTE_MS,
-    });
+    const send = () =>
+      request(this.url("/api/chat"), {
+        kind: this.kind,
+        signal: req.signal,
+        body,
+        timeoutMs: req.firstByteTimeoutMs ?? DEFAULT_FIRST_BYTE_MS,
+      });
+    let res: Response;
+    try {
+      res = await send();
+    } catch (err) {
+      // An Ollama that refuses `think` for this model (or does not know it) answers without it.
+      if (body.think === undefined || !isThinkRefusal(err)) throw err;
+      delete body.think;
+      res = await send();
+    }
 
     let sawTool = false;
     try {
@@ -215,6 +226,8 @@ export class OllamaProvider implements ModelProvider {
             );
           throw new ModelGatewayError("http", `Ollama: ${j.error}`);
         }
+        const thinking = j.message?.thinking;
+        if (typeof thinking === "string" && thinking.length > 0) yield { type: "thinking", delta: thinking };
         const content = j.message?.content;
         if (typeof content === "string" && content.length > 0) yield { type: "text", delta: content };
         for (const tc of j.message?.tool_calls ?? []) {
@@ -246,8 +259,22 @@ export class OllamaProvider implements ModelProvider {
   }
 }
 
+/** Ollama's 400 for `think` on a model it does not see as a thinking model. */
+function isThinkRefusal(err: unknown): boolean {
+  return (
+    err instanceof ModelGatewayError &&
+    err.kind === "http" &&
+    err.status === 400 &&
+    /think/i.test(`${err.message} ${err.detail ?? ""}`)
+  );
+}
+
 interface OllamaChunk {
-  message?: { content?: string; tool_calls?: { function?: { name?: string; arguments?: unknown } }[] };
+  message?: {
+    content?: string;
+    thinking?: string;
+    tool_calls?: { function?: { name?: string; arguments?: unknown } }[];
+  };
   done?: boolean;
   done_reason?: string;
   prompt_eval_count?: number;

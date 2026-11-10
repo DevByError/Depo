@@ -257,11 +257,17 @@ function useLive(taskId: string): { stream: string | null; step: LiveStep | null
     // "Waiting for qwen3-coder:30b to answer (step 4)" reads as plain "Thinking" in the chat.
     const waiting =
       step?.type === "planning" && step.ephemeral && /^Waiting for .+ to answer/.test(step.text);
+    // A thinking model says how far its thinking got ("Thinking, about 300 words").
+    const thought = waiting ? step?.details?.thinkingChars : undefined;
+    const thinking =
+      typeof thought === "number" && thought > 0
+        ? `Thinking, about ${Math.max(1, Math.round(thought / 6)).toLocaleString("en-US")} words`
+        : "Thinking";
     const live: LiveStep | null =
       streamAt > stepAt
         ? { text: "Writing a reply", agent: events[streamAt]?.agent ?? null }
         : step
-          ? { text: waiting ? "Thinking" : step.text, agent: step.agent }
+          ? { text: waiting ? thinking : step.text, agent: step.agent }
           : null;
     return { stream, step: live };
   }, [events, taskId]);
