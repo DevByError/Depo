@@ -307,6 +307,8 @@ export const handlers: Handlers = {
   "changes.apply": (p, ctx) => ctx.projects.applyChangeSet(p.id, ctx.projects.workspaceFor(p.id), p.files),
   "changes.discard": async (p, ctx) => {
     const cs = ctx.projects.discardChangeSet(p.id);
+    // The discarded work leaves the task's private copy too: the next message starts clean.
+    if (cs.taskId) ctx.tasks.resetCopy(cs.taskId);
     // Facts read from the discarded work no longer hold; a reason becomes a preference.
     if (ctx.tasks.autoMemory?.enabled()) {
       const root = (await ctx.projects.list(true)).find((x) => x.id === cs.projectId)?.rootPath ?? null;
@@ -538,6 +540,7 @@ export const handlers: Handlers = {
       p.destDir,
     ),
   "logs.openFolder": (_p, ctx) => needLogs(ctx).openFolder(),
+  "logs.clear": (_p, ctx) => needLogs(ctx).clear(),
   "models.stats": (p, ctx) => ({
     calls: needLogs(ctx).stats.recent(p.limit),
     models: needLogs(ctx).stats.summary(),

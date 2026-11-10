@@ -1,5 +1,5 @@
 import type { DesignReference, WorkMode } from "@depo/shared";
-import { writeBlueprint } from "../blueprints";
+import { findBlueprint, isBlankProject, writeBlueprint } from "../blueprints";
 import { pickBlueprint } from "../blueprints/plan";
 import type { Blueprint } from "../blueprints/types";
 import { applyTheme, type ThemeTokens } from "../references/theme";
@@ -32,8 +32,12 @@ export function kickstart(o: {
   references: DesignReference[];
   /** True when the references were studied in this run (the theme is only written then). */
   newReferences: boolean;
+  /** The blueprint the owner chose when creating the project (project setting `starter`). */
+  starter?: string;
 }): KickstartResult | null {
-  const blueprint = pickBlueprint(o.mode, o.text, o.root);
+  // The owner's chosen starting point goes into an empty copy whatever the request says.
+  const chosen = o.starter && isBlankProject(o.root) ? (findBlueprint(o.starter) ?? null) : null;
+  const blueprint = chosen ?? pickBlueprint(o.mode, o.text, o.root);
   const files = blueprint
     ? writeBlueprint(o.root, blueprint, { name: o.projectName }).map((f) => f.path)
     : [];

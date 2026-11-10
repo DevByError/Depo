@@ -113,6 +113,34 @@ describe("run recipes", () => {
     expect(again?.missing).toBeNull();
   });
 
+  test("a dev script that fixes its own port runs on the port Depo picks instead", async () => {
+    const root = project({
+      "package.json": pkg({ scripts: { dev: "next dev --turbopack -p 3000" }, dependencies: { next: "15" } }),
+      "node_modules/.keep": "",
+    });
+    expect((await detectRecipes(root)).recipes[0]?.command).toBe(
+      "npx next dev --turbopack -p {port} -H 127.0.0.1",
+    );
+    const vite = project({
+      "package.json": pkg({ scripts: { dev: "vite --port=5173" }, devDependencies: { vite: "8" } }),
+      "index.html": "<!doctype html>",
+      "node_modules/.keep": "",
+      "bun.lock": "",
+    });
+    expect((await detectRecipes(vite)).recipes[0]?.command).toBe(
+      "bunx vite --port={port} --host 127.0.0.1 --strictPort",
+    );
+    // Anything more than one plain command runs as written.
+    const chained = project({
+      "package.json": pkg({
+        scripts: { dev: "next build && next dev -p 3000" },
+        dependencies: { next: "15" },
+      }),
+      "node_modules/.keep": "",
+    });
+    expect((await detectRecipes(chained)).recipes[0]?.command).toBe("npm run dev");
+  });
+
   test("Vite", async () => {
     const root = project({
       "package.json": pkg({ scripts: { dev: "vite", build: "vite build" }, devDependencies: { vite: "8" } }),

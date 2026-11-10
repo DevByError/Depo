@@ -45,6 +45,7 @@ import {
   type PageEvidence,
   pageCheck,
   pageEvidence,
+  pageUxScore,
   planCheck,
   type ReviewEvidence,
   requestCheck,
@@ -71,7 +72,7 @@ import {
 /** What the task manager and the team runner call (kept narrow so they stay testable apart). */
 export interface ReadinessHooks {
   /** A task reached review with a change set: record the readiness decision once. */
-  atReview(o: { projectId: string; taskId: string; changeSetId: string }): void;
+  atReview(o: { projectId: string; taskId: string; changeSetId: string }): Promise<void> | void;
   /** A short note for a reviewer: the verdict so far and the failing checks (null when unknown). */
   reviewBrief(taskId: string): string | null;
   /** The verdict for the team's release decision, from the live diff of the private copy. */
@@ -138,6 +139,8 @@ export interface ReadinessServiceOptions {
   diagnostics?: DiagnosticsSource;
   /** How long a test run may take (default 10 minutes). */
   testTimeoutMs?: number;
+  /** How long the code checks at review may take before the decision is recorded without them (default 4 minutes). */
+  codeCheckTimeoutMs?: number;
   /** How long to wait for the app to start before a page check (default 2 minutes). */
   previewTimeoutMs?: number;
 }
@@ -162,6 +165,7 @@ const EVIDENCE_TYPES = [
   "decision",
 ];
 const TEST_TIMEOUT_MS = 10 * 60_000;
+const CODE_CHECK_TIMEOUT_MS = 4 * 60_000;
 const PREVIEW_TIMEOUT_MS = 120_000;
 /** File times within this margin of a run count as written by the run itself (snapshots, caches). */
 const MTIME_SLACK_MS = 2000;
@@ -550,10 +554,12 @@ export class ReadinessService implements ReadinessHooks {
       checks.push(
         securityCheck({ copy: sec.copy, project: sec.project, changedAfter, action: act.security, now }),
       );
-    if (want("ux"))
-      checks.push(
-        uxCheck({ ui, score: this.boardScore(projectId, taskId, "scores/ux.json"), changedAfter, now }),
-      );
+    if (want("ux")) {
+      // The UX agent's score for this change first, else Depo's own page check of this copy.
+      const board = this.boardScore(projectId, taskId, "scores/ux.json");
+      const score = board?.scope === "copy" ? board : page ? pageUxScore(page) : board;
+      checks.push(uxCheck({ ui, score, changedAfter, now }));
+    }
     if (want("page")) checks.push(pageCheck({ page, ui, changedAfter, action: act.page, now }));
     if (want("request")) {
       const parts = this.requestParts(row, root);
@@ -655,7 +661,8 @@ export class ReadinessService implements ReadinessHooks {
 
   // ---- hooks for the task manager and the team ---------------------------------------------------
 
-  atReview(o: { projectId: string; taskId: string; changeSetId: string }): void {
+  async atReview(o: { projectId: string; taskId: string; changeSetId: string }): Promise<void> {
+    await this.codeChecksAtReview(o);
     try {
       const row = this.task(o.taskId);
       const cs = this.o.changeSet(o.changeSetId);
@@ -691,6 +698,42 @@ export class ReadinessService implements ReadinessHooks {
     } catch (err) {
       // Readiness never stops a task from reaching review.
       this.log.warn("readiness at review failed", { taskId: o.taskId, err });
+    }
+  }
+
+  /**
+   * Code checks are never left unrun: at review Depo runs the installed compilers and linters on
+   * the task's copy (a few minutes at most), so the readiness decision has them.
+   */
+  private async codeChecksAtReview(o: { projectId: string; taskId: string }): Promise<void> {
+    const run = this.o.diagnostics?.run;
+    if (!run) return;
+    const jobId = `code-checks-${o.taskId}`;
+    const line = (text: string, clear = false) =>
+      this.o.bus.emit({
+        agent: "engine",
+        projectId: o.projectId,
+        taskId: o.taskId,
+        type: "linting",
+        text,
+        details: { jobId, ...(clear ? { clear: true } : {}) },
+        status: clear ? "succeeded" : "running",
+        ephemeral: true,
+      });
+    line("Depo is running the code checks on the private copy");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        run.call(this.o.diagnostics, o.projectId, o.taskId),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, this.o.codeCheckTimeoutMs ?? CODE_CHECK_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (err) {
+      this.log.warn("code checks at review failed", { taskId: o.taskId, err });
+    } finally {
+      clearTimeout(timer);
+      line("Depo finished the code checks", true);
     }
   }
 

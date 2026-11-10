@@ -242,7 +242,12 @@ export interface StepPromptInput {
   blocks: boolean;
   /** Characters of file content the prompt may hold. */
   budget: number;
+  /** The owner's design references (pictures and links), as the brief every agent reads. */
+  design?: string;
 }
+
+/** Steps that make something the owner sees, so the design references apply to them. */
+const LOOKS = new Set(["page", "build", "fix"]);
 
 /** The step prompt, and the files it shows (they count as read). */
 export function stepPrompt(o: StepPromptInput): { text: string; shown: string[] } {
@@ -259,6 +264,13 @@ export function stepPrompt(o: StepPromptInput): { text: string; shown: string[] 
   if (step.notes.trim()) lines.push("", "Notes for this part of the request:", clip(step.notes, 1500));
   if (plan.overview.trim())
     lines.push("", "About the whole project (from the request):", clip(plan.overview, 1800));
+  const design = o.design?.trim() ?? "";
+  if (design && LOOKS.has(step.kind))
+    lines.push(
+      "",
+      "The owner's design references (make what this step builds look like this):",
+      clip(design, 2500),
+    );
   lines.push(
     "",
     `Done before this step: ${o.done.length ? o.done.join("; ") : "nothing yet"}.`,

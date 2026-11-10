@@ -69,6 +69,8 @@ export interface DiagnosticsResult {
 /** The optional diagnostics source. A missing source or a null result means "not run". */
 export interface DiagnosticsSource {
   latest(projectId: string, taskId: string | null): DiagnosticsResult | null;
+  /** Runs the installed compilers and linters on the task's copy (at review, so code checks are never left unrun). */
+  run?(projectId: string, taskId: string): Promise<unknown>;
 }
 
 /** A security scan or a UX audit score. */
@@ -83,6 +85,8 @@ export interface ScoreEvidence {
   /** copy: this task's private copy (or a score written during this task); project: anything else. */
   scope: "copy" | "project";
   tools: string[];
+  /** "page": worked out by Depo from its page check (no UX agent scored this change). */
+  source?: "page";
 }
 
 /** A page check, from the stored check or (when the copy is gone) its event. */
@@ -253,7 +257,19 @@ export function codeCheck(o: {
         ? "Code checks have not run on this change."
         : "Code checks are not available in this engine.",
     );
-  const tools = r.tools.length ? `Checked with ${r.tools.join(", ")}` : null;
+  if (!r.tools.length)
+    return check(
+      "code",
+      "not_run",
+      "No compiler or linter for this project's languages is installed, so nothing checked the code.",
+      {
+        evidence: [
+          r.skipped.length ? `Not installed: ${r.skipped.join(", ")}` : null,
+          `Looked ${when(r.at, o.now)}`,
+        ],
+      },
+    );
+  const tools = `Checked with ${r.tools.join(", ")}`;
   const evidence = [
     tools,
     `${plural(r.counts.error, "error")}, ${plural(r.counts.warning, "warning")}`,
@@ -385,25 +401,26 @@ export function uxCheck(o: {
     });
   const facts = [
     `Score ${s.score}/100${s.grade ? ` (${s.grade})` : ""}`,
+    ...(s.source === "page"
+      ? [
+          `From Depo's page check: accessibility, console errors, failed requests and loading${s.tools.length ? ` at ${s.tools.join(", ")} width` : ""}`,
+        ]
+      : []),
     `Scored ${when(s.at, o.now)}`,
     filesLine,
   ];
   const mine = s.scope === "copy";
+  const what = s.source === "page" ? "The UX score from Depo's page check" : "The UX score";
   if (s.blocks)
     return check("ux", "fail", `The UX score is ${s.score}/100, which blocks the release.`, {
       evidence: facts,
       reason: `the UX score blocks the release (${s.score}/100)`,
     });
   if (s.score < 80)
-    return check(
-      "ux",
-      "warn",
-      `The UX score is ${s.score}/100.${mine ? "" : " It is from an earlier task."}`,
-      {
-        evidence: facts,
-        reason: `UX score ${s.score}/100`,
-      },
-    );
+    return check("ux", "warn", `${what} is ${s.score}/100.${mine ? "" : " It is from an earlier task."}`, {
+      evidence: facts,
+      reason: `UX score ${s.score}/100`,
+    });
   if (!mine)
     return check(
       "ux",
@@ -412,14 +429,44 @@ export function uxCheck(o: {
       { evidence: facts },
     );
   if (o.changedAfter(s.at))
-    return check("ux", "stale", `The UX score was ${s.score}/100, but files changed after it.`, {
+    return check("ux", "stale", `${what} was ${s.score}/100, but files changed after it.`, {
       evidence: facts,
       reason: "the UX score is older than the last change",
     });
-  return check("ux", "pass", `The UX score is ${s.score}/100.`, {
+  return check("ux", "pass", `${what} is ${s.score}/100.`, {
     evidence: facts,
     reason: `UX score ${s.score}/100`,
   });
+}
+
+/**
+ * A UX score Depo works out from its own page check when no UX agent scored the change: the page
+ * loads at every width, no accessibility problems, no console errors, no failed requests. It
+ * never blocks a release on its own (the page check already fails for a page that breaks).
+ */
+export function pageUxScore(p: PageEvidence): ScoreEvidence {
+  let score = 100;
+  if (!p.loaded) score -= 40;
+  score -= Math.min(45, p.critical * 15);
+  score -= Math.min(32, p.serious * 8);
+  if (p.consoleErrors > 0) score -= Math.min(20, 10 + (p.consoleErrors - 1) * 5);
+  score -= Math.min(20, p.serverFailures * 10);
+  score -= Math.min(10, p.clientFailures * 3);
+  score -= Math.min(10, p.blocked * 5);
+  score = Math.max(0, Math.round(score));
+  const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 65 ? "C" : score >= 50 ? "D" : "F";
+  return {
+    at: p.at,
+    score,
+    grade,
+    blocks: false,
+    critical: p.critical,
+    high: p.serious,
+    findings: p.critical + p.serious + p.consoleErrors + p.serverFailures + p.clientFailures + p.blocked,
+    scope: "copy",
+    tools: p.widths,
+    source: "page",
+  };
 }
 
 // ---- Page check ------------------------------------------------------------------------------

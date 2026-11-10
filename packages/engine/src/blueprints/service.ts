@@ -17,38 +17,49 @@ export interface CreateFromBlueprintParams {
 }
 
 export interface BlueprintServiceDeps {
-  registry: Pick<ProjectRegistry, "create">;
+  registry: Pick<ProjectRegistry, "create" | "setSettings">;
   memory: Pick<MemoryStore, "add">;
   logger?: Logger;
 }
 
 /**
- * A new project folder from a blueprint: the files, then (when git is installed and allowed) a
- * repository with a first commit, then the project registered with origin "created".
+ * A new project with a blueprint as its starting point. The folder gets only a README (and a git
+ * repository when allowed): the first task writes the blueprint into its private copy and builds
+ * the request on it, so the starting project and the work arrive in the folder together, in one
+ * review, and nothing is left behind when that work is stopped or discarded (ADR-0091).
+ * `writeFiles` keeps the old behaviour (the blueprint written into the folder and committed).
  */
 export async function createFromBlueprint(
-  p: CreateFromBlueprintParams,
+  p: CreateFromBlueprintParams & { writeFiles?: boolean },
   deps: BlueprintServiceDeps,
 ): Promise<{ project: Project; files: number; git: BlueprintGit }> {
   const blueprint = findBlueprint(p.id);
   if (!blueprint) throw new Error(`There is no blueprint called "${p.id}".`);
   const log = deps.logger ?? getLogger({ component: "blueprints" });
-  let files = 0;
-  let git: BlueprintGit = "skipped";
+  let files = blueprint.files({ name: p.name, description: p.description }).length;
+  let git: BlueprintGit = p.initGit === false ? "skipped" : "initialized";
   const project = await deps.registry.create({
     name: p.name,
     parentDir: p.parentDir,
     ...(p.description?.trim() ? { description: p.description.trim() } : {}),
     stack: blueprint.stack.join(", "),
-    populate: async (dest) => {
-      files = writeBlueprint(dest, blueprint, { name: p.name, description: p.description }).length;
-      if (p.initGit !== false) git = await startRepository(dest, blueprint, log);
-    },
+    ...(p.initGit === false ? { initGit: false } : {}),
+    ...(p.writeFiles
+      ? {
+          populate: async (dest: string) => {
+            files = writeBlueprint(dest, blueprint, { name: p.name, description: p.description }).length;
+            git = p.initGit !== false ? await startRepository(dest, blueprint, log) : "skipped";
+          },
+        }
+      : {}),
   });
+  if (!p.writeFiles) deps.registry.setSettings(project.id, { starter: blueprint.id });
   deps.memory.add(
     project.id,
     "decision",
-    `Started from Depo's ${blueprint.title} blueprint (${blueprint.id}). Run: ${blueprint.runCommand}. Test: ${blueprint.testCommand}. Its extend guide: list_blueprints with id ${blueprint.id}.`,
+    p.writeFiles
+      ? `Started from Depo's ${blueprint.title} blueprint (${blueprint.id}). Run: ${blueprint.runCommand}. Test: ${blueprint.testCommand}. Its extend guide: list_blueprints with id ${blueprint.id}.`
+      : `The owner chose Depo's ${blueprint.title} blueprint (${blueprint.id}) as the starting point: the first task writes it into its private copy and builds the request on it. Run: ${blueprint.runCommand}. Test: ${blueprint.testCommand}.`,
     "system",
   );
   log.info("project created from a blueprint", {
@@ -56,6 +67,7 @@ export async function createFromBlueprint(
     blueprint: blueprint.id,
     files,
     git,
+    written: !!p.writeFiles,
   });
   return { project, files, git };
 }

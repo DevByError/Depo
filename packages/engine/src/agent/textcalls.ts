@@ -350,9 +350,12 @@ export function fixBadEscapes(s: string): string {
 export function unknownToolCalls(text: string, toolNames: string[]): string[] {
   const known = new Set(toolNames);
   const names = new Set<string>();
+  const tail = openTail(text);
   const sources = [
     ...[...text.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)].map((m) => m[1] ?? ""),
     ...jsonObjects(text),
+    // A call left open at the end (the model stopped before closing it).
+    ...(tail ? [tail] : []),
   ];
   for (const json of sources) {
     const j = parseLoose(json);

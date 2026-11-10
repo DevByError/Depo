@@ -12,6 +12,7 @@ import {
   NotificationSetting,
   PreviewSetting,
   StepUpSetting,
+  StopSetting,
   TeamSettings,
   UpdateSetting,
 } from "./SettingsSections";
@@ -76,6 +77,7 @@ export function SettingsDialog() {
           <TeamSettings />
           <MemorySetting />
           <PreviewSetting />
+          <StopSetting />
           <NotificationSetting />
           <UpdateSetting />
 

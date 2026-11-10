@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { redact } from "./redact";
 
@@ -72,6 +72,8 @@ export interface Logger {
   flush(): void;
   /** Lines written after `cursor` (a seq), newest last, from the in-memory ring. */
   tail(cursor: number, max?: number): { entries: TailEntry[]; cursor: number; reset: boolean };
+  /** Delete the old log files and empty the current one (the owner's "Clear logs"). */
+  clear(): { removed: number; bytes: number };
   /** Components written to during this run. */
   components(): string[];
   /** Seq of the newest line (the live tail continues after it). */
@@ -291,6 +293,30 @@ class LogSink {
     this.size = 0;
   }
 
+  /** The rotated files go and the current file starts empty; lines written from now on are kept. */
+  clear(): { removed: number; bytes: number } {
+    this.flush();
+    let removed = 0;
+    let bytes = 0;
+    const drop = (file: string, truncate: boolean) => {
+      try {
+        if (!existsSync(file)) return;
+        const size = statSync(file).size;
+        if (truncate) writeFileSync(file, "", "utf8");
+        else rmSync(file, { force: true });
+        bytes += size;
+        removed++;
+      } catch {
+        // A file held open elsewhere stays; the next clear tries again.
+      }
+    };
+    for (let i = 1; i <= this.maxFiles + 5; i++) drop(`${this.base}.${i}.log`, false);
+    drop(this.file, true);
+    this.size = 0;
+    this.ring.length = 0;
+    return { removed, bytes };
+  }
+
   tail(cursor: number, max: number): { entries: TailEntry[]; cursor: number; reset: boolean } {
     const first = this.ring[0]?.seq ?? this.seq + 1;
     // A cursor from an older engine run (seq restarted) or one that fell out of the ring.
@@ -367,6 +393,7 @@ function makeLogger(sink: LogSink, bindings: LogContext): Logger {
     child: (b) => makeLogger(sink, { ...bindings, ...b }),
     flush: () => sink.flush(),
     tail: (cursor, max = 1000) => sink.tail(cursor, max),
+    clear: () => sink.clear(),
     components: () => sink.components(),
   };
   return logger;
@@ -416,6 +443,7 @@ export function getLogger(bindings: LogContext): Logger {
     child: (b) => getLogger({ ...bindings, ...b }),
     flush: () => defaultLogger?.flush(),
     tail: (cursor, max) => defaultLogger?.tail(cursor, max) ?? { entries: [], cursor: 0, reset: false },
+    clear: () => defaultLogger?.clear() ?? { removed: 0, bytes: 0 },
     components: () => defaultLogger?.components() ?? [],
   };
 }

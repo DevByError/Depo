@@ -37,6 +37,7 @@ import {
   isAfter,
   pageCheck,
   pageEvidence,
+  pageUxScore,
   planCheck,
   type ReviewEvidence,
   reviewsCheck,
@@ -360,6 +361,37 @@ describe("UX check", () => {
     expect(older.summary).toContain("this change was not scored");
     expect(uxCheck({ ui, score: score({ score: 90 }), changedAfter: changedAt(T(-1)) }).state).toBe("stale");
     expect(uxCheck({ ui, score: score({ score: 90 }), changedAfter: never }).state).toBe("pass");
+  });
+
+  test("with no UX agent, Depo's page check gives the score", () => {
+    const ui = ["fe/app/page.tsx"];
+    const page = {
+      at: T(0),
+      url: "http://127.0.0.1:3000/",
+      widths: ["phone", "tablet", "desktop"],
+      loaded: true,
+      consoleErrors: 0,
+      firstConsoleError: null,
+      serverFailures: 0,
+      clientFailures: 0,
+      blocked: 0,
+      firstFailure: null,
+      critical: 0,
+      serious: 0,
+      by: "Depo",
+    };
+    const clean = uxCheck({ ui, score: pageUxScore(page), changedAfter: never });
+    expect(clean.state).toBe("pass");
+    expect(clean.summary).toBe("The UX score from Depo's page check is 100/100.");
+    expect(clean.evidence).toContain(
+      "From Depo's page check: accessibility, console errors, failed requests and loading at phone, tablet, desktop width",
+    );
+    // Two serious accessibility problems and a console error: 100 - 16 - 10.
+    const rough = pageUxScore({ ...page, serious: 2, consoleErrors: 1 });
+    expect(rough).toMatchObject({ score: 74, grade: "C", blocks: false, high: 2 });
+    expect(uxCheck({ ui, score: rough, changedAfter: never }).state).toBe("warn");
+    // A page that does not load scores low but never blocks on its own (the page check fails it).
+    expect(pageUxScore({ ...page, loaded: false, critical: 2 })).toMatchObject({ score: 30, blocks: false });
   });
 });
 
@@ -844,8 +876,14 @@ describe("the report from stored evidence", () => {
       detail: "bun test in the private copy",
       running: false,
     });
-    // The engine wires the diagnostics service in; nothing has checked this copy yet.
-    expect(checks.code?.summary).toBe("Code checks have not run on this change.");
+    // The engine runs the code checks at review; this copy has no compiler or linter installed.
+    expect(checks.code?.state).toBe("not_run");
+    expect(checks.code?.summary).toBe(
+      "No compiler or linter for this project's languages is installed, so nothing checked the code.",
+    );
+    expect(
+      events.some((ev) => ev.ephemeral && ev.text === "Depo is running the code checks on the private copy"),
+    ).toBe(true);
     expect(checks.comments?.state).toBe("pass");
     expect(checks.plan).toBeUndefined();
 

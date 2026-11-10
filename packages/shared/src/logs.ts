@@ -181,6 +181,11 @@ export const LogMethods = {
     params: z.object({}).strict(),
     result: z.object({ ok: z.boolean(), path: z.string() }),
   },
+  "logs.clear": {
+    // Deletes the old log files and empties the current one. Lines written afterwards are kept.
+    params: z.object({}).strict(),
+    result: z.object({ removed: z.number().int(), bytes: z.number().int() }),
+  },
   "models.stats": {
     params: z.object({ limit: z.number().int().min(1).max(500).default(50) }).strict(),
     result: z.object({ calls: z.array(ModelCallSchema), models: z.array(ModelStatSchema) }),

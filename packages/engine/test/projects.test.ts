@@ -218,6 +218,7 @@ describe("projects", () => {
       commandDeny: [],
       maxSteps: 40,
       previewCommand: "",
+      starter: "",
     });
     const next = handlers["projects.settings.set"](
       { id: p.id, patch: { indexEnabled: false, maxParallel: 2 } },

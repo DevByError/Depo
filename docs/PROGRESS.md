@@ -4,6 +4,12 @@
 
 _Last updated: 2026-11-08_
 
+## Login-system run (2026-11-10): starter screen and errors, unchecked checks, fixed ports, ugly logs
+
+- **Found from the owner's run:** the 3B coder wrote a tool call as plain text and changed nothing, and Depo called it done (the screen was the starter's); a stopped run's files stayed in the private copy for the next run, and its app kept running; discarded work stayed in the copy; projects made from a blueprint had the starter committed in their folder before any task; code checks never ran by themselves and UX was only scored by the team's UX agent; a dev script with `-p 3000` ignored Depo's port; there was no way to clear old logs.
+- **Built (ADR-0090..0092):** no change = not done (follow-up questions excepted), design references in step prompts, Stop stops the apps and clears the run from the copy (setting to keep it), Discard clears the copy, the starter is built in the first task's copy, code checks at review, a UX score from the page check, Depo's port for fixed-port scripts, "Clear logs" and an Activity "Clear".
+- **Verified:** `login-run.test.ts`, `stop-clears.test.ts` (new task, follow-up, keep setting, discard, starter built in the copy), `readiness.test.ts` (code checks at review, page UX score), `preview.test.ts` (fixed-port scripts), `step-plan.test.ts` (design brief), `blueprints.test.ts` (README-only folder), `logs.test.tsx` (Clear logs, Activity Clear), `ProjectDialogs.test.tsx`. Not yet tried on the owner's PC.
+
 ## First team run (2026-11-10): "Manager is planning the work" for 11 minutes, and drafts that disappeared
 
 - **Found from the owner's run:** in Full system mode qwen3:4b (the reasoning model) was asked for the plan and never answered in 11 minutes; the log shows the job starting and no model call after it. qwen3 thinks before answering, Depo did not turn that off, did not read the thinking (so nothing was shown), and had no limit on the plan call. The owner's Stop was then recorded as a crash. Separately, the chat box lost its text and pictures on a tab change, and a new task's text showed up in the old task.

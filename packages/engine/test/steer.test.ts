@@ -146,7 +146,10 @@ describe("steering a single agent", () => {
       if (n === 1) {
         started();
         await hold.promise;
-        return { text: "Looking around.", calls: [call("list_dir", { path: "." })] };
+        return {
+          text: "Writing the server.",
+          calls: [call("write_file", { path: "src/server.ts", content: "export const port = 3000;\n" })],
+        };
       }
       return { text: "Changed the port to 8080." };
     });
@@ -178,7 +181,7 @@ describe("steering a single agent", () => {
 
     // The transcript has it where it was read, marked read by the coding agent.
     const { task: done, messages } = e.tasks.get(task.id);
-    expect(done.status).toBe("done");
+    expect(done.status).toBe("review");
     const read = messages.find((m) => m.id === res.noteId);
     expect(read?.steer?.state).toBe("delivered");
     expect(read?.steer?.readBy).toEqual(["coder@1.0.0"]);
@@ -221,7 +224,15 @@ describe("steering a single agent", () => {
   test("a note sent to a finished task becomes a normal follow-up", async () => {
     const { model, requests } = scripted((req) => {
       const last = req.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
-      return { text: last.includes("dark mode") ? "Dark mode added." : "First pass done." };
+      const dark = last.includes("dark mode");
+      // Each request changes a file first, then answers.
+      if (req.messages.at(-1)?.role === "user")
+        return {
+          calls: [
+            call("write_file", { path: dark ? "src/dark.css" : "src/page.html", content: "<p>hi</p>\n" }),
+          ],
+        };
+      return { text: dark ? "Dark mode added." : "First pass done." };
     });
     const { e, project } = await setup(model);
     const task = e.tasks.send(project.id, "build the page");
@@ -263,17 +274,18 @@ describe("steering a single agent", () => {
     const { e, project } = await setup(model, { maxSteps: 1 });
     const task = e.tasks.send(project.id, "quick fix");
     await first;
-    const res = e.tasks.steer(task.id, "Use tabs.");
+    // Not a request for a change, so one step is enough to answer it.
+    const res = e.tasks.steer(task.id, "Tabs, please.");
     hold.open();
     await e.tasks.settled(task.id);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.messages.filter((m) => m.role === "user").at(-1)?.content).toContain(
-      "New request, do this now: Use tabs.",
+      "New request, do this now: Tabs, please.",
     );
     const { messages } = e.tasks.get(task.id);
     const note = messages.find((m) => m.id === res.noteId);
     expect(note?.steer?.state).toBe("followup");
-    expect(messages.at(-1)?.text).toBe("Handled: Use tabs.");
+    expect(messages.at(-1)?.text).toBe("Handled: Tabs, please.");
   }, 30_000);
 
   test("a note queued when the task is stopped is marked as not read", async () => {

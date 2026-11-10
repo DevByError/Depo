@@ -241,6 +241,32 @@ describe("each step sees a short prompt with its files already read", () => {
     // The whole request is not in the prompt: only this step's part and the overview.
     expect(p.text).not.toContain("react-markdown");
   });
+
+  test("the owner's design references go with the steps that build what the owner sees", () => {
+    const root = project({ "be/src/db/schema.sql": USERS });
+    const plan = buildPlan(SKILL_FINDER);
+    const table = plan.steps.find((s) => s.kind === "table");
+    const page = plan.steps.find((s) => s.kind === "page" || s.kind === "build");
+    if (!table || !page) throw new Error("missing steps");
+    const design =
+      'Design reference: the owner wants the same look and feel. Reference 1: the picture "login.png"';
+    const input = {
+      plan,
+      root,
+      done: [],
+      later: [],
+      index: 1,
+      total: 5,
+      earlier: [],
+      blocks: true,
+      budget: 8000,
+      design,
+    };
+    expect(stepPrompt({ ...input, step: page }).text).toContain(
+      "The owner's design references (make what this step builds look like this):\nDesign reference: the owner wants",
+    );
+    expect(stepPrompt({ ...input, step: table }).text).not.toContain("Design reference");
+  });
 });
 
 describe("save points put a step's files back exactly", () => {

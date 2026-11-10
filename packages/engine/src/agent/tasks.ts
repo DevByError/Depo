@@ -60,7 +60,8 @@ import { kickstart } from "./kickstart";
 import { FIX_STEPS, type LoopParams, type LoopResult, runAgentLoop } from "./loop";
 import { buildPlan, isGoOn, type RequestPlan } from "./plan";
 import { codingSystemPrompt, venvEnv } from "./prompt";
-import { missingParts } from "./request-check";
+import { missingParts, stillToDo } from "./request-check";
+import { restoreSavePoint, type SavePoint, takeSavePoint } from "./savepoint";
 import { isSmallModel, pickStepUp, SMALL_MODEL_TOOLS } from "./small";
 import { SteerInbox, type StoredNote, steerPrompt } from "./steer";
 import { newStepPlan, runStepPlan } from "./step-runner";
@@ -73,6 +74,8 @@ const FILE_WRITERS = new Set(["write_file", "edit_file", "append_file"]);
 
 export interface TaskManagerOptions {
   settings?: SettingsRepo;
+  /** A task was stopped: its running apps stop too (the engine wires the previews in). */
+  onStopped?: (taskId: string, projectId: string) => Promise<void> | void;
   db: AppDb;
   bus: EventBus;
   logger: Logger;
@@ -631,6 +634,7 @@ export class TaskManager {
         projectName: project.name,
         references: this.o.references?.list(row.id) ?? [],
         newReferences,
+        starter: this.o.projectSettings?.(project.id)?.starter ?? "",
       });
     } catch (err) {
       this.log.warn("could not start from a blueprint", { taskId: row.id, err });
@@ -679,19 +683,14 @@ export class TaskManager {
     this.log.info(what, { taskId: id, projectId, mode: mode ?? null });
     // Everything logged while the task runs carries its id and project.
     const run = withLogContext({ taskId: id, projectId }, () => this.run(id, ctl.signal))
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         // The owner pressed Stop and the model call ended with "Cancelled": a stop, not a crash.
         if (ctl.signal.aborted) {
           this.log.info("task stopped while a model call was running", { taskId: id });
-          this.setStatus(id, "cancelled");
-          this.o.bus.emit({
-            agent: CODER_AGENT,
-            projectId,
-            taskId: id,
-            type: "info",
-            text: "Stopped by the user",
-            status: "cancelled",
-          });
+          const title = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get()?.title ?? "";
+          await this.stopped(id, projectId, title, (e) =>
+            this.o.bus.emit({ ...e, agent: CODER_AGENT, projectId, taskId: id }),
+          );
           return;
         }
         this.log.error("task crashed", { taskId: id, err });
@@ -701,6 +700,7 @@ export class TaskManager {
         this.running.delete(id);
         this.done.delete(id);
         this.inboxes.delete(id);
+        this.runCopies.delete(id);
         const status = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get()?.status ?? null;
         this.log[status === "failed" ? "warn" : "info"]("task finished", {
           taskId: id,
@@ -729,6 +729,9 @@ export class TaskManager {
     const row = this.o.db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!row || !["queued", "running", "waiting"].includes(row.status)) return false;
     this.setStatus(id, "cancelled");
+    void Promise.resolve()
+      .then(() => this.o.onStopped?.(id, row.projectId))
+      .catch((err: unknown) => this.log.warn("could not stop the task's apps", { taskId: id, err }));
     this.o.bus.emit({
       agent: CODER_AGENT,
       projectId: row.projectId,
@@ -740,9 +743,32 @@ export class TaskManager {
     return true;
   }
 
-  /** Resolves when the task has finished, including a run that unread notes started (tests). */
+  /**
+   * The owner discarded the task's changes: its private copy goes too, so the next message builds
+   * from the project as it is, not on top of the discarded work. Not while the task works.
+   */
+  resetCopy(taskId: string): boolean {
+    if (this.running.has(taskId)) return false;
+    const row = this.o.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+    if (!row?.workspacePath) return false;
+    try {
+      this.o.projects.discardWorkspace(row.workspacePath);
+    } catch (err) {
+      this.log.warn("could not remove the discarded private copy", { taskId, err });
+      return false;
+    }
+    this.o.db.update(tasks).set({ workspacePath: null }).where(eq(tasks.id, taskId)).run();
+    this.log.info("private copy removed after a discard", { taskId });
+    return true;
+  }
+
+  /** The readiness decision being recorded after a run reached review (code checks run first). */
+  private readonly afterReview = new Map<string, Promise<unknown>>();
+
+  /** Resolves when the task has finished, including a run that unread notes started and its readiness decision (tests). */
   async settled(id: string): Promise<void> {
     for (let run = this.done.get(id); run; run = this.done.get(id)) await run;
+    await this.afterReview.get(id);
   }
 
   /** Set while the engine stops: no run starts any more. */
@@ -943,13 +969,16 @@ export class TaskManager {
 
     // One shadow workspace per task, reused by follow-up messages.
     let ws: Workspace;
-    if (row.workspacePath && fs.existsSync(path.join(row.workspacePath, "manifest.json"))) {
+    const reused = !!row.workspacePath && fs.existsSync(path.join(row.workspacePath, "manifest.json"));
+    if (reused && row.workspacePath) {
       ws = this.o.projects.loadWorkspace(row.workspacePath);
     } else {
       emit({ type: "planning", text: `Preparing a private copy of ${project.name}`, status: "started" });
       ws = this.o.projects.createWorkspace(project.rootPath, taskId);
       this.o.db.update(tasks).set({ workspacePath: ws.dir }).where(eq(tasks.id, taskId)).run();
     }
+    // What a Stop puts back: a new copy is removed, a reused one goes back to how it was now.
+    this.runCopies.set(taskId, { ws, fresh: !reused, savePoint: reused ? takeSavePoint(ws.root) : null });
 
     this.setStatus(taskId, "running");
     const newReferences = await this.prepareReferences(
@@ -960,8 +989,7 @@ export class TaskManager {
       signal,
     );
     if (signal.aborted) {
-      this.setStatus(taskId, "cancelled");
-      emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
+      await this.stopped(taskId, project.id, row.title, emit);
       return;
     }
     const startNote = this.kickstart(row, project, ws, newReferences, (e) =>
@@ -985,6 +1013,9 @@ export class TaskManager {
     const settings = this.o.projectSettings?.(project.id);
     this.o.indexer?.ensure(project.id);
     const request = requestText(row.prompt, history);
+    // Whether this turn asks for a change is judged by its own words (a follow-up question asks for
+    // none); attached pictures or links always ask for one.
+    const judged = { latest: asked || row.prompt, hasReferences: newReferences };
     // Depo's step plan for this turn (ADR-0086): from the request's own text, shown before any
     // model starts. "go on" picks up the unfinished steps of the last plan.
     const messageId = this.latestRequestId(taskId);
@@ -1086,11 +1117,10 @@ export class TaskManager {
           ? () => this.finish(ctx, { ...finishLine, projectName: project.name }, signal)
           : null,
         budget: Math.max(4000, Math.min(16_000, Math.round(contextLength * 0.9))),
+        design: this.o.references?.brief(taskId) ?? "",
       });
       if (signal.aborted) {
-        this.setStatus(taskId, "cancelled");
-        emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
-        this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+        await this.stopped(taskId, project.id, row.title, emit);
         return;
       }
       finalText = r.finalText;
@@ -1163,8 +1193,9 @@ export class TaskManager {
         maxSteps,
         ...(stepUp ? { stepUp: { model: stepUp } } : {}),
         fileBlocks: small,
-        // Routes and pages the request names that the copy does not have yet.
-        checkDone: () => missingParts(request, ws.root),
+        // Routes and pages the request names that the copy does not have yet, or, for a request
+        // to build or change something, the change itself while no file has changed.
+        checkDone: ({ changed }) => stillToDo(request, ws.root, changed, judged),
         signal,
         scheduler: this.o.scheduler,
         job: { projectId: project.id, taskId, label: row.title },
@@ -1186,9 +1217,7 @@ export class TaskManager {
       finalText = result.finalText;
 
       if (signal.aborted) {
-        this.setStatus(taskId, "cancelled");
-        emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
-        this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+        await this.stopped(taskId, project.id, row.title, emit);
         return;
       }
       if (!finalText) {
@@ -1200,8 +1229,9 @@ export class TaskManager {
           this.addMessage(taskId, { role: "assistant", content: report });
         }
       }
-      // Whatever the model said: parts the request names that are not in the code are not done.
-      const missing = missingParts(request, ws.root);
+      // Whatever the model said: parts the request names that are not in the code are not done,
+      // and neither is a request for a change that changed nothing.
+      const missing = stillToDo(request, ws.root, result.changed, judged);
       if (missing.length) {
         const note = `Not finished: the request asks for ${missing.length === 1 ? "this, and it is" : "these, and they are"} not in the code yet:\n${missing
           .slice(0, 12)
@@ -1376,9 +1406,7 @@ export class TaskManager {
       notes: this.inboxes.get(taskId),
     });
     if (signal.aborted) {
-      this.setStatus(taskId, "cancelled");
-      emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
-      this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+      await this.stopped(taskId, project.id, row.title, emit);
       return;
     }
     this.addMessage(taskId, { role: "assistant", content: res.finalText }, undefined, agentTag("manager"));
@@ -1416,9 +1444,7 @@ export class TaskManager {
           ? await this.fixAfterTeam(row, project, ws, signal, asked, r)
           : finishSummary(r);
       if (signal.aborted) {
-        this.setStatus(taskId, "cancelled");
-        emit({ type: "info", text: "Stopped by the user", status: "cancelled" });
-        this.finishChanges(project.id, taskId, ws, row.title, emit, () => "cancelled");
+        await this.stopped(taskId, project.id, row.title, emit);
         return;
       }
       if (extra) {
@@ -1445,6 +1471,64 @@ export class TaskManager {
     });
   }
 
+  /** The private copy as each running task found it, for Stop. */
+  private readonly runCopies = new Map<
+    string,
+    { ws: Workspace; fresh: boolean; savePoint: SavePoint | null }
+  >();
+
+  /**
+   * The owner pressed Stop (or Depo closed): the task's running app stops, and unless the owner
+   * keeps stopped work (`tasks.keep_stopped_work`), what this run wrote is removed from the private
+   * copy, so the next run builds from the start instead of from half-done work.
+   */
+  private async stopped(
+    taskId: string,
+    projectId: string,
+    title: string,
+    emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown,
+  ): Promise<void> {
+    this.setStatus(taskId, "cancelled");
+    const copy = this.runCopies.get(taskId);
+    this.runCopies.delete(taskId);
+    // The apps stop first, so nothing holds the copy's files open while they are put back.
+    try {
+      await this.o.onStopped?.(taskId, projectId);
+    } catch (err) {
+      this.log.warn("could not stop the task's apps", { taskId, err });
+    }
+    const keep = this.o.settings?.get("tasks.keep_stopped_work") === true;
+    let undone: "removed" | "restored" | null = null;
+    if (copy && !keep) {
+      try {
+        if (copy.fresh) {
+          this.o.projects.discardWorkspace(copy.ws.dir);
+          this.o.db.update(tasks).set({ workspacePath: null }).where(eq(tasks.id, taskId)).run();
+          undone = "removed";
+        } else if (copy.savePoint) {
+          restoreSavePoint(copy.ws.root, copy.savePoint);
+          undone = "restored";
+        }
+      } catch (err) {
+        this.log.warn("could not clear the stopped run from the private copy", { taskId, err });
+      }
+    }
+    emit({ type: "info", text: "Stopped by the user", details: { stopped: true }, status: "cancelled" });
+    if (undone)
+      emit({
+        type: "info",
+        text:
+          undone === "removed"
+            ? "Cleared the private copy: the next run starts from your project as it is"
+            : "Took this run's work out of the private copy; the earlier work is kept",
+        details: { copy: undone },
+        status: "succeeded",
+      });
+    // Earlier turns' changes stay reviewable; a removed copy has nothing to review.
+    if (copy && undone !== "removed")
+      this.finishChanges(projectId, taskId, copy.ws, title, emit, () => "cancelled");
+  }
+
   private finishChanges(
     projectId: string,
     taskId: string,
@@ -1468,7 +1552,15 @@ export class TaskManager {
         status: "succeeded",
       });
       // One honest verdict at review time, recorded as a decision (no model call).
-      if (statusFor(cs) === "review") this.o.readiness?.atReview({ projectId, taskId, changeSetId: cs.id });
+      if (statusFor(cs) === "review") {
+        const at = Promise.resolve(
+          this.o.readiness?.atReview({ projectId, taskId, changeSetId: cs.id }),
+        ).catch((err: unknown) => this.log.warn("readiness at review failed", { taskId, err }));
+        this.afterReview.set(taskId, at);
+        void at.finally(() => {
+          if (this.afterReview.get(taskId) === at) this.afterReview.delete(taskId);
+        });
+      }
     } else {
       emit({ type: "handoff", text: "Finished with no file changes", status: "succeeded" });
     }

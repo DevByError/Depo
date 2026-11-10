@@ -62,6 +62,10 @@ interface UiState extends Layout {
   projectDialog: ProjectDialog | null;
   /** Activity feed: the open project only, or every project. */
   feedScope: FeedScope;
+  /** Activity feed: events up to this time are hidden (the owner's "Clear"); null shows all. */
+  activityClearedAt: string | null;
+  clearActivity(): void;
+  showAllActivity(): void;
   /** Change set shown in Diff Review. */
   changeSetId: string | null;
   /** Task shown in Chat; null starts a new task. */
@@ -96,6 +100,16 @@ interface UiState extends Layout {
 
 const LAYOUT_KEY = "depo.layout";
 const THEME_KEY = "depo.theme";
+const CLEARED_KEY = "depo.activity.clearedAt";
+
+function readCleared(): string | null {
+  try {
+    const v = localStorage.getItem(CLEARED_KEY);
+    return v && !Number.isNaN(Date.parse(v)) ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 export const LAYOUT_LIMITS = {
   sidebarWidth: [180, 420],
@@ -155,6 +169,20 @@ export const useUi = create<UiState>((set, get) => ({
   projectId: null,
   projectDialog: null,
   feedScope: "project",
+  activityClearedAt: readCleared(),
+  clearActivity: () => {
+    const at = new Date().toISOString();
+    save(CLEARED_KEY, at);
+    set({ activityClearedAt: at });
+  },
+  showAllActivity: () => {
+    try {
+      localStorage.removeItem(CLEARED_KEY);
+    } catch {
+      // ignore
+    }
+    set({ activityClearedAt: null });
+  },
   changeSetId: null,
   taskId: null,
   logsTaskId: null,

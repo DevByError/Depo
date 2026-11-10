@@ -118,6 +118,24 @@ function runScript(pm: PackageManager, script: string, args = ""): string {
   return pm === "npm" ? `${base} -- ${args}` : `${base} ${args}`;
 }
 
+/**
+ * A dev script that fixes its own port ("next dev -p 3000") would start on that port even when
+ * Depo picked another one (another app has it). A plain one-command script is run with Depo's
+ * port instead; anything more complex runs as written.
+ */
+export function ownPortCommand(pm: PackageManager, scriptText: string, bin: "next" | "vite"): string | null {
+  const m = new RegExp(`^\\s*${bin}((?:\\s+[^\\s&|;<>]+)*)\\s*$`).exec(scriptText);
+  if (!m) return null;
+  let rest = (m[1] ?? "").replace(/(^|\s)(-p|--port)(\s+|=)\d+/, "$1$2$3{port}");
+  if (!/\{port\}/.test(rest)) return null;
+  if (bin === "next" && !/(^|\s)(-H|--hostname)(\s|=)/.test(rest)) rest += " -H 127.0.0.1";
+  if (bin === "vite") {
+    if (!/(^|\s)--host(\s|=|$)/.test(rest)) rest += " --host 127.0.0.1";
+    if (!/--strictPort/.test(rest)) rest += " --strictPort";
+  }
+  return `${execBin(pm, bin)}${rest}`;
+}
+
 function execBin(pm: PackageManager, bin: string): string {
   return pm === "npm"
     ? `npx ${bin}`
@@ -205,7 +223,9 @@ function detectNode(root: string, rel: string, name: string): RunRecipeBase[] {
     const script = scriptWith(/\bnext\s+dev\b/, ["dev", "start:dev"]);
     const flags = "-p {port} -H 127.0.0.1";
     const command = script
-      ? runScript(pm, script, hasPortFlag(script) ? "" : flags)
+      ? hasPortFlag(script)
+        ? (ownPortCommand(pm, scripts[script] ?? "", "next") ?? runScript(pm, script))
+        : runScript(pm, script, flags)
       : `${execBin(pm, "next")} dev ${flags}`;
     return [recipe("next", "Next.js app", command, "frontend")];
   }
@@ -213,7 +233,14 @@ function detectNode(root: string, rel: string, name: string): RunRecipeBase[] {
   if (deps.vite && viteScript) {
     const flags = "--port {port} --host 127.0.0.1 --strictPort";
     return [
-      recipe("vite", "Vite app", runScript(pm, viteScript, hasPortFlag(viteScript) ? "" : flags), "frontend"),
+      recipe(
+        "vite",
+        "Vite app",
+        hasPortFlag(viteScript)
+          ? (ownPortCommand(pm, scripts[viteScript] ?? "", "vite") ?? runScript(pm, viteScript))
+          : runScript(pm, viteScript, flags),
+        "frontend",
+      ),
     ];
   }
   if (deps["react-scripts"] && scripts.start) {

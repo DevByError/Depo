@@ -403,6 +403,13 @@ export function createEngine(opts: EngineOptions): Engine {
     }),
     readiness: readinessHooks,
     references,
+    // Stop means stop: the task's running apps stop with it (a pinned one keeps running).
+    onStopped: async (taskId, projectId) => {
+      await autoPreview.release(taskId, "Stopped because the task was stopped");
+      for (const p of previews.list(projectId))
+        if (p.taskId === taskId && !p.pinned && (p.state === "running" || p.state === "starting"))
+          await previews.stop(p.id, "Stopped because the task was stopped");
+    },
     devdb: devDbHooks({ service: devdb, projectName }),
     finishLine:
       (opts.finishLine ?? process.env.DEPO_FINISH_LINE !== "0")
@@ -447,7 +454,10 @@ export function createEngine(opts: EngineOptions): Engine {
     previews,
     autoPreview,
     // Code checks: the latest compiler and linter run for the task's copy (Problems tab, diagnostics tool).
-    diagnostics: { latest: (projectId, taskId) => diagnostics.latest(projectId, taskId) },
+    diagnostics: {
+      latest: (projectId, taskId) => diagnostics.latest(projectId, taskId),
+      run: (projectId, taskId) => diagnostics.run({ projectId, taskId, by: "engine" }),
+    },
     commandRules: (id) => {
       const s = safeSettings(registry, id);
       return s ? { allow: s.commandAllow, deny: s.commandDeny } : null;

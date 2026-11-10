@@ -184,6 +184,11 @@ export const ProjectSettingsSchema = z.object({
    * project. Commands the policy or commandDeny blocks stay blocked.
    */
   fullAccess: z.boolean().default(false),
+  /**
+   * The blueprint the project was created with (""= none). The folder stays empty: the first task
+   * writes the blueprint into its private copy and builds on it, so it all arrives in one review.
+   */
+  starter: z.string().max(60).default(""),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

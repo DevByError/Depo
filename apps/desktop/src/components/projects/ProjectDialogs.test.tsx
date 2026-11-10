@@ -125,7 +125,8 @@ test("New project: a blueprint card shows what you get, moves with the arrow key
   expect(within(dialog).getByText("One script starts both")).toBeTruthy();
   // The blueprint brings its own stack.
   expect(within(dialog).queryByRole("textbox", { name: /^Stack/ })).toBeNull();
-  expect(within(dialog).getByText(/goes in as the first commit/)).toBeTruthy();
+  // The starting point is built with the first task, in its private copy.
+  expect(within(dialog).getByText(/arrive in the folder together when you apply/)).toBeTruthy();
 
   fireEvent.keyDown(card, { key: "ArrowDown" });
   const api = within(dialog).getByRole("radio", { name: "FastAPI service" });

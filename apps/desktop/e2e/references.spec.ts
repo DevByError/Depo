@@ -75,7 +75,10 @@ test("a pasted picture is read into colours with roles and shown under the messa
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "dashboard.png" })).toHaveCount(0);
 
-  // The scripted model answers, so the task ends before the next spec starts.
-  await expect(convo).toContainText("I can only run the scripted /health demo", { timeout: 60_000 });
+  // The scripted model changes no file, so a picture sent to be matched is not called done; the
+  // task still ends before the next spec starts.
+  await expect(convo).toContainText("the change itself: no file has changed in this task yet", {
+    timeout: 60_000,
+  });
   expect(await seriousA11yViolations(page)).toEqual([]);
 });

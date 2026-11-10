@@ -51,6 +51,8 @@ export interface StepRunOptions {
   checkApp: (() => Promise<FinishResult>) | null;
   /** Characters of file content a step prompt may hold. */
   budget: number;
+  /** The owner's design references brief, for the steps that build what the owner sees. */
+  design?: string;
   /** Runs one try (tests pass their own). */
   run?: (p: LoopParams) => Promise<LoopResult>;
 }
@@ -163,6 +165,7 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
       earlier,
       blocks: !!base.fileBlocks,
       budget: o.budget,
+      ...(o.design ? { design: o.design } : {}),
     });
     for (const f of prompt.shown) base.ctx.readPaths?.add(f);
     const mainFile = step.kind === "table" ? schemaFile : filesForStep(step, plan, root)[0];

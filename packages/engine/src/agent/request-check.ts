@@ -149,6 +149,45 @@ export function routeIn(code: string, routePath: string): boolean {
   return re.test(code);
 }
 
+/** What the "not done" list says when a request to build or change something changed no file. */
+export const NOTHING_CHANGED = "the change itself: no file has changed in this task yet";
+
+/**
+ * Does the request ask for something to be built or changed (not only a question)? Design
+ * references count: they come to be built with.
+ */
+export function asksForChange(request: string, hasReferences = false): boolean {
+  if (hasReferences) return true;
+  const text = request.trim();
+  if (!text) return false;
+  // "How do I add a page?" asks for an answer, not a change.
+  if (QUESTION.test(text) && /\?\s*$/.test(text)) return false;
+  return CHANGE_VERB.test(text);
+}
+
+const QUESTION =
+  /^(how|what|why|where|when|which|who|can|could|does|do|is|are|should|would|will|explain|tell me)\b/i;
+
+const CHANGE_VERB =
+  /\b(build|add|create|make|implement|write|change|update|fix|style|theme|design|redesign|refactor|remove|delete|rename|move|replace|use|follow|convert|set ?up|connect|improve|translate|turn)\b/i;
+
+/**
+ * The "not done" list for the loop: the request's missing routes and pages, or, when it asks
+ * for a change and no file changed in this run, the change itself.
+ */
+export function stillToDo(
+  request: string,
+  root: string,
+  changed: string[],
+  o: { latest?: string; hasReferences?: boolean } = {},
+): string[] {
+  const missing = missingParts(request, root);
+  if (missing.length) return missing;
+  // A follow-up is judged by its own words: "how does the login work?" after "build a login"
+  // asks for no change.
+  return !changed.length && asksForChange(o.latest ?? request, o.hasReferences) ? [NOTHING_CHANGED] : [];
+}
+
 /** The parts of the request that are not in the code yet, as short lines for the model. */
 export function missingParts(request: string, root: string): string[] {
   return requestStatus(request, root)
@@ -181,6 +220,12 @@ export function requestStatus(request: string, root: string): { text: string; ok
  */
 export function notDoneNote(missing: string[], blocks: boolean, first = false): string {
   const how = `read the files it touches, then ${blocks ? "write the code as file blocks" : "write and edit the files"}`;
+  if (missing.length === 1 && missing[0] === NOTHING_CHANGED)
+    return [
+      "Not done yet: no file has changed, so nothing the request asks for is built.",
+      `Make the change now: ${how}. A tool name that does not exist runs nothing; use only your tools${blocks ? " or file blocks" : ""}.`,
+      "When the files are changed, say briefly what you changed.",
+    ].join("\n");
   if (first)
     return [
       "Not done yet. The request asks for these, and they are not in the code:",

@@ -112,7 +112,7 @@ export interface LoopParams {
    * What the request names that is not in the code yet (routes, pages). Asked when the model says
    * it is done, before the finish line: while parts are missing, the model is asked to go on.
    */
-  checkDone?: () => string[];
+  checkDone?: (o: { changed: string[] }) => string[];
   /**
    * Called when the model says it is done (after the test checks): Depo runs the work. `retry`
    * sends the problems back to the model (with `stepUp`, the larger model takes that round: the
@@ -709,7 +709,7 @@ async function agentLoop(p: LoopParams): Promise<LoopResult> {
       }
       // Parts of the request that are not in the code yet: go on while that list gets shorter.
       if (more && canEdit && p.checkDone && doneNudges < MAX_DONE_NUDGES) {
-        const missing = p.checkDone();
+        const missing = p.checkDone({ changed: [...changed] });
         if (missing.length) {
           const stalled = missingBefore !== null && missing.length >= missingBefore;
           missingBefore = missing.length;

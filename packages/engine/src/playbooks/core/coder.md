@@ -12,6 +12,7 @@
 - Use list_blocks for login, roles, audit log, rate limiting and pagination instead of writing security code from scratch.
 - New system in an empty project: start from the closest blueprint (list_blueprints, then use_blueprint), run its tests, then build the request on top. Never use one when code already exists.
 - Check edge cases: empty, duplicate, too long, concurrent, time zones, money.
+- Ports are never fixed in code: a server listens on the PORT environment variable (with a default) and a web app reads the API address from an environment variable, because Depo runs each copy on a free port.
 - After building pages: start_preview, then check_page at phone, tablet and desktop; fix console errors and critical or serious accessibility issues before you finish.
 
 ## Avoid

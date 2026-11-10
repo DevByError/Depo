@@ -201,7 +201,31 @@ export function PreviewSetting() {
         Start the app when changes are ready, so I can try them before I apply them
       </label>
       <p className="mt-1 text-[11px] leading-relaxed text-subtle">
-        Only for apps that need nothing installed first. It stops when you apply or discard the changes.
+        Only for apps that need nothing installed first. It stops when you apply or discard the changes, or
+        when you stop the task.
+      </p>
+    </fieldset>
+  );
+}
+
+/** What Stop does with the stopped run's work (tasks.keep_stopped_work). */
+export function StopSetting() {
+  const s = useSetting<boolean>("tasks.keep_stopped_work", false);
+  return (
+    <fieldset className="mt-5">
+      <legend className="mb-1 text-xs font-medium text-fg">Stop</legend>
+      <label className="flex items-center gap-2 text-[13px] text-muted">
+        <input
+          type="checkbox"
+          checked={s.value}
+          disabled={s.disabled}
+          onChange={(e) => s.set(e.target.checked)}
+        />
+        Keep a stopped task's work so I can review it
+      </label>
+      <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+        Off: Stop also stops the task's app and takes what that run wrote out of its private copy, so the next
+        run starts clean. Your project folder is never touched either way.
       </p>
     </fieldset>
   );

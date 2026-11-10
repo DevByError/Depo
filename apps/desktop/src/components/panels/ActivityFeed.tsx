@@ -6,8 +6,10 @@ import {
   ArrowDown,
   Bot,
   ChevronRight,
+  Eraser,
   FileText,
   HeartPulse,
+  History,
   ScrollText,
   Search,
   Terminal,
@@ -33,6 +35,12 @@ export function filterEvents(events: DepoEvent[], query: string): DepoEvent[] {
   return events.filter(
     (e) => e.text.toLowerCase().includes(q) || e.agent.toLowerCase().includes(q) || e.type.includes(q),
   );
+}
+
+/** Events after the owner's "Clear" (all of them when nothing was cleared). */
+export function afterClear(events: DepoEvent[], clearedAt: string | null): DepoEvent[] {
+  if (!clearedAt) return events;
+  return events.filter((e) => e.ts > clearedAt);
 }
 
 /** "This project" keeps the open project's events plus engine-wide ones (no project). */
@@ -144,6 +152,9 @@ export function ActivityFeed() {
   const deferredQuery = useDeferredValue(query);
   const scope = useUi((s) => s.feedScope);
   const setScope = useUi((s) => s.setFeedScope);
+  const clearedAt = useUi((s) => s.activityClearedAt);
+  const clearActivity = useUi((s) => s.clearActivity);
+  const showAllActivity = useUi((s) => s.showAllActivity);
   const projectId = useUi((s) => s.projectId);
   const taskId = useUi((s) => s.taskId);
   const openLogs = useUi((s) => s.openLogs);
@@ -167,11 +178,11 @@ export function ActivityFeed() {
         )
       : events;
     return filterByCategories(
-      filterEvents(filterByScope(base, scope, projectId), deferredQuery),
+      filterEvents(filterByScope(afterClear(base, clearedAt), scope, projectId), deferredQuery),
       cats,
       errorsOnly,
     );
-  }, [events, heartbeats, showHeartbeats, deferredQuery, scope, projectId, cats, errorsOnly]);
+  }, [events, heartbeats, showHeartbeats, deferredQuery, scope, projectId, cats, errorsOnly, clearedAt]);
   const items = useMemo(() => groupByTask(rows), [rows]);
   const taskProjects = useMemo(() => [...new Set(rows.map((e) => e.projectId))], [rows]);
   const titles = useTaskTitles(taskProjects);
@@ -240,8 +251,8 @@ export function ActivityFeed() {
           </button>
         )}
       </div>
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-        <div className="flex items-center gap-1" role="radiogroup" aria-label="Show activity from">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-1.5">
+        <div className="mr-auto flex items-center gap-1" role="radiogroup" aria-label="Show activity from">
           {(["project", "all"] as const).map((s) => (
             // biome-ignore lint/a11y/useSemanticElements: segmented control; role and aria-checked are set.
             <button
@@ -270,6 +281,26 @@ export function ActivityFeed() {
         >
           <AlertTriangle className="size-3" aria-hidden />
           Errors only
+        </button>
+        {clearedAt ? (
+          <button
+            type="button"
+            onClick={showAllActivity}
+            title={`Hidden: everything before ${new Date(clearedAt).toLocaleString()}`}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <History className="size-3" aria-hidden />
+            Show earlier
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={clearActivity}
+          title="Hide everything shown so far; new activity still appears"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <Eraser className="size-3" aria-hidden />
+          Clear
         </button>
       </div>
       <fieldset

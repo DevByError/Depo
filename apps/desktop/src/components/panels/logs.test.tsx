@@ -71,6 +71,8 @@ vi.mock("@/lib/engine", () => ({
         });
       case "logs.openFolder":
         return Promise.resolve({ ok: true, path: "C:\\Users\\me\\AppData\\Local\\Depo\\logs" });
+      case "logs.clear":
+        return Promise.resolve({ removed: 3, bytes: 1_572_864 });
       case "tasks.list":
         return Promise.resolve({
           tasks: [
@@ -104,7 +106,14 @@ beforeEach(() => {
   calls.length = 0;
   tailLines = [];
   useEngine.setState({ status: "open", events: [], heartbeats: [], info: null });
-  useUi.setState({ projectId: "prj_1", taskId: null, logsTaskId: null, bottomTab: "engine", feedQuery: "" });
+  useUi.setState({
+    projectId: "prj_1",
+    taskId: null,
+    logsTaskId: null,
+    bottomTab: "engine",
+    feedQuery: "",
+    activityClearedAt: null,
+  });
 });
 afterEach(cleanup);
 
@@ -222,4 +231,41 @@ test("Activity feed: task header, category chips, errors only, agent badges and 
   fireEvent.click(screen.getByRole("button", { name: "Open logs for this task" }));
   expect(useUi.getState().bottomTab).toBe("logs");
   expect(useUi.getState().logsTaskId).toBe("tsk_1");
+});
+
+test("Logs: Clear logs asks once, then deletes the old lines and loads again", async () => {
+  mount(<LogsPanel />);
+  const log = await screen.findByRole("log", { name: "Engine logs" });
+  await within(log).findByText("tool call");
+  const queries = calls.filter((c) => c.method === "logs.query").length;
+  fireEvent.click(screen.getByRole("button", { name: "Clear logs" }));
+  expect(screen.getByText("Delete all log lines so far? This cannot be undone.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+  expect(calls.some((c) => c.method === "logs.clear")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Clear logs" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByText("Cleared 1.5 MB of old logs")).toBeTruthy();
+  await waitFor(() => expect(calls.filter((c) => c.method === "logs.query").length).toBeGreaterThan(queries));
+});
+
+test("Activity feed: Clear hides what is there, new activity still shows, and Show earlier brings it back", async () => {
+  useEngine.setState({ events: [ev("e1", "reading_file", { ts: "2026-11-07T10:00:00.000Z" })] });
+  mount(<ActivityFeed />);
+  const feed = screen.getByRole("log", { name: "Activity feed" });
+  expect(within(feed).getByText("reading_file text")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(within(feed).queryByText("reading_file text")).toBeNull();
+  expect(localStorage.getItem("depo.activity.clearedAt")).toBe(useUi.getState().activityClearedAt);
+  // Something new arrives after the clear.
+  useEngine.setState({
+    events: [
+      ev("e1", "reading_file", { ts: "2026-11-07T10:00:00.000Z" }),
+      ev("e2", "writing_file", { ts: new Date(Date.now() + 1000).toISOString() }),
+    ],
+  });
+  expect(await within(feed).findByText("writing_file text")).toBeTruthy();
+  expect(within(feed).queryByText("reading_file text")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show earlier" }));
+  expect(within(feed).getByText("reading_file text")).toBeTruthy();
+  expect(localStorage.getItem("depo.activity.clearedAt")).toBeNull();
 });

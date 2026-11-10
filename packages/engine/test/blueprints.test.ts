@@ -630,18 +630,16 @@ describe("blueprint RPCs over WebSocket", () => {
     expect(res.project.stack).toContain("FastAPI");
     expect(res.project.description).toBe("Orders and stock.");
     expect(res.files).toBe(findBlueprint("fastapi-service")?.files({ name: "Shop API" }).length);
-    expect(fs.existsSync(path.join(res.project.rootPath, "app", "main.py"))).toBe(true);
+    // The folder stays empty but for the README: the first task writes the blueprint into its
+    // private copy, so the starting project and the work arrive together in one review.
+    expect(fs.existsSync(path.join(res.project.rootPath, "app", "main.py"))).toBe(false);
+    expect(fs.readdirSync(res.project.rootPath).filter((f) => f !== ".git")).toEqual(["README.md"]);
     expect(fs.readFileSync(path.join(res.project.rootPath, "README.md"), "utf8")).toContain(
       "Orders and stock.",
     );
+    expect(e.registry.getSettings(res.project.id).starter).toBe("fastapi-service");
     expect(res.project.isGit).toBe(res.git !== "skipped");
-    if (res.git === "committed") {
-      const log = run(["git", "log", "--oneline"], res.project.rootPath);
-      expect(log.out).toContain("Start from the FastAPI service blueprint");
-      const status = run(["git", "status", "--porcelain"], res.project.rootPath);
-      expect(status.out.trim()).toBe("");
-    }
-    // The agents learn where the project came from.
+    // The agents learn which starting point the owner chose.
     expect(e.memory.list(res.project.id).some((m) => m.text.includes("FastAPI service blueprint"))).toBe(
       true,
     );

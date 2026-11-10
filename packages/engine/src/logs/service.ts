@@ -119,6 +119,13 @@ export class LogService {
     );
   }
 
+  /** The owner's "Clear logs": old files deleted, the current one emptied. */
+  clear(): { removed: number; bytes: number } {
+    const r = this.log.clear();
+    this.log.info("logs cleared by the owner", { files: r.removed, bytes: r.bytes });
+    return r;
+  }
+
   /** Show the logs folder in Explorer (Finder, or the file manager on Linux in dev). */
   openFolder(): { ok: boolean; path: string } {
     const dir = this.log.dir;

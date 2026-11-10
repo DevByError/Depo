@@ -220,6 +220,10 @@ function NewProjectDialog({
                 Run it with <code className="font-mono">{chosen.runCommand}</code>, test it with{" "}
                 <code className="font-mono">{chosen.testCommand}</code>.
               </p>
+              <p className="mt-1 text-[11px] text-subtle">
+                The folder starts with only a README. Your first task builds this starting point and your
+                request together in a private copy, and they arrive in the folder together when you apply.
+              </p>
             </div>
           )}
         </div>
@@ -242,11 +246,6 @@ function NewProjectDialog({
             <input type="checkbox" checked={initGit} onChange={(e) => setInitGit(e.target.checked)} />
             Start a git repository
           </label>
-          {chosen && initGit && (
-            <p className="pl-5 text-[11px] text-subtle">
-              With your git name and email set, the blueprint goes in as the first commit.
-            </p>
-          )}
         </div>
         <ErrorText error={create.error} />
         <div className="flex justify-end gap-2">

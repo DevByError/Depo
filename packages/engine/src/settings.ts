@@ -40,6 +40,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "models.keep_alive": "30m",
   /** Load the model a task's first step uses while the task gets ready (warm-up). */
   "models.preload": true,
+  /** Keep what a stopped run wrote in the private copy for review (off: Stop clears it, so the next run starts clean). */
+  "tasks.keep_stopped_work": false,
 };
 
 export class SettingsRepo {

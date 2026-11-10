@@ -84,7 +84,7 @@ export function blueprintMethods<P extends z.ZodType>(projectSchema: P) {
         .strict(),
       result: z.object({
         project: projectSchema,
-        /** Files written into the new folder. */
+        /** Files the blueprint has; the first task writes them into its private copy (the folder gets only a README). */
         files: z.number().int(),
         git: BlueprintGitSchema,
       }),

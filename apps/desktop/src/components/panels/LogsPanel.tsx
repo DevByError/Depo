@@ -13,6 +13,7 @@ import {
   Play,
   ScrollText,
   Search,
+  Trash2,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
@@ -315,6 +316,7 @@ export function LogsPanel() {
 
         <div className="ml-auto flex items-center gap-1">
           <RecordLevel />
+          <ClearLogsButton onCleared={() => void load()} />
           <ExportButton />
           <OpenFolderButton />
         </div>
@@ -601,6 +603,73 @@ function ExportButton() {
           <FileArchive className="size-3" aria-hidden />
         )}
         Export diagnostics
+      </button>
+    </span>
+  );
+}
+
+/** Deletes the old log files and empties the current one, after a second click to confirm. */
+function ClearLogsButton({ onCleared }: { onCleared: () => void }) {
+  const connected = useEngine((s) => s.status === "open");
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const clear = async () => {
+    setBusy(true);
+    try {
+      const r = await call("logs.clear", {});
+      setNote({ ok: true, text: `Cleared ${formatBytes(r.bytes)} of old logs` });
+      onCleared();
+    } catch (err) {
+      setNote({ ok: false, text: errorText(err) });
+    } finally {
+      setBusy(false);
+      setAsking(false);
+    }
+  };
+  if (asking)
+    return (
+      <span className="flex items-center gap-1 text-[11px]">
+        <span className="text-muted">Delete all log lines so far? This cannot be undone.</span>
+        <button
+          type="button"
+          onClick={() => void clear()}
+          disabled={busy}
+          className="inline-flex h-6 items-center gap-1 rounded-md border border-danger/50 px-2 text-danger hover:bg-danger/10 disabled:opacity-50"
+        >
+          {busy && <Loader2 className="size-3 animate-spin" aria-hidden />}
+          Delete
+        </button>
+        <button
+          type="button"
+          onClick={() => setAsking(false)}
+          className="h-6 rounded-md px-2 text-muted hover:bg-hover hover:text-fg"
+        >
+          Keep
+        </button>
+      </span>
+    );
+  return (
+    <span className="flex items-center gap-1.5">
+      {note && (
+        <span
+          className={cn("max-w-64 truncate text-[11px]", note.ok ? "text-success" : "text-danger")}
+          role="status"
+        >
+          {note.text}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          setNote(null);
+          setAsking(true);
+        }}
+        disabled={!connected}
+        className="inline-flex h-6 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-muted hover:bg-hover hover:text-fg disabled:opacity-50"
+      >
+        <Trash2 className="size-3" aria-hidden />
+        Clear logs
       </button>
     </span>
   );
