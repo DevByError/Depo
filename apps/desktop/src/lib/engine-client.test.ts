@@ -130,6 +130,51 @@ describe("EngineClient", () => {
     c.stop();
   });
 
+  test("remembers how a link ended and reports it when the next one opens", async () => {
+    const c = makeClient();
+    const opens: { code: number | null; attempts: number; connects: number }[] = [];
+    c.onConnected((close, connects) =>
+      opens.push({ code: close?.code ?? null, attempts: close?.attempts ?? 0, connects }),
+    );
+    const s = await opened(c);
+    expect(c.quietMs()).toBeLessThan(1000);
+    // The engine side dropped the link without a goodbye.
+    s.readyState = 3;
+    s.onclose?.({ code: 1006, reason: "", wasClean: false });
+    await vi.waitFor(() => expect(FakeSocket.all.length).toBe(2));
+    // A failed try does not replace the first close's details.
+    FakeSocket.all[1]?.close();
+    await vi.waitFor(() => expect(FakeSocket.all.length).toBe(3));
+    FakeSocket.all[2]?.open();
+    expect(opens).toEqual([
+      { code: null, attempts: 0, connects: 1 },
+      { code: 1006, attempts: 2, connects: 2 },
+    ]);
+    c.stop();
+  });
+
+  test("kick() reconnects at once instead of waiting out the backoff", async () => {
+    const c = new EngineClient({
+      resolveUrl: async () => URL,
+      createSocket: (url) => new FakeSocket(url),
+      minBackoffMs: 60_000,
+      maxBackoffMs: 60_000,
+    });
+    const s = await opened(c);
+    s.close();
+    await Promise.resolve();
+    expect(c.currentStatus).toBe("reconnecting");
+    expect(FakeSocket.all).toHaveLength(1);
+    c.kick();
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(2));
+    FakeSocket.all[1]?.open();
+    expect(c.currentStatus).toBe("open");
+    // Nothing to do while connected.
+    c.kick();
+    expect(FakeSocket.all).toHaveLength(2);
+    c.stop();
+  });
+
   test("times out calls the engine never answers", async () => {
     const c = makeClient();
     await opened(c);

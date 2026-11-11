@@ -46,6 +46,17 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * The engine's worst delay over the heartbeats kept: under 0.1 s is normal; seconds mean something
+ * blocked it (the engine log names what, as "the engine was blocked").
+ */
+export function pauseLabel(lags: (number | undefined)[]): string {
+  const known = lags.filter((l): l is number => typeof l === "number");
+  if (!known.length) return "–";
+  const worst = Math.max(...known);
+  return worst < 100 ? "none" : worst < 1000 ? `${worst} ms` : `${(worst / 1000).toFixed(1)} s`;
+}
+
 export function EngineHealth() {
   const status = useEngine((s) => s.status);
   const statusError = useEngine((s) => s.statusError);
@@ -68,6 +79,7 @@ export function EngineHealth() {
         <Stat label="Heap used" value={last ? formatBytes(last.heapUsedBytes) : "–"} />
         <Stat label="UI clients" value={last ? String(last.connectedClients) : "–"} />
         <Stat label="Events logged (this run)" value={last ? String(last.eventsPersisted) : "–"} />
+        <Stat label="Longest pause (last 2 min)" value={pauseLabel(heartbeats.map((h) => h.details.lagMs))} />
         <div className="rounded-md border border-border bg-raised/40 px-3 py-2">
           <div className="text-[11px] text-subtle">Memory trend</div>
           <Sparkline values={heartbeats.map((h) => h.details.rssBytes)} />

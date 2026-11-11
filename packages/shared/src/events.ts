@@ -106,5 +106,7 @@ export const HeartbeatDetailsSchema = z.object({
   heapUsedBytes: z.number(),
   connectedClients: z.number().int(),
   eventsPersisted: z.number().int(),
+  /** The engine's worst delay since the last beat, in ms (a busy or blocked engine answers late). */
+  lagMs: z.number().nonnegative().optional(),
 });
 export type HeartbeatDetails = z.infer<typeof HeartbeatDetailsSchema>;

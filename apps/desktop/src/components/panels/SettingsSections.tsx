@@ -28,6 +28,7 @@ const numberInput = "h-8 w-16 rounded-md border border-border bg-bg px-2 text-[1
 export function ModelSpeedSettings() {
   const keep = useSetting<string>(SPEED_SETTINGS.keepAlive, DEFAULT_KEEP_ALIVE);
   const preload = useSetting<boolean>(SPEED_SETTINGS.preload, true);
+  const oneModel = useSetting<string>("scheduler.one_model", "auto");
   const known = KEEP_ALIVE_CHOICES.some((c) => c.value === keep.value);
   return (
     <fieldset className="mt-5">
@@ -58,10 +59,24 @@ export function ModelSpeedSettings() {
           />
           Load the next model early
         </label>
+        <label className="flex items-center gap-2">
+          One model at a time on the graphics card
+          <select
+            value={typeof oneModel.value === "string" ? oneModel.value : "auto"}
+            disabled={oneModel.disabled}
+            onChange={(e) => oneModel.set(e.target.value)}
+            className="h-8 rounded-md border border-border bg-bg px-2 text-[13px] text-fg"
+          >
+            <option value="auto">Auto (cards under 8 GB)</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-subtle">
         Loading a model can take a minute on a small graphics card. Keeping it loaded saves that time but
-        holds memory. Loading early starts while a task gets ready.
+        holds memory. Loading early starts while a task gets ready. Two models at once do not fit a small
+        card: the second spills to the processor and the whole PC slows down, so other work waits its turn.
       </p>
     </fieldset>
   );

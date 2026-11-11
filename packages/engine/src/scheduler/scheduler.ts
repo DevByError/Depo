@@ -32,6 +32,12 @@ export interface SchedulerOptions {
   /** How many jobs one project may run at once. */
   projectCap: (projectId: string) => number;
   isProjectPaused: (projectId: string) => boolean;
+  /**
+   * True when the GPU holds one model at a time (small VRAM): a job for another model waits until
+   * the running jobs end, even when `maxParallel` allows more. Two models on a 4 GB card spill to
+   * the CPU and make the whole PC crawl.
+   */
+  oneModel?: () => boolean;
   now?: () => number;
   /** Queue and run times go to the engine log (component "scheduler"). */
   logger?: Logger;
@@ -162,8 +168,16 @@ export class ModelScheduler {
     return n;
   }
 
+  /** Another model is running and this GPU holds one model at a time. */
+  private waitsForOtherModel(j: SchedulerJob): boolean {
+    if (!this.o.oneModel?.()) return false;
+    for (const r of this.running.values()) if (r.model !== j.model) return true;
+    return false;
+  }
+
   private eligible(j: Waiting): boolean {
     if (this.pausedAll) return false;
+    if (this.waitsForOtherModel(j)) return false;
     if (j.projectId) {
       if (this.o.isProjectPaused(j.projectId)) return false;
       if (this.runningFor(j.projectId) >= this.o.projectCap(j.projectId)) return false;
@@ -284,9 +298,11 @@ export class ModelScheduler {
         ? "All model work is paused"
         : j.projectId && this.o.isProjectPaused(j.projectId)
           ? "This project is paused"
-          : i === 0 && this.running.size > 0
-            ? "Waiting for the model to finish another job"
-            : `Waiting for the model: ${i} job${i === 1 ? "" : "s"} ahead`;
+          : this.waitsForOtherModel(j)
+            ? `Waiting for ${[...this.running.values()][0]?.model ?? "another model"} to finish: this graphics card runs one model at a time`
+            : i === 0 && this.running.size > 0
+              ? "Waiting for the model to finish another job"
+              : `Waiting for the model: ${i} job${i === 1 ? "" : "s"} ahead`;
       this.o.bus.emit({
         projectId: j.projectId,
         taskId: j.taskId,
@@ -313,4 +329,21 @@ export class ModelScheduler {
       status: "succeeded",
     });
   }
+}
+
+/**
+ * Whether the GPU should hold one model at a time. `setting` is `scheduler.one_model`: true/"on",
+ * false/"off", or "auto" (default): on when the graphics card has less than 8 GB (a 4 GB card fits
+ * one small model with its context, not two), when there is no GPU, and on a Mac with under 16 GB.
+ */
+export function holdsOneModel(
+  setting: unknown,
+  hw: { gpus: { vramGB: number }[]; ramGB: number; unifiedMemory: boolean } | null,
+): boolean {
+  if (setting === true || setting === "on") return true;
+  if (setting === false || setting === "off") return false;
+  if (!hw) return false;
+  if (hw.unifiedMemory) return hw.ramGB < 16;
+  const vram = Math.max(0, ...hw.gpus.map((g) => g.vramGB));
+  return vram < 8;
 }

@@ -42,6 +42,19 @@ export interface EngineClientOptions {
   maxBackoffMs?: number;
 }
 
+/** How a link to the engine ended, and how long the window waited for the next one. */
+export interface LinkClose {
+  code: number;
+  reason: string;
+  clean: boolean;
+  /** When it ended (Date.now()). */
+  at: number;
+  /** Tries it took to connect again (filled in when the next link opens). */
+  attempts: number;
+  /** How long until the next link opened, in ms (filled in when it opens). */
+  downMs: number;
+}
+
 interface Pending {
   method: ApiMethod;
   resolve: (value: unknown) => void;
@@ -53,7 +66,8 @@ const OPEN = 1;
 
 /**
  * Typed JSON-RPC client for the Depo engine.
- * - Reconnects with exponential backoff and re-resolves the URL each time.
+ * - Reconnects with exponential backoff (at most 2 s apart) and re-resolves the URL each time;
+ *   `kick()` tries at once (the window became visible, the network came back).
  * - Validates every result against the shared API schema (the engine is trusted, but versions can drift).
  * - Rejects in-flight calls when the socket drops, so the UI never waits forever.
  */
@@ -66,14 +80,22 @@ export class EngineClient {
   private readonly pending = new Map<number, Pending>();
   private readonly eventListeners = new Set<(e: DepoEvent) => void>();
   private readonly statusListeners = new Set<(s: ConnectionStatus, error?: string) => void>();
+  private readonly reconnectListeners = new Set<(close: LinkClose | null, connects: number) => void>();
   private readonly opts: Required<EngineClientOptions>;
+  /** Links opened since the window loaded. */
+  private connects = 0;
+  /** How the last link ended (null until one ends). */
+  private lastClose: LinkClose | null = null;
+  /** When the last message from the engine arrived (Date.now()), 0 before any. */
+  private lastMessageAt = 0;
 
   constructor(opts: EngineClientOptions) {
     this.opts = {
       createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
       callTimeoutMs: 15_000,
       minBackoffMs: 250,
-      maxBackoffMs: 5_000,
+      // A local engine that dropped the link is usually back within a second or two: try often.
+      maxBackoffMs: 2_000,
       ...opts,
     };
   }
@@ -90,6 +112,25 @@ export class EngineClient {
   onStatus(fn: (s: ConnectionStatus, error?: string) => void): () => void {
     this.statusListeners.add(fn);
     return () => this.statusListeners.delete(fn);
+  }
+
+  /** Told each time a link opens: how the previous one ended (null for the first) and the count. */
+  onConnected(fn: (close: LinkClose | null, connects: number) => void): () => void {
+    this.reconnectListeners.add(fn);
+    return () => this.reconnectListeners.delete(fn);
+  }
+
+  /** Milliseconds since the engine last sent anything (heartbeats come every 2 s); null before any. */
+  quietMs(now = Date.now()): number | null {
+    return this.lastMessageAt ? now - this.lastMessageAt : null;
+  }
+
+  /** Waiting to reconnect: try now instead of after the backoff. */
+  kick(): void {
+    if (this.status !== "reconnecting" || !this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    void this.connect();
   }
 
   start(): void {
@@ -144,16 +185,39 @@ export class EngineClient {
     const socket = this.opts.createSocket(url);
     this.socket = socket;
     socket.onopen = () => {
+      const tries = this.attempt;
       this.attempt = 0;
+      this.connects++;
+      this.lastMessageAt = Date.now();
+      if (this.lastClose) {
+        this.lastClose.attempts = tries;
+        this.lastClose.downMs = Date.now() - this.lastClose.at;
+      }
       this.setStatus("open");
+      for (const fn of this.reconnectListeners) fn(this.lastClose, this.connects);
     };
-    socket.onmessage = (ev) => this.handleMessage(ev.data);
+    socket.onmessage = (ev) => {
+      this.lastMessageAt = Date.now();
+      this.handleMessage(ev.data);
+    };
     socket.onerror = () => {
       // onclose follows and handles reconnection.
     };
-    socket.onclose = () => {
+    socket.onclose = (ev) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      // Only a link that was open counts: a failed try keeps the first close's details.
+      if (this.status === "open") {
+        const e = (ev ?? {}) as { code?: unknown; reason?: unknown; wasClean?: unknown };
+        this.lastClose = {
+          code: typeof e.code === "number" ? e.code : 1006,
+          reason: typeof e.reason === "string" ? e.reason.slice(0, 200) : "",
+          clean: e.wasClean === true,
+          at: Date.now(),
+          attempts: 0,
+          downMs: 0,
+        };
+      }
       this.rejectAll("Connection to the engine was lost");
       if (this.status !== "stopped") this.scheduleReconnect("Connection lost");
     };

@@ -10,6 +10,8 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "quality.mode": "max_quality",
   /** Model requests served at once across all projects (one local GPU: usually 1). */
   "scheduler.max_parallel": 1,
+  /** One model on the GPU at a time: "auto" (on for cards under 8 GB), "on" or "off". */
+  "scheduler.one_model": "auto",
   /** Ask the user to approve the Manager's plan before the team starts. */
   "team.approve_plan": true,
   /** Who reviews agent output: "all" (every task), "key" (architecture and API work only) or "off". */

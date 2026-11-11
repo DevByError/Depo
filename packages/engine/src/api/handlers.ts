@@ -19,6 +19,7 @@ import type { EventBus } from "../events/bus";
 import type { GitService } from "../git/service";
 import type { OsvService } from "../knowledge/osv";
 import type { KnowledgeService } from "../knowledge/service";
+import { getLogger } from "../logger";
 import type { LogService } from "../logs/service";
 import type { McpManager } from "../mcp/manager";
 import { readableDir } from "../memory/auto";
@@ -152,6 +153,12 @@ export type Handlers = {
 /** Engine API implementation. Pure functions of (params, context): no UI, no transport. */
 export const handlers: Handlers = {
   "system.ping": () => ({ pong: true, serverTime: new Date().toISOString() }),
+  "system.clientReport": (p) => {
+    const log = getLogger({ component: "ui" });
+    const dropped = p.lastClose !== null && p.lastClose.code !== 1000;
+    log[dropped || p.pageLoads > 1 || p.freezes > 0 ? "warn" : "info"]("ui report", { ...p });
+    return { ok: true as const };
+  },
 
   "system.info": (_params, ctx) => systemInfo(ctx),
 

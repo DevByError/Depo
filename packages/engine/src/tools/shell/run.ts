@@ -226,7 +226,13 @@ async function spawnContained(o: {
   }
   const killTree = () => {
     if (job) job.terminate(1);
-    else if (win) Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(proc.pid)], { windowsHide: true });
+    // Not spawnSync: taskkill takes a second or more on a busy PC, and the engine must keep answering.
+    else if (win)
+      Bun.spawn(["taskkill", "/T", "/F", "/PID", String(proc.pid)], {
+        windowsHide: true,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
     else {
       try {
         process.kill(-proc.pid, "SIGKILL");

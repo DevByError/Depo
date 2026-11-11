@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { removeInBackground, removeTree } from "../util/remove";
 
 /**
  * Screenshots and PDFs through the browser that is already on the PC (Edge, Chrome or Chromium)
@@ -78,7 +79,7 @@ async function runBrowser(
     clearTimeout(timer);
     return { code, err };
   } finally {
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    if (!(await removeTree(profile, { tries: 3, delayMs: 100 }))) removeInBackground(profile);
   }
 }
 

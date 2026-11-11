@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_IGNORES } from "../tools/fs-tools";
 import { toRel } from "../tools/paths";
+import { moveAsideAndRemove } from "../util/remove";
 
 /**
  * Folders that are linked into the shadow workspace instead of copied: they are large,
@@ -114,7 +115,11 @@ export function removeShadow(dest: string): void {
   }
   // Links in sub-projects (frontend/node_modules …), made when a preview runs a monorepo copy.
   unlinkNested(dest, 0);
-  fs.rmSync(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // Renamed away at once and deleted in the background: a copy with installed packages holds
+  // thousands of files, and a blocking delete froze the engine (heartbeat and replies) meanwhile.
+  moveAsideAndRemove(dest, () =>
+    fs.rmSync(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+  );
 }
 
 function isLink(p: string): boolean {

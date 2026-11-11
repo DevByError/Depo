@@ -17,6 +17,7 @@ import type { Logger } from "../logger";
 import { isBinary } from "../tools/fs-tools";
 import { gitStatus, isGitRepo } from "../tools/git";
 import { isWithin, resolveInside } from "../tools/paths";
+import { removeInBackground, sweepTrash } from "../util/remove";
 import { applyHunks, computeChanges } from "./changes";
 import { createShadow, hashBytes, hashFile, type Manifest, removeShadow } from "./snapshot";
 
@@ -151,7 +152,7 @@ export class ProjectService {
     for (const t of taskRows) {
       if (t.workspacePath) this.removeWorkspaceDir(t.workspacePath);
     }
-    for (const c of cps) fs.rmSync(path.join(this.dirs.checkpoints, c.id), { recursive: true, force: true });
+    for (const c of cps) removeInBackground(path.join(this.dirs.checkpoints, c.id));
     this.bus.emit({
       projectId: id,
       agent: "engine",
@@ -221,6 +222,11 @@ export class ProjectService {
   // ---- workspaces ------------------------------------------------------------------------
 
   private readonly removalHooks: ((dir: string) => void)[] = [];
+
+  /** Delete copies and checkpoints a previous run was still deleting when it ended. */
+  sweepTrash(): number {
+    return sweepTrash(this.dirs.workspaces) + sweepTrash(this.dirs.checkpoints);
+  }
 
   /** Called just before a shadow workspace folder is deleted (previews running from it stop). */
   beforeWorkspaceRemoved(hook: (dir: string) => void): void {

@@ -5,6 +5,7 @@ import type { ConsoleIssue, FailedRequest } from "@depo/shared";
 import { loopbackUrl } from "../preview/http-check";
 import { commandEnv } from "../tools/shell/run";
 import { attachJob, type JobHandle } from "../tools/shell/winjob";
+import { removeInBackground, removeTree } from "../util/remove";
 import { findBrowser } from "./browser";
 
 /**
@@ -797,9 +798,17 @@ export async function launchBrowser(
   void proc.exited.then(() => {
     exited = true;
   });
-  const killTree = () => {
+  // `wait` false (the exit hook) kills at once; otherwise taskkill runs without blocking the engine.
+  const killTree = (wait = false) => {
     if (job) job.terminate(1);
-    else if (win) Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(proc.pid)], { windowsHide: true });
+    else if (win && wait)
+      Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(proc.pid)], { windowsHide: true });
+    else if (win)
+      Bun.spawn(["taskkill", "/T", "/F", "/PID", String(proc.pid)], {
+        windowsHide: true,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
     else {
       try {
         process.kill(-proc.pid, "SIGKILL");
@@ -812,7 +821,7 @@ export async function launchBrowser(
       }
     }
   };
-  const handle = { kill: killTree, profile };
+  const handle = { kill: () => killTree(true), profile };
   liveBrowsers.add(handle);
   if (!exitHooked) {
     exitHooked = true;
@@ -858,7 +867,10 @@ export async function launchBrowser(
     await Promise.race([proc.exited, Bun.sleep(2000)]);
     job?.close();
     liveBrowsers.delete(handle);
-    removeProfile(profile);
+    // Not a blocking delete: Edge may hold its profile files for a moment after it exits, and
+    // rmSync with retries stopped the engine (heartbeat included) for seconds. A profile still
+    // locked after a few tries is left to a background delete.
+    if (!(await removeTree(profile, { tries: 3, delayMs: 100 }))) removeInBackground(profile);
   };
 
   try {

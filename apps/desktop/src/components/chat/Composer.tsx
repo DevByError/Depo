@@ -281,13 +281,19 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
         const r = await call("tasks.steer", { taskId: task.id, text: body });
         return { taskId: r.taskId, queued: r.delivery === "queued" };
       }
-      const t = await call("tasks.send", {
-        projectId: projectId ?? "",
-        text: body,
-        ...(task ? { taskId: task.id } : {}),
-        ...(!task && mode !== "single" ? { mode } : {}),
-        ...(refs.length ? { references: refs.map((d) => d.input) } : {}),
-      });
+      // Pictures make a big message and a busy PC answers slowly: wait longer than for a click.
+      // A send that still fails is safe to repeat (the engine opens the working task instead).
+      const t = await call(
+        "tasks.send",
+        {
+          projectId: projectId ?? "",
+          text: body,
+          ...(task ? { taskId: task.id } : {}),
+          ...(!task && mode !== "single" ? { mode } : {}),
+          ...(refs.length ? { references: refs.map((d) => d.input) } : {}),
+        },
+        { timeoutMs: 60_000 },
+      );
       return { taskId: t.id, queued: false };
     },
     onSuccess: (r, sent) => {

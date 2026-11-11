@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ChatMessage } from "@depo/model-gateway";
@@ -137,6 +138,8 @@ export function promptBudgets(contextLength: number): { memory: number; repoMap:
  */
 export class TaskManager {
   private readonly running = new Map<string, AbortController>();
+  /** A new task's request (text and pictures) -> the task working on it; a resend opens that task. */
+  private readonly bySignature = new Map<string, string>();
   private readonly done = new Map<string, Promise<void>>();
   private readonly log: Logger;
   readonly blackboard: Blackboard;
@@ -450,6 +453,11 @@ export class TaskManager {
     this.steer(req.taskId, `Declined: ${req.title.trim().replace(/\?$/, "")}. Reason: ${why}`);
   }
 
+  /** Ids of the tasks working right now. */
+  runningIds(): string[] {
+    return [...this.running.keys()];
+  }
+
   /** Start a new task, or continue an existing one with a follow-up message. */
   send(
     projectId: string,
@@ -475,7 +483,27 @@ export class TaskManager {
         this.o.db.update(tasks).set({ mode }).where(eq(tasks.id, id)).run();
       }
     } else {
+      // The same request again while the first copy still works (the owner thought it was stuck,
+      // or the link dropped while sending): open the working task instead of starting a second
+      // run that competes for the same model and GPU.
+      const sig = requestSignature(projectId, text, references);
+      for (const [k, t] of this.bySignature) if (!this.running.has(t)) this.bySignature.delete(k);
+      const same = this.bySignature.get(sig);
+      if (same) {
+        this.log.info("same request sent again; the working task is kept", { taskId: same, projectId });
+        this.o.bus.emit({
+          agent: "engine",
+          projectId,
+          taskId: same,
+          type: "info",
+          text: "You sent the same request again. Depo is still working on it here, so it did not start a second copy.",
+          details: { duplicateSend: true },
+          status: "info",
+        });
+        return this.get(same).task;
+      }
       id = newId("tsk");
+      this.bySignature.set(sig, id);
       // Checked and stored before the task exists, so a bad picture never leaves an empty task.
       refIds = this.saveReferences(id, references);
       const title = text.trim().split("\n")[0]?.slice(0, 80) ?? "Task";
@@ -1867,3 +1895,17 @@ export function clipArgs(value: unknown, maxString = 4000): Record<string, JsonV
 }
 
 export { compressHistory, isBadModelOutput } from "./loop";
+
+/** What makes two new-task requests the same: project, text (spacing aside) and the same pictures and links. */
+export function requestSignature(projectId: string, text: string, references: ReferenceInput[]): string {
+  const h = createHash("sha256");
+  h.update(projectId);
+  h.update("\0");
+  h.update(text.trim().replace(/\s+/g, " "));
+  for (const r of references) {
+    h.update("\0");
+    if (r.kind === "image") h.update(createHash("sha256").update(r.data).digest("hex"));
+    else h.update(r.url);
+  }
+  return h.digest("hex");
+}

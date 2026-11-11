@@ -4,6 +4,7 @@ import { systemNotify, useNotifications } from "@/store/notifications";
 import { useUi } from "@/store/ui";
 import { isTauri, resolveEngineUrl } from "./connection";
 import { EngineClient } from "./engine-client";
+import { buildReport, countPageLoad, FreezeMeter, worthReporting } from "./link-report";
 import { eventToNotice } from "./notify";
 import { queryClient } from "./query";
 import { invalidateForChecks } from "./terminal";
@@ -73,7 +74,37 @@ export function startEngineConnection(): void {
     }
   });
   void listenForEngineExits();
+  watchLink();
   engine.start();
+}
+
+/**
+ * Keep the link healthy and explainable: try again at once when the window comes back (shown,
+ * focused, network back) instead of waiting out the backoff, and after each reconnect tell the
+ * engine how the last link ended, whether the window was reloaded and how long it froze.
+ */
+function watchLink(): void {
+  const pageLoads = countPageLoad(globalThis.sessionStorage);
+  const freezes = new FreezeMeter();
+  freezes.observe();
+  const visible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+  engine.onConnected((close, connects) => {
+    const report = buildReport({
+      close,
+      connects,
+      pageLoads: connects === 1 ? pageLoads : 1,
+      freezes: freezes.take(),
+      visible: visible(),
+    });
+    if (worthReporting(report)) void call("system.clientReport", report).catch(() => {});
+  });
+  if (typeof window === "undefined") return;
+  const kick = () => engine.kick();
+  window.addEventListener("online", kick);
+  window.addEventListener("focus", kick);
+  document.addEventListener("visibilitychange", () => {
+    if (visible()) kick();
+  });
 }
 
 /** Keep cached queries fresh when the engine reports a change. */

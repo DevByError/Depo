@@ -1140,10 +1140,46 @@ const ModelMethods = {
  * The engine's public API. Every method has a Zod schema for params and result.
  * The engine validates params; the client validates results. Add methods here first.
  */
+export const ClientReportSchema = z
+  .object({
+    /** How many times this window connected since it loaded. */
+    connects: z.number().int().nonnegative(),
+    /** Loads of this window in this session: more than 1 means it was reloaded (F5 or a crash). */
+    pageLoads: z.number().int().nonnegative(),
+    /** How the previous link ended (null for the first link after a load). */
+    lastClose: z
+      .object({
+        code: z.number().int(),
+        reason: z.string().max(200),
+        clean: z.boolean(),
+        /** How long ago it ended, in ms. */
+        agoMs: z.number().nonnegative(),
+        /** How long the window waited before it was connected again, in ms. */
+        downMs: z.number().nonnegative(),
+        attempts: z.number().int().nonnegative(),
+      })
+      .nullable(),
+    /** Window freezes of a second or more since the last report, and the longest, in ms. */
+    freezes: z.number().int().nonnegative(),
+    longestFreezeMs: z.number().nonnegative(),
+    visible: z.boolean(),
+  })
+  .strict();
+export type ClientReport = z.infer<typeof ClientReportSchema>;
+
 export const ApiSchema = {
   "system.ping": {
     params: z.object({}).strict(),
     result: z.object({ pong: z.literal(true), serverTime: z.string() }),
+  },
+  /**
+   * The window tells the engine how its link went, after it connects again: how the last link
+   * ended, whether the page was reloaded, and how long the window itself froze. Written to the
+   * engine log, so a dropped link can be explained afterwards.
+   */
+  "system.clientReport": {
+    params: ClientReportSchema,
+    result: z.object({ ok: z.literal(true) }),
   },
   "system.info": {
     params: z.object({}).strict(),

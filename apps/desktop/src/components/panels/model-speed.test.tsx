@@ -203,6 +203,13 @@ test("settings: keep models loaded for, and load the next model early", async ()
   expect(early.checked).toBe(true);
   fireEvent.click(early);
   await waitFor(() => expect(store["models.preload"]).toBe(false));
+  // A 4 GB card holds one model: "auto" turns that on; the owner can force it on or off.
+  const one = screen.getByLabelText("One model at a time on the graphics card") as HTMLSelectElement;
+  await waitFor(() => expect(one.disabled).toBe(false));
+  expect(one.value).toBe("auto");
+  expect([...one.options].map((o) => o.textContent)).toEqual(["Auto (cards under 8 GB)", "On", "Off"]);
+  fireEvent.change(one, { target: { value: "off" } });
+  await waitFor(() => expect(store["scheduler.one_model"]).toBe("off"));
 });
 
 test("settings: a value set elsewhere shows as a custom choice", async () => {

@@ -23,18 +23,31 @@ export interface ApiServerOptions {
   bus: EventBus;
   logger: Logger;
   maxPayloadBytes?: number;
+  /** Told when a call starts (the freeze watchdog notes what the engine is doing). */
+  onCall?: (method: string) => void;
 }
 
 export interface ApiServer {
   port: number;
   clientCount(): number;
+  /** Calls being answered right now, oldest first. */
+  inflight(): { method: string; ms: number }[];
   stop(): Promise<void>;
 }
 
 interface SocketData {
   clientId: number;
+  openedAt?: number;
   unsubscribe?: () => void;
 }
+
+/**
+ * Room for one message from the UI: a message may carry up to 4 design pictures of 5 MB each,
+ * which are about 27 MB as base64. A bigger message makes Bun close the link (code 1009).
+ */
+export const MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
+/** A call slower than this is written to the log (what kept the engine busy). */
+const SLOW_CALL_MS = 2000;
 
 /** Origins the WebView2 shell and the dev server use. Non-browser clients send no Origin. */
 export function isAllowedOrigin(origin: string | null): boolean {
@@ -65,6 +78,8 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
   let nextClientId = 1;
   const clients = new Set<ServerWebSocket<SocketData>>();
   const log = opts.logger.child({ component: "api" });
+  let nextCall = 1;
+  const calls = new Map<number, { method: string; started: number }>();
 
   const send = (ws: ServerWebSocket<SocketData>, msg: RpcResponse | RpcNotification) => {
     ws.send(JSON.stringify(msg));
@@ -94,13 +109,18 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
       return fail(id, { code: RpcErrorCode.InvalidParams, message: "Invalid params", data: p.error.issues });
     }
     const started = performance.now();
+    const callId = nextCall++;
+    calls.set(callId, { method, started });
+    opts.onCall?.(method);
     try {
       // The handler map is keyed by method; TypeScript cannot correlate the union here.
       const handler = opts.handlers[method] as (params: unknown, ctx: HandlerContext) => unknown;
       const result = await handler(p.data, opts.context);
+      const durationMs = Math.round(performance.now() - started);
       // The Logs view polls logs.tail; logging those calls would only feed the view itself.
-      if (!method.startsWith("logs.") && method !== "system.ping") {
-        log.debug("api call", { method, durationMs: Math.round(performance.now() - started) });
+      if (durationMs >= SLOW_CALL_MS) log.info("slow api call", { method, durationMs });
+      else if (!method.startsWith("logs.") && method !== "system.ping") {
+        log.debug("api call", { method, durationMs });
       }
       return { jsonrpc: "2.0", id, result };
     } catch (err) {
@@ -109,6 +129,8 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
         code: RpcErrorCode.InternalError,
         message: err instanceof Error ? err.message : "Internal error",
       });
+    } finally {
+      calls.delete(callId);
     }
   };
 
@@ -130,12 +152,13 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
     },
     websocket: {
-      // Room for design reference pictures (up to 5 MB each, sent as base64 with the message).
-      maxPayloadLength: opts.maxPayloadBytes ?? 16 * 1024 * 1024,
+      maxPayloadLength: opts.maxPayloadBytes ?? MAX_MESSAGE_BYTES,
       idleTimeout: 120,
       sendPings: true,
       open(ws) {
         clients.add(ws);
+        ws.data.openedAt = Date.now();
+        log.info("ui client connected", { clientId: ws.data.clientId, clients: clients.size });
         ws.data.unsubscribe = opts.bus.subscribe((event: DepoEvent) => {
           send(ws, { jsonrpc: "2.0", method: "event", params: event });
         });
@@ -150,14 +173,23 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
         const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
         send(ws, await dispatch(raw));
       },
-      close(ws) {
+      close(ws, code, reason) {
         ws.data.unsubscribe?.();
         clients.delete(ws);
+        // Who closed the link and why: 1000/1001 = closed on purpose (window reload or quit),
+        // 1006 = dropped without a goodbye, 1009 = a message was too big.
+        log.info("ui client disconnected", {
+          clientId: ws.data.clientId,
+          code,
+          reason: reason || null,
+          connectedMs: ws.data.openedAt ? Date.now() - ws.data.openedAt : null,
+          clients: clients.size,
+        });
         opts.bus.emit({
           agent: "engine",
           type: "client_disconnected",
           text: `UI client #${ws.data.clientId} disconnected`,
-          details: { clientId: ws.data.clientId, clients: clients.size },
+          details: { clientId: ws.data.clientId, clients: clients.size, code, reason: reason || null },
         });
       },
     },
@@ -170,6 +202,10 @@ export function startApiServer(opts: ApiServerOptions): ApiServer {
   return {
     port,
     clientCount: () => clients.size,
+    inflight: () => {
+      const now = performance.now();
+      return [...calls.values()].map((c) => ({ method: c.method, ms: Math.round(now - c.started) }));
+    },
     stop: async () => {
       for (const ws of clients) ws.close(1001, "Engine stopping");
       await server.stop(true);

@@ -39,7 +39,7 @@ import { ProjectRegistry } from "./projects/registry";
 import { QaService, type QaServiceOptions } from "./qa/service";
 import { type ReadinessHooks, ReadinessService } from "./readiness/service";
 import { ReferenceService, type ReferenceServiceOptions } from "./references/service";
-import { ModelScheduler } from "./scheduler/scheduler";
+import { holdsOneModel, ModelScheduler } from "./scheduler/scheduler";
 import { SearchService } from "./search/service";
 import { SecurityService } from "./security/service";
 import { SettingsRepo } from "./settings";
@@ -47,6 +47,8 @@ import { SkillService } from "./skills/service";
 import { TerminalService } from "./terminal/service";
 import { TOOLS } from "./tools/index";
 import type { GithubEndpoints } from "./util/github";
+import { type RunMarker, startRunMark } from "./util/runmark";
+import { startWatchdog, type Watchdog } from "./util/watchdog";
 import { ProjectService } from "./workspace/service";
 
 export interface EngineOptions {
@@ -60,6 +62,8 @@ export interface EngineOptions {
   openFolder?: (dir: string) => void;
   /** Overrides the `engine.heartbeat_ms` setting (tests). */
   heartbeatMs?: number;
+  /** false = no freeze watcher thread (the stall meter still runs). */
+  watchdog?: boolean;
   /** Test hooks for the model manager (fake hardware, fake providers). */
   models?: Pick<ModelManagerOptions, "profile" | "providerFactory" | "ollamaModelsDir">;
   /** Test hooks for the agent loop. */
@@ -195,6 +199,15 @@ export function createEngine(opts: EngineOptions): Engine {
     },
     projectCap: (id) => safeSettings(registry, id)?.maxParallel ?? 1,
     isProjectPaused: (id) => safeSettings(registry, id)?.paused ?? false,
+    oneModel: () => {
+      let v: unknown;
+      try {
+        v = settings.get("scheduler.one_model");
+      } catch {
+        v = "auto";
+      }
+      return holdsOneModel(v, models.hardware());
+    },
   });
   const embeddings = embeddingSource(models);
   const indexer = new CodeIndexer({
@@ -498,6 +511,32 @@ export function createEngine(opts: EngineOptions): Engine {
   let server: ApiServer | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let stopped = false;
+  let watchdog: Watchdog | null = null;
+  let runMark: RunMarker | null = null;
+  let lastMarkAt = 0;
+
+  // What the engine is doing, for the freeze watchdog and the run mark: calls being answered,
+  // tasks working and the latest event (the Manager's "reading the request" line, a file write).
+  let lastEvent = "";
+  bus.subscribe((e) => {
+    if (e.type === "heartbeat") return;
+    lastEvent = `${e.agent}: ${e.text}`.slice(0, 160);
+  });
+  const activity = (): string => {
+    const parts: string[] = [];
+    const calls = server?.inflight() ?? [];
+    if (calls.length)
+      parts.push(
+        `answering ${calls
+          .slice(0, 4)
+          .map((c) => `${c.method} (${(c.ms / 1000).toFixed(1)} s)`)
+          .join(", ")}`,
+      );
+    const working = tasks.runningIds();
+    if (working.length) parts.push(`${working.length} task${working.length === 1 ? "" : "s"} working`);
+    if (lastEvent) parts.push(`last event: ${lastEvent}`);
+    return parts.join("; ") || "idle";
+  };
 
   const beat = () => {
     const mem = process.memoryUsage();
@@ -507,7 +546,12 @@ export function createEngine(opts: EngineOptions): Engine {
       heapUsedBytes: mem.heapUsed,
       connectedClients: server?.clientCount() ?? 0,
       eventsPersisted: bus.persistedCount,
+      lagMs: watchdog?.takeLag() ?? 0,
     };
+    if (runMark && Date.now() - lastMarkAt >= 5000) {
+      lastMarkAt = Date.now();
+      runMark.alive(activity());
+    }
     bus.emit({
       agent: "engine",
       type: "heartbeat",
@@ -550,12 +594,38 @@ export function createEngine(opts: EngineOptions): Engine {
     devdb,
     database,
     async start() {
+      runMark = startRunMark(dirs.root);
+      const last = runMark.lastRun;
+      if (last) {
+        logger.warn("the last engine run did not stop cleanly", {
+          pid: last.pid,
+          startedAt: last.startedAt,
+          lastAliveAt: last.aliveAt,
+          uptimeMs: last.uptimeMs,
+          doing: last.doing,
+        });
+        bus.emit({
+          agent: "engine",
+          type: "warning",
+          text: `Depo's engine did not stop cleanly last time. Its last sign of life was at ${clock(last.aliveAt)}, after ${Math.round(last.uptimeMs / 60_000)} min, while ${last.doing || "idle"}. It was closed by force, crashed or froze; the engine log ends there.`,
+          details: { lastRun: { ...last } },
+          status: "info",
+        });
+      }
+      const swept = projects.sweepTrash();
+      if (swept) logger.info("deleting leftovers of the last run in the background", { folders: swept });
+      watchdog = startWatchdog({
+        logger,
+        logFile: opts.watchdog === false ? null : path.join(dirs.logs, "engine.log"),
+        activity,
+      });
       server = startApiServer({
         token: opts.token,
         port: opts.port ?? 0,
         handlers,
         bus,
         logger,
+        onCall: (method) => watchdog?.note(`answering ${method}; ${activity()}`),
         context: {
           bus,
           settings,
@@ -620,6 +690,8 @@ export function createEngine(opts: EngineOptions): Engine {
       if (stopped) return;
       stopped = true;
       if (heartbeat) clearInterval(heartbeat);
+      watchdog?.stop();
+      watchdog = null;
       bus.emit({
         agent: "engine",
         type: "engine_stopping",
@@ -639,11 +711,20 @@ export function createEngine(opts: EngineOptions): Engine {
       await mcp.stopAll();
       await server?.stop();
       database.close();
+      runMark?.stopped(reason);
       logger.info("engine stopped", { reason });
       logger.flush();
       if (getDefaultLogger() === logger) setDefaultLogger(null);
     },
   };
+}
+
+/** "11:46:13" in the PC's local time, for a message to the owner. */
+function clock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
 }
 
 function safeSettings(registry: ProjectRegistry, id: string) {
