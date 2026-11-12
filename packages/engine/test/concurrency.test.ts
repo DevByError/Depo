@@ -34,6 +34,7 @@ async function setup(stepDelayMs: number) {
   });
   engine = e;
   await e.start();
+  e.settings.set("depomd.auto", false);
   e.models.setProviders([{ id: "ollama", kind: "ollama", baseUrl: fake.url, enabled: true }]);
   e.models.assign("coder", { providerId: "ollama", model: "qwen2.5-coder:1.5b" });
   const open = async (name: string) => {

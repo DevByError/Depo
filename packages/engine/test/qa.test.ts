@@ -541,6 +541,7 @@ describe("with the scripted model", () => {
     });
     stops.push(() => e.stop("test"));
     await e.start();
+    e.settings.set("depomd.auto", false);
     e.models.setProviders([{ id: "ollama", kind: "ollama", baseUrl: ollama.url, enabled: true }]);
     e.models.assign("coder", { providerId: "ollama", model: "qwen2.5-coder:1.5b" });
     e.settings.set("memory.auto", false);

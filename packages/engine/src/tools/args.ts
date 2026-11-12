@@ -55,9 +55,9 @@ export function projectPath(p: string, root?: string): string {
   if (!s.startsWith("/") && !s.startsWith("\\")) return s;
   if (root) {
     const norm = (x: string) => x.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-    const r = norm(path.resolve(root));
     const n = norm(s);
-    if (n === r || n.startsWith(`${r}/`)) return s;
+    // The root as given and as resolved (on Windows "/tmp/x" resolves under the current drive).
+    for (const r of [norm(root), norm(path.resolve(root))]) if (n === r || n.startsWith(`${r}/`)) return s;
   }
   return s.replace(/^[/\\]+/, "") || ".";
 }

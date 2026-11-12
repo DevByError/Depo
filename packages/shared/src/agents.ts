@@ -334,3 +334,50 @@ export const TeamTimelineSchema = z.object({
   decisions: z.array(TeamDecisionSchema),
 });
 export type TeamTimeline = z.infer<typeof TeamTimelineSchema>;
+
+/** The "Showcase" screen: real numbers from this PC and the feature list (rpc `showcase.get`). */
+export const ShowcaseSchema = z.object({
+  generatedAt: z.string(),
+  totals: z.object({
+    agents: z.number(),
+    agentVersions: z.number(),
+    evalRuns: z.number(),
+    tasks: z.number(),
+    tasksReviewed: z.number(),
+    events: z.number(),
+    toolCalls: z.number(),
+    toolFailures: z.number(),
+    errors: z.number(),
+    approvalsAsked: z.number(),
+    approvalsAutomatic: z.number(),
+    projects: z.number(),
+    memoryFacts: z.number(),
+  }),
+  tasksByStatus: z.array(z.object({ status: z.string(), count: z.number() })),
+  agents: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      group: z.string(),
+      activeVersion: z.string(),
+      versions: z.array(
+        z.object({
+          version: z.string(),
+          note: z.string(),
+          source: z.string(),
+          active: z.boolean(),
+          score: z.number().nullable(),
+        }),
+      ),
+    }),
+  ),
+  recentErrors: z.array(z.object({ at: z.string(), agent: z.string(), text: z.string() })),
+  library: z.object({
+    tools: z.number(),
+    blueprints: z.array(z.string()),
+    blocks: z.number(),
+    playbooks: z.number(),
+  }),
+  features: z.array(z.object({ area: z.string(), title: z.string(), detail: z.string() })),
+});
+export type Showcase = z.infer<typeof ShowcaseSchema>;

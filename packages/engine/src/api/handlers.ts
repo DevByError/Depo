@@ -26,7 +26,9 @@ import { readableDir } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import { checkSpeedSetting } from "../models/speed";
+import { TOPICS } from "../playbooks";
 import type { PreviewManager } from "../preview/manager";
+import { readDepoMd } from "../projectdoc/depomd";
 import type { ProjectRegistry } from "../projects/registry";
 import type { QaService } from "../qa/service";
 import type { ReadinessService } from "../readiness/service";
@@ -35,6 +37,7 @@ import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SearchService } from "../search/service";
 import type { SecurityService } from "../security/service";
 import type { SettingsRepo } from "../settings";
+import { buildShowcase } from "../showcase";
 import type { SkillService } from "../skills/service";
 import type { TerminalService } from "../terminal/service";
 import { checkForUpdate } from "../util/update";
@@ -326,7 +329,11 @@ export const handlers: Handlers = {
   "tasks.list": (p, ctx) => ({ tasks: ctx.tasks.list(p.projectId) }),
   "tasks.active": (_p, ctx) => ({ tasks: ctx.tasks.active() }),
   "tasks.get": (p, ctx) => ctx.tasks.get(p.id),
-  "tasks.send": (p, ctx) => ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode, p.references ?? []),
+  "tasks.send": (p, ctx) => {
+    const t = ctx.tasks.send(p.projectId, p.text, p.taskId, p.mode, p.references ?? []);
+    if (p.allowAll) ctx.approvals.allowTask(t.id);
+    return t;
+  },
   "devdb.status": (p, ctx) => needDevDb(ctx).status(p.projectId),
   "devdb.start": async (p, ctx) =>
     needDevDb(ctx).ensure(p.projectId, { name: (await ctx.projects.get(p.projectId)).name, agent: "owner" }),
@@ -362,6 +369,8 @@ export const handlers: Handlers = {
     })),
   }),
   "lab.agents": (_p, ctx) => ({ agents: ctx.lab.list() }),
+  "lab.installUpgrades": (_p, ctx) => ctx.lab.installUpgrades(),
+  "showcase.get": (_p, ctx) => buildShowcase(ctx.lab, { playbooks: TOPICS.length }),
   "lab.versions": (p, ctx) => ({
     versions: ctx.lab.versions(p.agentId),
     history: ctx.lab.history(p.agentId),
@@ -516,6 +525,11 @@ export const handlers: Handlers = {
       .runtimes()
       .map((r) => ({ id: r.id, name: r.name, install: r.install, installed: r.installed })),
   }),
+  "depomd.get": async (p, ctx) => {
+    const project = await ctx.projects.get(p.projectId);
+    const text = readDepoMd(project.rootPath);
+    return { exists: text !== "", text: text.slice(0, 60_000) };
+  },
   "security.scan": async (p, ctx) => {
     const project = await ctx.projects.get(p.projectId);
     return ctx.security.scan(project.rootPath, { projectId: p.projectId });

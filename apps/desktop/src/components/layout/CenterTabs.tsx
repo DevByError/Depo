@@ -16,6 +16,7 @@ import {
   Presentation,
   Puzzle,
   ShieldCheck,
+  Sparkles,
   UsersRound,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
@@ -34,6 +35,7 @@ import { PhaseNotice } from "@/components/panels/PhaseNotice";
 import { PlanBoard } from "@/components/panels/PlanBoard";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
 import { SecurityPanel } from "@/components/panels/SecurityPanel";
+import { ShowcasePanel } from "@/components/panels/ShowcasePanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { SlidesPanel } from "@/components/panels/SlidesPanel";
 import { TeamPanel } from "@/components/panels/TeamPanel";
@@ -59,6 +61,7 @@ export const CENTER_TABS: TabDef[] = [
   { id: "diagrams", label: "Diagrams", icon: Network },
   { id: "slides", label: "Slides", icon: Presentation },
   { id: "agent-lab", label: "Agent Lab", icon: FlaskConical },
+  { id: "showcase", label: "Showcase", icon: Sparkles },
   { id: "skills", label: "Skills", icon: Puzzle },
   {
     id: "models",
@@ -87,6 +90,7 @@ export const TOOL_TAB_ORDER: CenterTab[] = [
   "slides",
   "blocks",
   "agent-lab",
+  "showcase",
   "models",
   "security",
 ];
@@ -212,6 +216,8 @@ export function CenterTabs() {
             <KnowledgePanel />
           ) : current.id === "agent-lab" ? (
             <AgentLabPanel />
+          ) : current.id === "showcase" ? (
+            <ShowcasePanel />
           ) : current.id === "blocks" ? (
             <BlocksPanel />
           ) : current.id === "security" ? (

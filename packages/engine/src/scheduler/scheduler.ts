@@ -158,6 +158,12 @@ export class ModelScheduler {
 
   // ---- internals -----------------------------------------------------------------------------
 
+  /** How many jobs of this project the queue lets run at once (the smaller of the two limits). */
+  capacity(projectId: string | null): number {
+    const all = Math.max(1, this.o.maxParallel());
+    return projectId ? Math.max(1, Math.min(all, this.o.projectCap(projectId))) : all;
+  }
+
   private now(): number {
     return this.o.now?.() ?? Date.now();
   }

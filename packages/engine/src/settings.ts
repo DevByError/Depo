@@ -20,6 +20,10 @@ export const DEFAULT_SETTINGS: Record<string, JsonValue> = {
   "team.fix_loops": 5,
   /** Tasks the team may work on at once (model calls still queue). */
   "team.parallel": 2,
+  /** Independent steps (pages) built at the same time, within what the scheduler allows. */
+  "agent.parallel_steps": 2,
+  /** Depo writes simple table steps itself, with no model call (MySQL-style schemas only). */
+  "agent.generate_tables": true,
   /** Put the brief, options, decisions and audit notes into the project as docs/depo/*.md. */
   "team.export_docs": true,
   /** GitHub repository (owner/name) the "Check for updates" button looks at. Empty = not configured. */

@@ -46,6 +46,7 @@ async function setup() {
   });
   engine = e;
   await e.start();
+  e.settings.set("agent.generate_tables", false);
   e.models.setProviders([{ id: "ollama", kind: "ollama", baseUrl: fake.url, enabled: true }]);
   e.models.assign("coder", { providerId: "ollama", model: "qwen2.5-coder:1.5b" });
   const proj = path.join(t.dir, "notes app");

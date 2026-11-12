@@ -22,6 +22,7 @@ import type { EventBus } from "../events/bus";
 import type { ModelManager } from "../models/manager";
 import { vetText } from "../skills/vet";
 import { manifestOf } from "./manifests";
+import { type AgentUpgrade, UPGRADES } from "./upgrades";
 
 /**
  * The Agent Lab: edit an agent, test it against checks, compare two versions, promote the better
@@ -56,6 +57,38 @@ export interface LabOptions {
 }
 
 /** Starter checks every agent gets; the user adds more. */
+/**
+ * Checks written from the mistakes in the owner's engine.log: edits whose search text was not the
+ * file's text (the biggest single cause of wasted model calls).
+ */
+const EDIT_CASES: EvalCase[] = [
+  {
+    id: "exact-search",
+    prompt:
+      'You just read src/app.ts. Line 12 is "    const port = 3000;" (4 spaces). Write the edit_file call that changes the port to 4000. Show the call as JSON with path and edits.',
+    checks: [
+      { type: "contains", value: "const port = 3000;" },
+      { type: "contains", value: "4000" },
+      { type: "regex", value: 'edit_file|"edits"' },
+    ],
+  },
+  {
+    id: "read-first",
+    prompt:
+      "You must change a function in a file you have not opened in this task. What is your very next action? One sentence.",
+    checks: [{ type: "regex", value: "read" }],
+  },
+  {
+    id: "not-found",
+    prompt:
+      'edit_file answered: "Edit 1: the search text was not found in app.ts". What do you do next? One or two sentences.',
+    checks: [
+      { type: "regex", value: "read|open|look" },
+      { type: "not_contains", value: "guess" },
+    ],
+  },
+];
+
 export function builtinSuites(agentId: AgentId): EvalSuite[] {
   const name = manifestOf(agentId).name;
   const generic: EvalCase[] = [
@@ -96,7 +129,79 @@ export function builtinSuites(agentId: AgentId): EvalSuite[] {
         checks: [{ type: "regex", value: "environment|env var|secret manager|rotate" }],
       },
     ],
+    manager: [
+      {
+        id: "plan-steps",
+        prompt:
+          'Split this request into steps for your team: "a login page and a login API with tests". Give a short numbered list with one owner per step.',
+        checks: [
+          { type: "regex", value: "1\\." },
+          { type: "regex", value: "test" },
+          { type: "max_chars", value: "1500" },
+        ],
+      },
+      {
+        id: "out-of-scope",
+        prompt: "The request says only: build a shop. What do you do before you plan? Two sentences.",
+        checks: [{ type: "regex", value: "assum|default|scope|decid|choose|ask" }],
+      },
+    ],
+    "ui-ux-design": [
+      {
+        id: "contrast",
+        prompt:
+          "A form uses light grey text (#aaaaaa) on a white background. What do you say and what do you change?",
+        checks: [{ type: "regex", value: "contrast|4\\.5|accessib|readab" }],
+      },
+      {
+        id: "states",
+        prompt:
+          "You design a list of orders. Which screen states do you design besides the full list? One sentence.",
+        checks: [
+          { type: "regex", value: "empty" },
+          { type: "regex", value: "loading|error" },
+        ],
+      },
+    ],
+    backend: [
+      ...EDIT_CASES,
+      {
+        id: "status-code",
+        prompt:
+          "POST /users receives an email that already exists. Which HTTP status do you return? Answer in one sentence.",
+        checks: [{ type: "regex", value: "409|422|400|conflict" }],
+      },
+    ],
+    frontend: [
+      ...EDIT_CASES,
+      {
+        id: "empty-state",
+        prompt:
+          "A page lists the user's notes and the user has none yet. What must the page show? One sentence.",
+        checks: [{ type: "regex", value: "empty|no notes|nothing|first note|get started" }],
+      },
+    ],
+    database: [
+      ...EDIT_CASES,
+      {
+        id: "fk-types",
+        prompt:
+          "users.id is BIGINT UNSIGNED. Write the CREATE TABLE for skills with a column that points to the user who owns it. Answer with SQL only.",
+        checks: [
+          { type: "regex", value: "BIGINT\\s+UNSIGNED" },
+          { type: "regex", value: "FOREIGN KEY|REFERENCES" },
+        ],
+      },
+    ],
     testing: [
+      {
+        id: "edge-cases",
+        prompt: "List the test cases you would write for a function divide(a, b). One line each.",
+        checks: [
+          { type: "regex", value: "zero|0" },
+          { type: "regex", value: "negative|decimal|float|large|boundary" },
+        ],
+      },
       {
         id: "keep-tests",
         prompt:
@@ -128,7 +233,7 @@ export class AgentLab {
     return this.o.db;
   }
 
-  private all(sql: string, ...p: (string | number | null)[]): Row[] {
+  all(sql: string, ...p: (string | number | null)[]): Row[] {
     return this.db.query(sql).all(...p) as Row[];
   }
 
@@ -257,6 +362,40 @@ export class AgentLab {
       const unknown = patch.tools.filter((t) => !known.has(t));
       if (unknown.length) throw new LabError(`Unknown tools: ${unknown.join(", ")}.`);
     }
+  }
+
+  /**
+   * Save the newer versions listed in `UPGRADES` that an agent does not have yet. Every version
+   * holds the rules of the ones before it. Returns "agent version" labels for what was saved and
+   * for what was already there. Nothing is promoted.
+   */
+  installUpgrades(): { created: string[]; existing: string[] } {
+    const created: string[] = [];
+    const existing: string[] = [];
+    for (const [agentId, list] of Object.entries(UPGRADES) as [AgentId, AgentUpgrade[]][]) {
+      const base = manifestOf(agentId);
+      let addenda = "";
+      let maxSteps: number | undefined;
+      for (const up of list) {
+        addenda += `\n${up.addendum}`;
+        maxSteps = up.maxSteps ?? maxSteps;
+        const label = `${agentId} ${up.version}`;
+        if (this.stored(agentId).some((v) => v.version === up.version)) {
+          existing.push(label);
+          continue;
+        }
+        const prompt = `${base.prompt}${addenda}`.slice(0, 12_000);
+        this.createVersion(
+          agentId,
+          { prompt, ...(maxSteps ? { maxSteps } : {}) },
+          `${up.version.replace(/\.0$/, "")}: ${up.note}`,
+          "user",
+          up.version,
+        );
+        created.push(label);
+      }
+    }
+    return { created, existing };
   }
 
   /** Save a changed copy of an agent as a new version. It is not used until it is promoted. */

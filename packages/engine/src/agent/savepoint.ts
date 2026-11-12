@@ -95,7 +95,12 @@ export function takeSavePoint(root: string): SavePoint | null {
 }
 
 /** Files that differ from the save point now (changed, added or deleted), relative. */
-export function changedSince(root: string, sp: SavePoint): string[] {
+export function changedSince(root: string, sp: SavePoint, scope?: ReadonlySet<string>): string[] {
+  const all = changedAll(root, sp);
+  return scope ? all.filter((f) => scope.has(f)) : all;
+}
+
+function changedAll(root: string, sp: SavePoint): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   walk(root, (rel, abs) => {
@@ -120,6 +125,46 @@ export function changedSince(root: string, sp: SavePoint): string[] {
   });
   for (const rel of sp.files.keys()) if (!seen.has(rel)) out.push(rel);
   return out.sort();
+}
+
+/**
+ * Puts back only the listed files (a step that ran beside others must not undo their work): each
+ * gets its save point content back, or is removed when the save point did not have it.
+ */
+export function restoreFiles(
+  root: string,
+  sp: SavePoint,
+  files: Iterable<string>,
+): { restored: string[]; removed: string[] } {
+  const restored: string[] = [];
+  const removed: string[] = [];
+  for (const rel of files) {
+    const abs = path.join(root, rel);
+    const before = sp.files.get(rel);
+    try {
+      if (before === undefined) {
+        if (fs.existsSync(abs)) {
+          fs.rmSync(abs, { force: true });
+          removed.push(rel);
+        }
+      } else {
+        let same = false;
+        try {
+          same = fs.readFileSync(abs).equals(before);
+        } catch {
+          same = false;
+        }
+        if (!same) {
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, before);
+          restored.push(rel);
+        }
+      }
+    } catch {
+      // in use: leave it
+    }
+  }
+  return { restored, removed };
 }
 
 /** Puts the copy back as it was at the save point. Returns what it changed. */

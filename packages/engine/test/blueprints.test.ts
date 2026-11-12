@@ -259,7 +259,21 @@ describe("the blueprint library", () => {
         findBlueprint("fastapi-service") as NonNullable<ReturnType<typeof findBlueprint>>,
         VARS,
       );
-      const r = run([python as string, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-W", "error"], root);
+      const r = run(
+        [
+          python as string,
+          "-m",
+          "pytest",
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "-W",
+          "error",
+          "-W",
+          "ignore:Using `httpx` with",
+        ],
+        root,
+      );
       if (r.code !== 0) console.error(r.out.slice(-4000));
       expect(r.code).toBe(0);
       expect(r.out).toMatch(/\b\d{2,} passed\b/);

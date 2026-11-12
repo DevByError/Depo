@@ -31,6 +31,7 @@ import { LogService } from "./logs/service";
 import { McpManager } from "./mcp/manager";
 import { MemoryStore } from "./memory/store";
 import { ModelManager, type ModelManagerOptions } from "./models/manager";
+import { setOllamaParallel } from "./models/revive";
 import { ModelWarmup } from "./models/speed";
 import { type DataDirs, dataDirs, ensureDataDirs } from "./paths";
 import { AutoPreview } from "./preview/auto";
@@ -184,6 +185,12 @@ export function createEngine(opts: EngineOptions): Engine {
       }
     },
   });
+  try {
+    const n = settings.get("scheduler.max_parallel");
+    setOllamaParallel(typeof n === "number" ? n : 1);
+  } catch {
+    // the default (one at a time) stays
+  }
   const scheduler = new ModelScheduler({
     bus,
     logger,

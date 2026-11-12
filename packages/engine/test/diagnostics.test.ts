@@ -377,7 +377,7 @@ describe("detecting what to run", () => {
     expect(go?.env).toMatchObject({ GOPROXY: "off", GOTOOLCHAIN: "local" });
     const cargo = plan.tools.find((t) => t.id === "cargo check");
     expect(cargo?.command).toContain("--offline");
-    expect(cargo?.env.CARGO_TARGET_DIR).toStartWith("/cache");
+    expect(cargo?.env.CARGO_TARGET_DIR).toStartWith(path.join("/cache"));
     expect(cargo?.label).toBe("cargo check (rs)");
   });
 });

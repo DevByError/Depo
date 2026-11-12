@@ -986,11 +986,11 @@ const FILE_TOOLS = new Set(["write_file", "edit_file", "append_file"]);
 
 /** Correct calls to copy, in the format Qwen-style models are trained on. */
 const EXAMPLES: Record<string, Record<string, unknown>> = {
-  read_file: { path: "be/src/app.ts" },
-  edit_file: { path: "be/src/app.ts", edits: [{ search: "exact old line", replace: "new line" }] },
-  write_file: { path: "be/src/new.ts", content: "line one\nline two\n" },
-  append_file: { path: "be/schema.sql", content: "CREATE TABLE IF NOT EXISTS notes (id INT PRIMARY KEY);\n" },
-  run_command: { command: "bun test", cwd: "be" },
+  read_file: { path: "src/app.ts" },
+  edit_file: { path: "src/app.ts", edits: [{ search: "exact old line", replace: "new line" }] },
+  write_file: { path: "src/new.ts", content: "line one\nline two\n" },
+  append_file: { path: "schema.sql", content: "CREATE TABLE IF NOT EXISTS notes (id INT PRIMARY KEY);\n" },
+  run_command: { command: "bun test" },
 };
 
 function exampleCall(tool: string | null): string {
@@ -1119,6 +1119,22 @@ export function compressHistory(history: ChatMessage[], contextLength: number): 
         n + m.content.length + (m.role === "assistant" ? JSON.stringify(m.toolCalls ?? []).length : 0),
       0,
     );
+  // Early, in one big step: once the conversation passes about 40% of the window, old tool
+  // outputs (file contents, command logs) shrink all at once. Every model call re-reads the whole
+  // history, so a lighter history is the biggest saving on a small GPU (7,800 prompt tokens per
+  // call was typical), and one change per many calls keeps the model's prefix cache useful.
+  const soft = contextLength * 0.4 * 3.5;
+  if (size() > soft) {
+    for (let i = 0; i < history.length - 8; i++) {
+      const m = history[i];
+      if (m?.role === "tool" && m.content.length > 600)
+        history[i] = {
+          ...m,
+          content: `${m.content.slice(0, 240)}
+[older output trimmed to keep the work fast; read the file again if needed]`,
+        };
+    }
+  }
   if (size() <= budget) return;
   const keepTail = 6;
   for (let i = 0; i < history.length - keepTail && size() > budget; i++) {

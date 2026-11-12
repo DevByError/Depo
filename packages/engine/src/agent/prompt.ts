@@ -3,6 +3,7 @@ import path from "node:path";
 import { blueprintHint } from "../blueprints/plan";
 import { autoTopicsPrompt, corePrompt } from "../playbooks";
 import { detectStack, packageManagerFor, stackSummary } from "./stack";
+import { codeFiles } from "./step-prompt";
 
 /** What kind of project this is, so the agent knows how to run its tests. */
 export function detectProject(root: string): { kind: string; testCommand: string | null; notes: string[] } {
@@ -72,26 +73,45 @@ export function topLevelListing(root: string): string {
  * Steps 1 and 2 for a small model: look with the tools, write code as file blocks (no JSON to
  * break). The loop turns the blocks into write_file, edit_file and append_file calls.
  */
-export const SMALL_MODEL_STEPS = [
-  "1. Look first: list_dir and read_file show what is there. Read a file before you change it. Use only the tools you were given; there are no others.",
-  "2. Write code as file blocks in your reply, not inside JSON. Depo saves them and tells you the result.",
-  "   New file: its path on one line, then the whole file in a code block:",
-  "   be/src/hello.ts",
-  "   ```ts",
-  '   export const hello = "hi";',
-  "   ```",
-  "   Change a file: its path, then a SEARCH/REPLACE block. SEARCH holds a few exact lines copied from the file, REPLACE what they become:",
-  "   be/src/app.ts",
-  "   ```ts",
-  "   <<<<<<< SEARCH",
-  "   const port = 3000;",
-  "   =======",
-  "   const port = Number(process.env.PORT ?? 3000);",
-  "   >>>>>>> REPLACE",
-  "   ```",
-  "   Add to the end of a file (a new table at the end of schema.sql): the same block with nothing between SEARCH and =======.",
-  "   For everything else call a tool (read_file, run_command, start_preview, ...), one call at a time, and wait for its result.",
-];
+export function smallModelSteps(root: string): string[] {
+  const { code, fresh, lang } = exampleFiles(root);
+  return [
+    "1. Look first: list_dir and read_file show what is there. Read a file before you change it. Use only the tools you were given; there are no others.",
+    "2. Write code as file blocks in your reply, not inside JSON. Depo saves them and tells you the result. The paths below are from this project; the code in the examples is made up, so copy real lines from the real file.",
+    "   New file: its path on one line, then the whole file in a code block:",
+    `   ${fresh}`,
+    `   \`\`\`${lang}`,
+    '   export const hello = "hi";',
+    "   ```",
+    "   Change a file: its path, then a SEARCH/REPLACE block. SEARCH holds a few exact lines copied from the file, REPLACE what they become:",
+    `   ${code}`,
+    `   \`\`\`${lang}`,
+    "   <<<<<<< SEARCH",
+    "   const port = 3000;",
+    "   =======",
+    "   const port = Number(process.env.PORT ?? 3000);",
+    "   >>>>>>> REPLACE",
+    "   ```",
+    "   Add to the end of a file (a new table at the end of schema.sql): the same block with nothing between SEARCH and =======.",
+    "   Put files where the request says, or next to the files that are already there. Never invent a folder.",
+    "   For everything else call a tool (read_file, run_command, start_preview, ...), one call at a time, and wait for its result.",
+  ];
+}
+
+/**
+ * Paths for the examples in the prompt, taken from this project. A small model copies an example
+ * literally: with `be/src/hello.ts` in the prompt it wrote its files into a `be/` folder that the
+ * project did not have.
+ */
+export function exampleFiles(root: string): { code: string; fresh: string; lang: string } {
+  const code =
+    codeFiles(root, 300).find(
+      (f) => /\.(ts|tsx|js|jsx|mjs|py|go|rs)$/.test(f) && !/\.(test|spec)\.|(^|\/)test_/.test(f),
+    ) ?? "src/app.ts";
+  const ext = /\.(\w+)$/.exec(code)?.[1] ?? "ts";
+  const dir = path.posix.dirname(code);
+  return { code, fresh: `${dir === "." ? "" : `${dir}/`}hello.${ext}`, lang: ext === "py" ? "python" : ext };
+}
 
 export function codingSystemPrompt(opts: {
   projectName: string;
@@ -120,7 +140,7 @@ export function codingSystemPrompt(opts: {
     "",
     "How to work:",
     ...(opts.small
-      ? SMALL_MODEL_STEPS
+      ? smallModelSteps(opts.root)
       : [
           "1. Understand first: code_map shows the modules and which files import which; then read the relevant files (only the line ranges you need) and search for related code.",
           "2. Make small, precise edits with edit_file. Copy the exact current text into `search` (without line numbers). Use write_file for new files; append_file adds to the end of a file.",

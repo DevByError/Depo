@@ -82,6 +82,7 @@ async function setup(settings: Record<string, unknown> = {}) {
   });
   engine = e;
   await e.start();
+  e.settings.set("depomd.auto", false);
   e.models.setProviders([{ id: "fake", kind: "ollama", baseUrl: "http://127.0.0.1:11434", enabled: true }]);
   e.models.assign("coder", { providerId: "fake", model: "fake-model" });
   for (const [k, v] of Object.entries({ "memory.auto": false, "preview.auto_start": false, ...settings }))

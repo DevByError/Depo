@@ -80,14 +80,18 @@ describe("coding agent", () => {
       expect(Array.isArray(edit?.args?.edits)).toBe(true);
       expect(messages.find((m) => m.toolName === "run_command")?.args?.command).toBe("python -m pytest -q");
 
-      // Diff review: two modified files, then apply.
+      // Diff review: two modified files and the project's new DEPO.md, then apply.
       const [cs] = e.projects.listChangeSets(project.id);
       expect(cs?.files.map((f) => [f.path, f.kind])).toEqual([
+        ["DEPO.md", "added"],
         ["app/main.py", "modified"],
         ["tests/test_main.py", "modified"],
       ]);
       const applied = e.projects.applyChangeSet(cs?.id ?? "", e.projects.workspaceFor(cs?.id ?? ""));
-      expect(applied.applied).toHaveLength(2);
+      expect(applied.applied).toHaveLength(3);
+      const depoMd = fs.readFileSync(path.join(proj, "DEPO.md"), "utf8");
+      expect(depoMd).toContain("## Status log (newest first)");
+      expect(depoMd).toContain("app/main.py");
       expect(fs.readFileSync(path.join(proj, "app", "main.py"), "utf8")).toContain('@app.get("/health")');
 
       // The applied project passes its own tests.
@@ -96,7 +100,8 @@ describe("coding agent", () => {
 
       // Undo puts everything back.
       const undo = e.projects.restoreCheckpoint(applied.checkpointId ?? "");
-      expect(undo.restored).toHaveLength(2);
+      expect(undo.restored).toHaveLength(3);
+      expect(fs.existsSync(path.join(proj, "DEPO.md"))).toBe(false);
       expect(fs.readFileSync(path.join(proj, "app", "main.py"), "utf8")).toBe(originalMain);
     },
     60_000,

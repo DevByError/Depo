@@ -25,6 +25,7 @@ import {
 } from "react";
 import { DraftChips } from "@/components/chat/References";
 import { Kbd } from "@/components/ui/kbd";
+import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
 import { call } from "@/lib/engine";
 import {
@@ -194,6 +195,9 @@ function AttachMenu({ onPicture, onLink }: { onPicture: () => void; onLink: () =
   );
 }
 
+/** Tasks the owner allowed everything for (their follow-up messages carry the same "yes"). */
+const allowedTasks = new Set<string>();
+
 export function Composer({ task, onSent }: { task: Task | undefined; onSent?: () => void }) {
   const connected = useEngine((s) => s.status === "open");
   const projectId = useUi((s) => s.projectId);
@@ -214,6 +218,9 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const steering = running && !!task;
   const team = !!task && task.mode !== "single";
   const [sentNote, setSentNote] = useState(false);
+  const [askAllow, setAskAllow] = useState<{ body: string; key: string; refs: DraftReference[] } | null>(
+    null,
+  );
   const boxRef = useRef<HTMLTextAreaElement>(null);
   // Design references waiting to be sent (pictures and links) are part of the draft.
   const setRefs = (k: string, list: DraftReference[]) => updateDraft(k, { refs: list });
@@ -271,10 +278,12 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
     mutationFn: async ({
       body,
       refs,
+      allowAll,
     }: {
       body: string;
       key: string;
       refs: DraftReference[];
+      allowAll?: boolean;
     }): Promise<{ taskId: string; queued: boolean }> => {
       // A working task gets a steering note (it becomes a follow-up if the task just finished).
       if (task && steering) {
@@ -291,9 +300,11 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
           ...(task ? { taskId: task.id } : {}),
           ...(!task && mode !== "single" ? { mode } : {}),
           ...(refs.length ? { references: refs.map((d) => d.input) } : {}),
+          ...(allowAll || (task && allowedTasks.has(task.id)) ? { allowAll: true } : {}),
         },
         { timeoutMs: 60_000 },
       );
+      if (allowAll) allowedTasks.add(t.id);
       return { taskId: t.id, queued: false };
     },
     onSuccess: (r, sent) => {
@@ -319,8 +330,28 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const body = typed || (drafts.length && !steering ? DEFAULT_REFERENCE_TEXT : "");
   const tooLong = steering && body.length > STEER_MAX_CHARS;
   const canSend = connected && !!projectId && body.length > 0 && !tooLong && !send.isPending;
-  const submit = () => {
-    if (canSend) send.mutate({ body, key, refs: steering ? [] : drafts });
+  const submit = async () => {
+    if (!canSend) return;
+    const refs = steering ? [] : drafts;
+    // A new task starts with one question: may the agents run everything without asking again?
+    if (!task && !steering) {
+      const settings = await call("projects.settings.get", { id: projectId ?? "" }).catch(() => null);
+      if (settings && settings.fullAccess === false) {
+        setAskAllow({ body, key, refs });
+        return;
+      }
+    }
+    send.mutate({ body, key, refs });
+  };
+  const answerAllow = (choice: "task" | "project" | "ask") => {
+    const pending = askAllow;
+    if (!pending) return;
+    setAskAllow(null);
+    if (choice === "project")
+      void call("projects.settings.set", { id: projectId ?? "", patch: { fullAccess: true } }).catch(
+        () => undefined,
+      );
+    send.mutate({ ...pending, allowAll: choice !== "ask" });
   };
 
   const addPictures = async (files: File[]) => {
@@ -417,7 +448,7 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   };
   const note = !projectId
@@ -581,7 +612,7 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
             )}
             <button
               type="button"
-              onClick={submit}
+              onClick={() => void submit()}
               disabled={!canSend}
               aria-label={steering ? "Send note" : "Send"}
               title={steering ? "Send note (Enter)" : undefined}
@@ -609,6 +640,36 @@ export function Composer({ task, onSent }: { task: Task | undefined; onSent?: ()
             <Kbd>Enter</Kbd> to send, <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> for a new line
           </p>
         </div>
+        <Modal
+          open={askAllow !== null}
+          onOpenChange={(o) => !o && setAskAllow(null)}
+          title="Let Depo work without asking?"
+          description="Agents install packages, run builds and tests, and start servers. If you say yes, they do all of this without asking again. Blocked commands stay blocked, and nothing reaches your real files until you approve the changes in Diff Review."
+        >
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => answerAllow("task")}
+              className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-fg hover:opacity-90"
+            >
+              Yes, allow everything in this task
+            </button>
+            <button
+              type="button"
+              onClick={() => answerAllow("project")}
+              className="rounded-lg border border-border px-3 py-2 text-sm text-fg hover:bg-hover"
+            >
+              Yes, and for every task in this project
+            </button>
+            <button
+              type="button"
+              onClick={() => answerAllow("ask")}
+              className="rounded-lg px-3 py-2 text-sm text-muted hover:bg-hover"
+            >
+              No, ask me each time
+            </button>
+          </div>
+        </Modal>
         <p className="sr-only" role="status" aria-live="polite">
           {sentNote ? "Note sent. It will be read at the next step." : ""}
         </p>

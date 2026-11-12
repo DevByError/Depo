@@ -95,6 +95,7 @@ async function setup(dataRoot?: string) {
   });
   engine = e;
   const { port } = await e.start();
+  e.settings.set("depomd.auto", false);
   e.models.setProviders([{ id: "fake", kind: "ollama", baseUrl: "http://127.0.0.1:11434", enabled: true }]);
   e.models.assign("coder", { providerId: "fake", model: "fake-model" });
   let proj = "";

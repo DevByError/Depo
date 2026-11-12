@@ -218,7 +218,7 @@ describe("the agent loop stops a reply that repeats itself", () => {
     expect(tools).toHaveLength(3);
     expect(tools[0]).toContain("alpha");
     expect(tools[0]).not.toContain("already made this exact call");
-    expect(tools[1]).toContain("alpha");
+    expect(tools[1]).toContain("has not changed since you read it");
     expect(tools[1]).toContain("already made this exact call");
     expect(tools[2]).not.toContain("alpha");
     expect(tools[2]).toContain("3 times");

@@ -203,6 +203,33 @@ export function builderFor(text: string): AgentId {
   return "backend";
 }
 
+/**
+ * An update to work that already exists (a follow-up in a task whose team already built something):
+ * only the agents the change touches, the tester, and the security agent when it concerns access.
+ * The brief, options, critique, diagrams and deck steps are not run again. Null when nothing in
+ * the template matches (the caller then keeps the whole template).
+ */
+export function updateNodes(template: Draft[], text: string): Draft[] | null {
+  const t = text.toLowerCase();
+  const has = (re: string) => new RegExp(String.raw`\b(?:${re})\b`).test(t);
+  const owners = new Set<string>(["testing"]);
+  const builder = builderFor(text);
+  owners.add(builder);
+  if (
+    has("css|style|styling|ui|ux|button|page|screen|layout|theme|colou?rs?|responsive|dark mode|design|look")
+  )
+    owners.add("ui-ux-design");
+  if (has("table|tables|column|columns|schema|migrations?|database|db")) owners.add("database");
+  if (has("auth|login|logout|password|token|secret|permissions?|roles?|security|session"))
+    owners.add("security");
+  if (owners.has("frontend") && has("api|endpoint|route|routes|backend|server")) owners.add("backend");
+  if (owners.has("frontend") && owners.has("backend")) owners.add("integration");
+  const kept = template.filter((n) => owners.has(n.owner));
+  if (!kept.length) return null;
+  const ids = new Set(kept.map((n) => n.id));
+  return kept.map((n) => ({ ...n, deps: (n.deps ?? []).filter((d) => ids.has(d)) }));
+}
+
 /** The standard pipeline of each mode (system description, Section 5.2). */
 export function templateNodes(mode: Exclude<WorkMode, "single">, text: string): Draft[] {
   const ask = text.trim().slice(0, 140);
@@ -787,6 +814,21 @@ export class TeamRunner {
 
   // ---- planning ----------------------------------------------------------------------------
 
+  /** What the team already did in this task (the plan of an earlier turn), or null for a first turn. */
+  private earlierWork(taskId: string): string | null {
+    try {
+      const row = this.h.db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+      if (!row?.plan) return null;
+      const old = JSON.parse(row.plan) as { nodes?: { title?: string; status?: string }[] };
+      const done = (old.nodes ?? [])
+        .filter((n) => n.status === "done" && n.title)
+        .map((n) => n.title as string);
+      return done.length ? done.slice(0, 12).join("; ") : null;
+    } catch {
+      return null;
+    }
+  }
+
   private resolve(role: AgentManifest["role"]) {
     return this.h.models.resolve(role) ?? this.h.models.resolve("coder");
   }
@@ -795,8 +837,30 @@ export class TeamRunner {
    * The Manager's plan. `standard` says why the standard pipeline was used instead of a plan of
    * the Manager's own (null when the Manager's draft was accepted).
    */
+  /** Tasks being updated, with what the team did before (for the prompts). */
+  private readonly updates = new Map<string, string>();
+
   private async makePlan(input: TeamInput, emit: Emit): Promise<{ plan: Plan; standard: string | null }> {
-    const template = templateNodes(input.mode, input.text);
+    let template = templateNodes(input.mode, input.text);
+    // A follow-up in a task whose team already built something is an update: the agents change
+    // what exists, they do not start from zero.
+    const earlier = this.earlierWork(input.taskId);
+    if (earlier && !READ_ONLY_MODES.includes(input.mode)) {
+      const only = updateNodes(template, input.text);
+      if (only) {
+        template = only;
+        this.updates.set(input.taskId, earlier);
+        emit({
+          type: "planning",
+          text: `This is an update of work the team already did, so only ${only.length} task${only.length === 1 ? "" : "s"} run again (${only
+            .map((n) => this.man(n.owner as AgentId).name)
+            .filter((v, i, a) => a.indexOf(v) === i)
+            .join(", ")}).`,
+          details: { update: true, nodes: only.length },
+          status: "info",
+        });
+      }
+    }
     // An empty project and a new system: start from the closest blueprint (null otherwise).
     const start = pickBlueprint(input.mode, input.text, input.ws.root);
     let drafts: Draft[] = template;
@@ -816,6 +880,9 @@ export class TeamRunner {
           'Plan the work as a task graph. Reply with JSON only: {"summary":"one or two sentences","nodes":[{"id":"kebab-id","title":"...","owner":"agent-id","deps":["ids that must finish first"],"criteria":["short, testable"]}],"questions":["only if you truly cannot proceed without an answer"]}.',
           `Owners must be one of:\n${allowed}`,
           "Keep the standard pipeline unless the request clearly does not need a step. Prefer 4 to 15 tasks. Every task must be small enough for one agent.",
+          this.updates.has(input.taskId)
+            ? `This is an UPDATE. The team already did: ${this.updates.get(input.taskId)}. The files are in the copy. Plan only what the new request changes; do not plan the earlier work again.`
+            : "",
           planningGuide(input.mode, input.text),
           start ? blueprintPlanGuide(start, blueprintOwner(input.mode)) : "",
           `Standard pipeline for this mode:\n${template.map((n) => `- ${n.id} (${n.owner})${n.deps?.length ? ` after ${n.deps.join(", ")}` : ""}: ${n.title}`).join("\n")}`,
@@ -1796,6 +1863,9 @@ export class TeamRunner {
           `The user's request: ${input.text}`,
           "",
           `Your task: ${node.title}`,
+          this.updates.has(input.taskId)
+            ? `This is an update of work that already exists in the copy (done before: ${this.updates.get(input.taskId)}). Read the existing files first, change only what the request needs, and keep what works. Do not rebuild it.`
+            : "",
           node.criteria.length
             ? `Acceptance criteria:\n${node.criteria.map((c) => `- ${c}`).join("\n")}`
             : "",

@@ -21,9 +21,11 @@ export const SMALL_MODEL_TOOLS = [
   "list_dir",
   "find_files",
   "search",
+  "find_code",
   "write_file",
   "edit_file",
   "append_file",
+  "replace_lines",
   "delete_file",
   "run_command",
   "start_preview",
@@ -31,7 +33,6 @@ export const SMALL_MODEL_TOOLS = [
   "stop_preview",
   "check_page",
   "dev_database",
-  "remember",
 ];
 
 /** Billions of parameters, from the tag (qwen2.5-coder:3b, llama3.2:1b-instruct) or the runtime's "3.1B". */

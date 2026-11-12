@@ -38,6 +38,7 @@ import { AutoMemory } from "../memory/auto";
 import type { MemoryStore } from "../memory/store";
 import type { ModelManager } from "../models/manager";
 import type { ModelWarmup } from "../models/speed";
+import { type DepoEntry, depoMdForPrompt, recordInDepoMd } from "../projectdoc/depomd";
 import type { ReadinessHooks } from "../readiness/service";
 import type { ReferenceService } from "../references/service";
 import { ReviewStore } from "../review/comments";
@@ -45,6 +46,7 @@ import type { ModelScheduler } from "../scheduler/scheduler";
 import type { SettingsRepo } from "../settings";
 import { TOOLS, type ToolContext } from "../tools/index";
 import type { PreviewHooks } from "../tools/preview-tools";
+import { describeError } from "../util/errors";
 import { computeChanges } from "../workspace/changes";
 import type { ProjectService, Workspace } from "../workspace/service";
 import {
@@ -722,7 +724,16 @@ export class TaskManager {
           return;
         }
         this.log.error("task crashed", { taskId: id, err });
-        this.fail(id, projectId, err instanceof Error ? err.message : String(err));
+        const d = describeError(err);
+        this.fail(
+          id,
+          projectId,
+          d.detail && d.detail !== `Error: ${d.message}`
+            ? `${d.message}
+
+${d.detail}`
+            : d.message,
+        );
       })
       .finally(() => {
         this.running.delete(id);
@@ -1146,6 +1157,14 @@ export class TaskManager {
           : null,
         budget: Math.max(4000, Math.min(16_000, Math.round(contextLength * 0.9))),
         design: this.o.references?.brief(taskId) ?? "",
+        generateTables: this.o.settings?.get("agent.generate_tables") !== false,
+        // Pages are built side by side when the model queue allows more than one job at a time.
+        parallel: Math.min(
+          typeof this.o.settings?.get("agent.parallel_steps") === "number"
+            ? (this.o.settings.get("agent.parallel_steps") as number)
+            : 2,
+          this.o.scheduler?.capacity(project.id) ?? 1,
+        ),
       });
       if (signal.aborted) {
         await this.stopped(taskId, project.id, row.title, emit);
@@ -1565,7 +1584,21 @@ export class TaskManager {
     emit: (e: Omit<Parameters<EventBus["emit"]>[0], "agent" | "projectId" | "taskId">) => unknown,
     statusFor: (cs: unknown) => TaskStatus,
   ) {
-    const cs = this.o.projects.collectChanges(projectId, taskId, ws, title);
+    let cs = this.o.projects.collectChanges(projectId, taskId, ws, title);
+    // DEPO.md is brought up to date inside the private copy (so it is part of the diff the owner
+    // reviews), only when the task changed something else.
+    if (cs && this.o.settings?.get("depomd.auto") !== false) {
+      try {
+        recordInDepoMd(
+          ws.root,
+          this.projectName(projectId),
+          this.depoEntry(taskId, title, statusFor(cs), cs),
+        );
+        cs = this.o.projects.collectChanges(projectId, taskId, ws, title) ?? cs;
+      } catch (err) {
+        this.log.warn("DEPO.md could not be updated", { taskId, err });
+      }
+    }
     // Review comments on the previous version: addressed, outdated, or moved to this one.
     this.reviews.onChangeSet(taskId, cs, this.latestReplies(taskId));
     // Set the final status before the handoff event, so a UI refreshing on that event sees it.
@@ -1595,6 +1628,35 @@ export class TaskManager {
     return cs;
   }
 
+  private projectName(projectId: string): string {
+    return this.o.db.select().from(projects).where(eq(projects.id, projectId)).get()?.name ?? "Project";
+  }
+
+  /** What happened in this task, for DEPO.md: the request, the answer, the steps that passed and did not. */
+  private depoEntry(
+    taskId: string,
+    title: string,
+    outcome: TaskStatus,
+    cs: { files: { path: string }[] },
+  ): DepoEntry {
+    const t = this.get(taskId);
+    const plan = t.plans.at(-1);
+    const steps = plan?.steps ?? [];
+    return {
+      at: new Date().toISOString(),
+      title,
+      request: latestRequest(t.messages)?.text ?? t.task.prompt,
+      answer: t.task.summary ?? "",
+      outcome,
+      done: steps.filter((s) => s.status === "done").map((s) => s.title),
+      blocked: steps
+        .filter((s) => s.status === "blocked")
+        .map((s) => ({ title: s.title, note: s.note ?? "not finished" })),
+      pending: steps.filter((s) => s.status === "pending" || s.status === "running").map((s) => s.title),
+      files: cs.files.map((f) => f.path).filter((f) => f !== "DEPO.md"),
+    };
+  }
+
   /** What the agents wrote since the newest request (they may say "Addressed: 1, 3"). */
   private latestReplies(taskId: string): string[] {
     const items = this.get(taskId).messages;
@@ -1621,6 +1683,12 @@ export class TaskManager {
   ): string {
     const budgets = promptBudgets(contextLength);
     const context: string[] = [];
+    // The project's own memory file, read first in every task (like CLAUDE.md for Claude Code).
+    const depo = depoMdForPrompt(root, budgets.memory + 1000).trim();
+    if (depo)
+      context.push(
+        `# DEPO.md (this project's own notes: what it is, how to run it, what happened, what is next)\n${depo}\nKeep to its rules. Depo updates the status log, Next and Known issues when the task ends.`,
+      );
     const memory = this.o.memory?.contextFor(projectId, budgets.memory).trim();
     if (memory) context.push(`# What you know about this project\n${memory}`);
     // The map describes the private copy as it is now (the index describes the project folder,

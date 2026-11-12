@@ -20,6 +20,7 @@ import {
   LabVersionSchema,
   ManifestPatchSchema,
   PlanSchema,
+  ShowcaseSchema,
   TeamTimelineSchema,
   WorkModeSchema,
 } from "./agents";
@@ -377,6 +378,8 @@ const TaskMethods = {
         mode: WorkModeSchema.optional(),
         /** Pictures or links whose look the owner wants (design references). */
         references: ReferenceInputsSchema.optional(),
+        /** The owner allowed everything for this task: commands and tools run without asking again. */
+        allowAll: z.boolean().optional(),
       })
       .strict(),
     result: TaskSchema,
@@ -401,6 +404,21 @@ const TaskMethods = {
   "lab.agents": {
     params: z.object({}).strict(),
     result: z.object({ agents: z.array(LabAgentSchema) }),
+  },
+  /** Save version 1.1 of every agent (not promoted: compare first). */
+  "lab.installUpgrades": {
+    params: z.object({}).strict(),
+    result: z.object({ created: z.array(z.string()), existing: z.array(z.string()) }),
+  },
+  /** The project's DEPO.md as it is in the project folder (applied changes only). */
+  "depomd.get": {
+    params: z.object({ projectId: z.string() }).strict(),
+    result: z.object({ exists: z.boolean(), text: z.string() }),
+  },
+  /** Real numbers and the feature list for showing the system to someone else. */
+  "showcase.get": {
+    params: z.object({}).strict(),
+    result: ShowcaseSchema,
   },
   "lab.versions": {
     params: z.object({ agentId: AgentIdSchema }).strict(),

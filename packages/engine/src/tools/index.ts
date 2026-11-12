@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ToolDefinition } from "@depo/model-gateway";
 import { type JsonValue, newId, type SearchHit } from "@depo/shared";
 import { z } from "zod";
+import { indexFor, snippetsText } from "../agent/codeindex-lite";
 import type { ApprovalCenter } from "../approvals";
 import type { EventBus } from "../events/bus";
 import { firstLine, getLogger } from "../logger";
@@ -17,6 +18,7 @@ import {
   editFileTool,
   listDirTool,
   readFileTool,
+  replaceLinesTool,
   writeFileTool,
 } from "./fs-tools";
 import { gitDiff, gitStatus, isGitRepo } from "./git";
@@ -188,6 +190,16 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
     async run(a, ctx) {
       const r = readFileTool(ctx.root, a.path, a.start_line, a.end_line);
       ctx.readPaths?.add(r.path);
+      const again = repeatedRead(ctx, `${r.path}:${r.startLine}-${r.endLine}`, r.text);
+      if (again) {
+        emit(ctx, {
+          type: "reading_file",
+          text: `Reading ${r.path} (unchanged since a moment ago)`,
+          details: { path: r.path, unchanged: true },
+          status: "succeeded",
+        });
+        return again;
+      }
       emit(ctx, {
         type: "reading_file",
         text: `Reading ${r.path}${r.startLine > 1 || r.endLine < r.totalLines ? ` (lines ${r.startLine}–${r.endLine})` : ""}`,
@@ -199,6 +211,27 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
           ? `\n[showing lines ${r.startLine}-${r.endLine} of ${r.totalLines}]`
           : "";
       return `${r.path} (${r.totalLines} lines)\n${r.text}${more}`;
+    },
+  }),
+  tool({
+    name: "find_code",
+    description:
+      "Find the parts of this project most about some words (a route, a table, a function, a feature), ranked, with file and line numbers. Use it before you write something similar to what exists.",
+    schema: z.object({
+      query: z.string().min(2).describe("Words or identifiers, e.g. 'login route session cookie'"),
+      limit: z.number().int().min(1).max(8).default(4),
+    }),
+    async run(a, ctx) {
+      const found = indexFor(ctx.root).search(a.query, { k: a.limit, budget: 4000 });
+      emit(ctx, {
+        type: "searching",
+        text: `Looking for code about "${a.query.slice(0, 60)}"`,
+        details: { query: a.query, hits: found.length },
+        status: "succeeded",
+      });
+      return found.length
+        ? snippetsText(found)
+        : "Nothing in this project matches those words. Try other words, or list_dir and read_file.";
     },
   }),
   tool({
@@ -330,7 +363,36 @@ export const TOOLS: AgentTool<z.ZodType>[] = [
         status: "succeeded",
       });
       ctx.readPaths?.add(r.path);
-      return `Applied ${r.applied} edit(s) to ${r.path}.${compiled}${schemaWarnings(ctx.root, r.path)}`;
+      return `Applied ${r.applied} edit(s) to ${r.path}.${r.notes.length ? ` (${r.notes.join("; ")}; your search text was not exact, so read the file again before the next edit.)` : ""}${compiled}${schemaWarnings(ctx.root, r.path)}`;
+    },
+  }),
+  tool({
+    name: "replace_lines",
+    description:
+      "Replace whole lines start_line to end_line of a file with new text. Use it when edit_file keeps saying the search text was not found: read the file, then give the line numbers you saw.",
+    schema: z.object({
+      path: z.string().min(1),
+      start_line: z.number().int().min(1),
+      end_line: z.number().int().min(1),
+      content: z.string(),
+    }),
+    async run(a, ctx) {
+      if (!fs.existsSync(resolveInside(ctx.root, a.path).abs))
+        throw new ToolError(`${a.path} does not exist yet. Create it with write_file.`);
+      mustHaveRead(ctx, a.path, "editing");
+      const before = currentText(ctx.root, a.path);
+      const r = replaceLinesTool(ctx.root, a.path, a.start_line, a.end_line, stripLineNumbers(a.content));
+      keepsNamesShort(ctx.root, r.path, before);
+      const compiled = keepsCompiling(ctx.root, r.path, before);
+      ctx.onFileChanged?.(r.path);
+      emit(ctx, {
+        type: "editing_file",
+        text: `Replaced lines ${a.start_line}-${a.end_line} of ${r.path}`,
+        details: { path: r.path, removed: r.removed, added: r.added },
+        status: "succeeded",
+      });
+      ctx.readPaths?.add(r.path);
+      return `Replaced ${r.removed} line(s) with ${r.added} in ${r.path}. Line numbers below this point have moved: read the file again before the next replace_lines.${compiled}${schemaWarnings(ctx.root, r.path)}`;
     },
   }),
   tool({
@@ -1017,6 +1079,27 @@ function schemaWarnings(root: string, rel: string): string {
   } catch {
     return "";
   }
+}
+
+const readLog = new WeakMap<object, { n: number; seen: Map<string, { hash: number; at: number }> }>();
+
+/**
+ * A file read again with nothing changed, a moment after the first read, costs the model its whole
+ * text a second time. The first copy is still in the conversation: say so in one line instead.
+ */
+function repeatedRead(ctx: ToolContext, key: string, text: string): string | null {
+  let log = readLog.get(ctx);
+  if (!log) {
+    log = { n: 0, seen: new Map() };
+    readLog.set(ctx, log);
+  }
+  log.n++;
+  const hash = Number(Bun.hash(text) % 2147483647n);
+  const prev = log.seen.get(key);
+  log.seen.set(key, { hash, at: log.n });
+  if (prev && prev.hash === hash && log.n - prev.at <= 3)
+    return `${key.split(":")[0]} has not changed since you read it ${log.n - prev.at} read(s) ago. Its text is in the conversation above; use it.`;
+  return null;
 }
 
 function mustHaveRead(ctx: ToolContext, rel: string, what: string): void {

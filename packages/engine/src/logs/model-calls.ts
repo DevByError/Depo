@@ -125,6 +125,20 @@ function median(values: number[]): number | null {
 }
 
 /** Tokens per second, or null when either number is missing. */
+/** Below this many tokens a second a coding run takes hours; said once per model. */
+const SLOW_TOKENS_PER_SEC = 3;
+const warnedSlow = new Set<string>();
+
+function warnIfSlow(log: Logger, model: string, tokensPerSec: number | null, completionTokens: number): void {
+  if (tokensPerSec === null || completionTokens < 60 || tokensPerSec >= SLOW_TOKENS_PER_SEC) return;
+  if (warnedSlow.has(model)) return;
+  warnedSlow.add(model);
+  log.warn(
+    `${model} writes only ${tokensPerSec.toFixed(1)} tokens a second on this PC, so a long task will take hours. A smaller model is much faster here; Depo uses a larger one only for a step that fails twice.`,
+    { model, tokensPerSec },
+  );
+}
+
 function perSec(tokens: number | null | undefined, ms: number | null | undefined): number | null {
   return tokens && tokens > 0 && ms && ms > 0 ? round1(tokens / (ms / 1000)) : null;
 }
@@ -261,7 +275,10 @@ async function* measuredChat(
       finishReason: done?.finishReason ?? null,
       ...(err ? { err } : {}),
     };
-    if (ok) log.info("model call", fields);
+    if (ok) {
+      log.info("model call", fields);
+      warnIfSlow(log, req.model, tokensPerSec, usage?.completionTokens ?? 0);
+    }
     // Kept at info: a call stopped after minutes says how far the model got.
     else if (cancelled) log.info("model call cancelled", fields);
     else log.warn("model call failed", fields);

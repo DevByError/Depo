@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import { indexFor, snippetsText } from "./codeindex-lite";
 import type { PlannedStep, RequestPlan } from "./plan";
 import { appDirs } from "./request-check";
+import { relevantParts } from "./retrieve";
 import { schemaFileFor } from "./step-check";
 
 /**
@@ -170,7 +172,13 @@ function fence(rel: string): string {
 }
 
 /** The files shown in the step prompt (whole, or the end of a long schema), within `budget` characters. */
-export function shownFiles(root: string, rels: string[], budget: number): { text: string; shown: string[] } {
+export function shownFiles(
+  root: string,
+  rels: string[],
+  budget: number,
+  /** The step's words: a file too big to show whole is cut to the parts that match them. */
+  query = "",
+): { text: string; shown: string[] } {
   const parts: string[] = [];
   const shown: string[] = [];
   let left = budget;
@@ -185,7 +193,13 @@ export function shownFiles(root: string, rels: string[], budget: number): { text
         text = text.slice(text.length - (left - 200));
         text = text.slice(text.indexOf("\n") + 1);
         note = " (its last lines; read_file for the start)";
-      } else continue;
+      } else {
+        // Too big to show whole: the parts of it that match the step (retrieval, see retrieve.ts).
+        const part = left > 1500 && query ? relevantParts(body, query, left - 300) : null;
+        if (!part) continue;
+        text = part.text;
+        note = ` (the parts that match this step, of ${part.totalLines} lines; line numbers are in the markers; read_file for the rest)`;
+      }
     }
     parts.push(`${rel}${note}\n\`\`\`${fence(rel)}\n${text.replace(/\s+$/, "")}\n\`\`\``);
     shown.push(rel);
@@ -244,7 +258,18 @@ export interface StepPromptInput {
   budget: number;
   /** The owner's design references (pictures and links), as the brief every agent reads. */
   design?: string;
+  /** False leaves out the related-code section (tests that check the exact prompt). */
+  related?: boolean;
 }
+
+/** What a finished step looks like, so the model tests for it instead of claiming it. */
+const KNOWN_BY: Partial<Record<PlannedStep["kind"], string>> = {
+  table:
+    "the CREATE TABLE is in the schema file and its foreign keys have the same type as the keys they point to.",
+  route: "a request to the route (http_check, or a test) answers with the right status and body.",
+  page: "check_page opens the page without errors and shows what the request describes.",
+  tests: "the tests run and pass (run them once with run_command and read the first failure).",
+};
 
 /** Steps that make something the owner sees, so the design references apply to them. */
 const LOOKS = new Set(["page", "build", "fix"]);
@@ -253,7 +278,7 @@ const LOOKS = new Set(["page", "build", "fix"]);
 export function stepPrompt(o: StepPromptInput): { text: string; shown: string[] } {
   const { step, plan } = o;
   const files = filesForStep(step, plan, o.root);
-  const shown = shownFiles(o.root, files, o.budget);
+  const shown = shownFiles(o.root, files, o.budget, `${step.title} ${step.spec} ${step.notes}`);
   const lines = [
     `Depo split the owner's request into ${o.total} steps and checks each one when it is done. Do step ${o.index} now, and only this step.`,
     "",
@@ -286,11 +311,27 @@ export function stepPrompt(o: StepPromptInput): { text: string; shown: string[] 
       "These files are already read for you; this is their exact text now (copy lines from here for SEARCH, without changing them):",
       shown.text,
     );
+  // Related code from the whole project (retrieval): how the project already does the same kind of
+  // thing, so the new code matches its names and style instead of inventing its own.
+  if (o.related !== false) {
+    const found = indexFor(o.root).search(
+      `${step.title} ${step.spec} ${step.notes} ${o.earlier.map((e) => e.split("\n")[0]).join(" ")}`,
+      { k: 4, budget: Math.min(2400, Math.round(o.budget * 0.25)), exclude: new Set(shown.shown) },
+    );
+    if (found.length)
+      lines.push(
+        "",
+        "Related code already in this project (match its names and style; it is not a list of things to change):",
+        snippetsText(found),
+      );
+  }
   if (o.earlier.length)
     lines.push(
       "",
       `Earlier tries of this step did not work: ${o.earlier.map((e) => clip(e.split("\n")[0] ?? e, 300)).join(" / ")}. The files are as shown above now: do it differently.`,
     );
+  const proof = KNOWN_BY[step.kind];
+  if (proof) lines.push("", `You know the step works when: ${proof}`);
   lines.push("", "When the step is done, stop and say in one line what you did. Depo then checks it.");
   return { text: lines.join("\n"), shown: shown.shown };
 }

@@ -45,8 +45,9 @@ export class ApprovalCenter {
 
   /** Is a command in this project or task already allowed by a standing "yes"? */
   private granted(req: ApprovalRequest): "task" | "project" | null {
+    // "Allow everything" for a task covers commands and tool permissions, never the review of changes.
+    if (req.kind !== "apply" && req.taskId && this.taskGrants.has(req.taskId)) return "task";
     if (req.kind !== "command") return null;
-    if (req.taskId && this.taskGrants.has(req.taskId)) return "task";
     if (req.projectId && this.projectGrants?.has(req.projectId)) return "project";
     return null;
   }
@@ -115,6 +116,11 @@ export class ApprovalCenter {
       for (const other of [...this.pending.values()])
         if (this.granted(other.req)) this.respond(other.req.id, true);
     return true;
+  }
+
+  /** The owner said yes to everything for this task at its start (the agents never ask again). */
+  allowTask(taskId: string): void {
+    this.taskGrants.add(taskId);
   }
 
   /** Forget a finished task's standing "yes". */

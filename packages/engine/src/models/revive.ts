@@ -50,6 +50,16 @@ function isLocal(baseUrl: string): boolean {
 }
 
 let lastStart = 0;
+let wantedParallel = 1;
+
+/**
+ * How many requests Depo's own `ollama serve` should answer at once (OLLAMA_NUM_PARALLEL), from the
+ * scheduler's limit. Without it Ollama serves one request at a time and parallel agents only queue.
+ * A value the owner set in the environment is never overridden.
+ */
+export function setOllamaParallel(n: number): void {
+  wantedParallel = Math.max(1, Math.min(8, Math.floor(n)));
+}
 
 /** Start `ollama serve` in the background (at most once every five minutes). */
 export function startOllama(): boolean {
@@ -63,6 +73,10 @@ export function startOllama(): boolean {
       stdout: "ignore",
       stderr: "ignore",
       windowsHide: true,
+      env: {
+        ...process.env,
+        ...(process.env.OLLAMA_NUM_PARALLEL ? {} : { OLLAMA_NUM_PARALLEL: String(wantedParallel) }),
+      },
     });
     proc.unref();
     log.info("started ollama serve", { exe });

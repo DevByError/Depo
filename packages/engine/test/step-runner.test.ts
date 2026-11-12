@@ -328,3 +328,184 @@ describe("the step runner", () => {
     expect(r.finalText).toBe("Stopped after 1 of 4 steps.");
   });
 });
+
+describe("pages built side by side", () => {
+  const PAGES = `Build the pages.
+
+## Pages
+- /alpha : the alpha page
+- /beta : the beta page
+- /gamma : the gamma page
+`;
+
+  /** A scripted model that writes each step's page file; counts how many steps are in flight. */
+  function pageRun(parallel: number) {
+    const s = setup((req, { step }) => {
+      if (lastRole(req) === "tool") return "Done.";
+      const page = /Build the page \/(\w+)/.exec(step)?.[1];
+      if (!page) return "Done.";
+      return {
+        name: "write_file",
+        arguments: {
+          path: `fe/app/${page}/page.tsx`,
+          content: `export default function Page() {\n  return <main>${page}</main>;\n}\n`,
+        },
+      };
+    });
+    fs.mkdirSync(path.join(s.root, "fe/app"), { recursive: true });
+    fs.writeFileSync(
+      path.join(s.root, "fe/app/layout.tsx"),
+      "export default function L({ children }: { children: unknown }) {\n  return <html>{children}</html>;\n}\n",
+    );
+    let inflight = 0;
+    let most = 0;
+    const real = s.base.provider.chat.bind(s.base.provider);
+    s.base.provider.chat = (req) => {
+      const it = real(req);
+      inflight++;
+      most = Math.max(most, inflight);
+      return (async function* () {
+        await Bun.sleep(30);
+        try {
+          yield* it;
+        } finally {
+          inflight--;
+        }
+      })();
+    };
+    const plan = buildPlan(PAGES);
+    const state = newStepPlan(plan, "msg_p");
+    return {
+      s,
+      state,
+      most: () => most,
+      run: () =>
+        runStepPlan({
+          plan,
+          state,
+          root: s.root,
+          system: "You are Depo's coding agent.",
+          base: s.base,
+          stepUp: null,
+          save: () => undefined,
+          checkApp: null,
+          budget: 8000,
+          parallel,
+        }),
+    };
+  }
+
+  test("with room for two, two pages run at once and every page still passes its check", async () => {
+    const p = pageRun(2);
+    const r = await p.run();
+    expect(r.blocked).toEqual([]);
+    expect(p.state.steps.filter((x) => x.kind === "page").map((x) => x.status)).toEqual([
+      "done",
+      "done",
+      "done",
+    ]);
+    expect(p.most()).toBe(2);
+    for (const name of ["alpha", "beta", "gamma"])
+      expect(fs.existsSync(path.join(p.s.root, `fe/app/${name}/page.tsx`))).toBe(true);
+    expect(p.s.events.some((e) => e.includes("pages are built at the same time"))).toBe(true);
+  });
+
+  test("with room for one they run one after the other", async () => {
+    const p = pageRun(1);
+    await p.run();
+    expect(p.most()).toBe(1);
+    expect(p.s.events.some((e) => e.includes("at the same time"))).toBe(false);
+  });
+});
+
+describe("save points for steps that run side by side", () => {
+  test("restoring one step's files never touches another step's files", async () => {
+    const { takeSavePoint, restoreFiles, changedSince } = await import("../src/agent/savepoint");
+    const t = tempDir("depo scope");
+    try {
+      fs.writeFileSync(path.join(t.dir, "keep.txt"), "one\n");
+      const sp = takeSavePoint(t.dir);
+      if (!sp) throw new Error("no save point");
+      fs.writeFileSync(path.join(t.dir, "mine.txt"), "mine\n");
+      fs.writeFileSync(path.join(t.dir, "keep.txt"), "changed by me\n");
+      fs.writeFileSync(path.join(t.dir, "theirs.txt"), "theirs\n");
+      expect(changedSince(t.dir, sp, new Set(["mine.txt", "keep.txt"]))).toEqual(["keep.txt", "mine.txt"]);
+      const r = restoreFiles(t.dir, sp, ["mine.txt", "keep.txt"]);
+      expect(r.removed).toEqual(["mine.txt"]);
+      expect(r.restored).toEqual(["keep.txt"]);
+      expect(fs.readFileSync(path.join(t.dir, "keep.txt"), "utf8")).toBe("one\n");
+      expect(fs.existsSync(path.join(t.dir, "theirs.txt"))).toBe(true);
+    } finally {
+      t.cleanup();
+    }
+  });
+});
+
+describe("tables Depo writes itself", () => {
+  const TABLES = `Build the store.
+
+## Database
+- favorites: user_id, skill_id, created_at
+- scans: id, kind, user_id
+`;
+
+  test("table steps need no model call when Depo can write them, and keep to the existing types", async () => {
+    let modelCalls = 0;
+    const s = setup(() => {
+      modelCalls++;
+      return "Done.";
+    });
+    // A skills table to point at (users is already in the schema).
+    fs.appendFileSync(
+      path.join(s.root, "be/src/db/schema.sql"),
+      "\nCREATE TABLE IF NOT EXISTS skills (\n  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY\n);\n",
+    );
+    const plan = buildPlan(TABLES);
+    const state = newStepPlan(plan, "msg_t");
+    const r = await runStepPlan({
+      plan,
+      state,
+      root: s.root,
+      system: "You are Depo's coding agent.",
+      base: s.base,
+      stepUp: null,
+      save: () => undefined,
+      checkApp: null,
+      budget: 8000,
+      generateTables: true,
+    });
+    expect(modelCalls).toBe(0);
+    expect(r.blocked).toEqual([]);
+    expect(state.steps.filter((x) => x.kind === "table").map((x) => [x.status, x.note])).toEqual([
+      ["done", "Written by Depo, no model call"],
+      ["done", "Written by Depo, no model call"],
+    ]);
+    const schema = read(s.root, "be/src/db/schema.sql");
+    expect(schema).toContain("CREATE TABLE IF NOT EXISTS favorites");
+    expect(schema).toContain("FOREIGN KEY (skill_id) REFERENCES skills (id)");
+    expect(schema).toContain("CREATE TABLE IF NOT EXISTS scans");
+    expect(schema).toContain("user_id BIGINT UNSIGNED NOT NULL");
+  });
+
+  test("off by default: the model writes the tables", async () => {
+    let modelCalls = 0;
+    const s = setup(() => {
+      modelCalls++;
+      return "Done.";
+    });
+    const plan = buildPlan(TABLES);
+    const state = newStepPlan(plan, "msg_t2");
+    await runStepPlan({
+      plan,
+      state,
+      root: s.root,
+      system: "You are Depo's coding agent.",
+      base: s.base,
+      stepUp: null,
+      save: () => undefined,
+      checkApp: null,
+      budget: 8000,
+    });
+    expect(modelCalls).toBeGreaterThan(0);
+  });
+});

@@ -196,9 +196,10 @@ export function editFileTool(
   root: string,
   rel: string,
   edits: Edit[],
-): { path: string; applied: number; added: number; removed: number } {
+): { path: string; applied: number; added: number; removed: number; notes: string[] } {
   const { abs, rel: clean } = resolveInside(root, rel);
   if (!fs.existsSync(abs)) throw new ToolError(`File not found: ${clean}. Use write_file to create it.`);
+  const notes: string[] = [];
   const original = fs.readFileSync(abs, "utf8");
   const eol = detectEol(original);
   let text = original.replace(/\r\n/g, "\n");
@@ -222,14 +223,15 @@ export function editFileTool(
           `Edit ${i + 1}: the search text was not found in ${clean}.${closestHint(text, search)}`,
         );
       }
-      text = loose;
+      text = loose.text;
+      notes.push(`Edit ${i + 1} matched ${loose.how}`);
     }
     added += replace.split("\n").length;
     removed += search.split("\n").length;
   });
   const out = eol === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
   fs.writeFileSync(abs, out, "utf8");
-  return { path: clean, applied: edits.length, added, removed };
+  return { path: clean, applied: edits.length, added, removed, notes };
 }
 
 function countOccurrences(hay: string, needle: string): number {
@@ -242,44 +244,119 @@ function countOccurrences(hay: string, needle: string): number {
   return n;
 }
 
-/** Match line by line ignoring trailing whitespace; replace only when exactly one match. */
-function looseReplace(text: string, search: string, replace: string): string | null {
+const squash = (l: string) => l.replace(/\s+/g, " ").trim();
+
+/**
+ * Forgiving match for a search block that is not in the file character for character. Tiers, each
+ * needing exactly one hit: (1) lines equal ignoring trailing spaces; (2) ignoring indentation (the
+ * replacement is re-indented to match); (3) ignoring all spacing differences; (4) a block of the
+ * same length where at least 80% of the lines match that way and the first and last do. The
+ * compiler check after every edit catches a wrong guess. Returns the new text and which tier hit.
+ */
+function looseReplace(text: string, search: string, replace: string): { text: string; how: string } | null {
   const lines = text.split("\n");
-  const want = search.split("\n").map((l) => l.trimEnd());
-  while (want.length > 1 && want.at(-1) === "") want.pop();
-  const hits: number[] = [];
-  for (let i = 0; i + want.length <= lines.length; i++) {
-    let ok = true;
-    for (let j = 0; j < want.length; j++) {
-      if ((lines[i + j] ?? "").trimEnd() !== want[j]) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) hits.push(i);
+  const rawWant = search.split("\n");
+  while (rawWant.length > 1 && rawWant.at(-1)?.trim() === "") rawWant.pop();
+  while (rawWant.length > 1 && rawWant[0]?.trim() === "") rawWant.shift();
+  const rep = (replace.endsWith("\n") ? replace.slice(0, -1) : replace).split("\n");
+  const tiers: { how: string; same: (a: string, b: string) => boolean; all: boolean }[] = [
+    { how: "ignoring trailing spaces", same: (a, b) => a.trimEnd() === b.trimEnd(), all: true },
+    { how: "ignoring indentation", same: (a, b) => a.trim() === b.trim(), all: true },
+    { how: "ignoring spacing", same: (a, b) => squash(a) === squash(b), all: true },
+  ];
+  for (const t of tiers) {
+    const hits: number[] = [];
+    for (let i = 0; i + rawWant.length <= lines.length; i++)
+      if (rawWant.every((w, j) => t.same(lines[i + j] ?? "", w))) hits.push(i);
+    if (hits.length !== 1) continue;
+    const at = hits[0] ?? 0;
+    lines.splice(at, rawWant.length, ...reindent(rep, rawWant[0] ?? "", lines[at] ?? ""));
+    return { text: lines.join("\n"), how: `${t.how}, lines ${at + 1}-${at + rawWant.length}` };
   }
-  if (hits.length !== 1) return null;
-  const at = hits[0] ?? 0;
-  const rep = replace.endsWith("\n") ? replace.slice(0, -1) : replace;
-  lines.splice(at, want.length, ...rep.split("\n"));
-  return lines.join("\n");
+  // Tier 4: the closest block of the same length.
+  if (rawWant.length < 3) return null;
+  const want = rawWant.map(squash);
+  let best = -1;
+  let bestScore = 0;
+  let second = 0;
+  for (let i = 0; i + rawWant.length <= lines.length; i++) {
+    if (squash(lines[i] ?? "") !== want[0] || squash(lines[i + rawWant.length - 1] ?? "") !== want.at(-1))
+      continue;
+    let ok = 0;
+    for (let j = 0; j < want.length; j++) if (squash(lines[i + j] ?? "") === want[j]) ok++;
+    const score = ok / want.length;
+    if (score > bestScore) {
+      second = bestScore;
+      bestScore = score;
+      best = i;
+    } else if (score > second) second = score;
+  }
+  if (best < 0 || bestScore < 0.8 || bestScore === second) return null;
+  lines.splice(best, rawWant.length, ...reindent(rep, rawWant[0] ?? "", lines[best] ?? ""));
+  return {
+    text: lines.join("\n"),
+    how: `closest block, ${Math.round(bestScore * 100)}% of lines equal, lines ${best + 1}-${best + rawWant.length}`,
+  };
+}
+
+/** Give the replacement the file's indentation when the search block was indented differently. */
+function reindent(rep: string[], searchFirst: string, fileFirst: string): string[] {
+  const want = /^\s*/.exec(searchFirst)?.[0] ?? "";
+  const have = /^\s*/.exec(fileFirst)?.[0] ?? "";
+  if (want === have) return rep;
+  return rep.map((l) => {
+    if (l.trim() === "") return l;
+    if (l.startsWith(want)) return have + l.slice(want.length);
+    return l;
+  });
+}
+
+/** Replace whole lines `start`..`end` (1-based, inclusive) with `content`. The fallback when search text keeps failing. */
+export function replaceLinesTool(
+  root: string,
+  rel: string,
+  start: number,
+  end: number,
+  content: string,
+): { path: string; removed: number; added: number } {
+  const { abs, rel: clean } = resolveInside(root, rel);
+  if (!fs.existsSync(abs)) throw new ToolError(`File not found: ${clean}. Use write_file to create it.`);
+  const original = fs.readFileSync(abs, "utf8");
+  const eol = detectEol(original);
+  const lines = original.replace(/\r\n/g, "\n").split("\n");
+  const total = lines.at(-1) === "" ? lines.length - 1 : lines.length;
+  if (start < 1 || end < start || end > total)
+    throw new ToolError(
+      `Lines ${start}-${end} do not exist: ${clean} has ${total} lines. Read the file again for the numbers.`,
+    );
+  const body = content.replace(/\r\n/g, "\n").replace(/\n$/, "");
+  const next = content === "" ? [] : body.split("\n");
+  lines.splice(start - 1, end - start + 1, ...next);
+  const out = lines.join("\n");
+  fs.writeFileSync(abs, eol === "\r\n" ? out.replace(/\n/g, "\r\n") : out, "utf8");
+  return { path: clean, removed: end - start + 1, added: next.length };
 }
 
 function closestHint(text: string, search: string): string {
-  const first = search
-    .split("\n")
-    .find((l) => l.trim().length > 0)
-    ?.trim();
-  if (!first) return "";
+  const wanted = search.split("\n").filter((l) => l.trim().length > 2);
+  if (!wanted.length) return "";
   const lines = text.split("\n");
-  const idx = lines.findIndex((l) => l.includes(first));
+  // The first line of the search that exists in the file anchors the hint (the first lines are
+  // often the ones the model got wrong).
+  let idx = -1;
+  let at = 0;
+  for (; at < wanted.length && idx < 0; at++) {
+    const probe = squash(wanted[at] ?? "");
+    idx = lines.findIndex((l) => squash(l) === probe || squash(l).includes(probe));
+  }
   if (idx < 0) return " Read the file again to get its current text.";
-  const from = Math.max(0, idx - 2);
+  const from = Math.max(0, idx - 2 - (at - 1));
+  const to = Math.min(lines.length, from + Math.max(search.split("\n").length, 6) + 6);
   const snippet = lines
-    .slice(from, idx + 5)
+    .slice(from, to)
     .map((l, k) => `${from + k + 1}│ ${l}`)
     .join("\n");
-  return ` The first line matches near line ${idx + 1}, but the rest differs. Current text there:\n${snippet}`;
+  return ` A line of your search is near line ${idx + 1}, but the block differs. The current text there (copy from it, or use replace_lines with these line numbers):\n${snippet}`;
 }
 
 export function deleteFileTool(root: string, rel: string): { path: string } {

@@ -1,13 +1,17 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ChatMessage } from "@depo/model-gateway";
 import type { PlanStep, StepPlan } from "@depo/shared";
 import { getLogger } from "../logger";
+import { appendFileTool } from "../tools/fs-tools";
 import type { FinishResult } from "./finish";
 import { FixRounds, finishSummary, withCodeFrames } from "./finish";
 import { type LoopParams, type LoopResult, runAgentLoop } from "./loop";
 import type { PlannedStep, RequestPlan } from "./plan";
-import { changedSince, restoreSavePoint, type SavePoint, takeSavePoint } from "./savepoint";
+import { changedSince, restoreFiles, restoreSavePoint, type SavePoint, takeSavePoint } from "./savepoint";
 import { checkableBefore, checkStep, compileProblems, schemaFileFor } from "./step-check";
 import { filesForStep, stepPrompt } from "./step-prompt";
+import { generateTable } from "./tablegen";
 
 /**
  * Runs Depo's step plan (ADR-0086). Each step is a short run of its own: a fresh conversation
@@ -55,6 +59,17 @@ export interface StepRunOptions {
   design?: string;
   /** Runs one try (tests pass their own). */
   run?: (p: LoopParams) => Promise<LoopResult>;
+  /**
+   * How many independent steps (pages: each its own files) may run at the same time, one agent
+   * each. 1 (the default) runs them one after the other. The caller sets it from what the model
+   * runtime can really serve at once.
+   */
+  parallel?: number;
+  /**
+   * Depo writes a table step itself, with no model call, when the schema is MySQL style and the
+   * check passes (see tablegen.ts). Off by default; a step that fails the check goes to the model.
+   */
+  generateTables?: boolean;
 }
 
 export interface StepRunResult {
@@ -77,6 +92,26 @@ interface Rung {
 
 const firstLine = (s: string) => (s.split("\n").find((l) => l.trim()) ?? s).trim();
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+
+/**
+ * The tools one step needs. Every tool's description travels with every model call, and a small
+ * model does better with fewer to choose from: a step that builds a table, route, page or test
+ * does not need the preview, the database console, memory or file deletion unless its title says so.
+ */
+export function stepTools(all: string[], step: { kind: PlanStep["kind"]; title: string }): string[] {
+  const text = step.title.toLowerCase();
+  const drop = new Set<string>(["delete_file", "remember", "stop_preview"]);
+  if (!/database|migrat|seed|sql|table/.test(text) && step.kind !== "table") drop.add("dev_database");
+  if (step.kind === "table" || step.kind === "route" || step.kind === "tests") {
+    drop.add("start_preview");
+    drop.add("check_page");
+    drop.add("http_check");
+  }
+  if (step.kind === "table") drop.add("run_command");
+  if (/delete|remove/.test(text)) drop.delete("delete_file");
+  // The edit tools and the reading tools always stay.
+  return all.filter((n) => !drop.has(n));
+}
 
 /** A new plan for the owner to see, all steps waiting. */
 export function newStepPlan(
@@ -147,6 +182,7 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
     rung: Rung,
     earlier: string[],
     sp: SavePoint | null,
+    scope?: Set<string>,
   ): Promise<{ error: string | null; acceptUnchanged: boolean; changed: string[] }> => {
     const { index, total } = position(step.id);
     const done = state.steps.filter((s) => s.status === "done" && s.id !== step.id).map((s) => s.title);
@@ -176,9 +212,10 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
     const rounds = new FixRounds(STEP_ROUNDS);
     let unchangedAsked = false;
     let acceptUnchanged = false;
-    const changedNow = () => (sp ? changedSince(root, sp) : []);
+    const changedNow = () => (sp ? changedSince(root, sp, scope) : []);
     const params: LoopParams = {
       ...base,
+      toolNames: stepTools(base.toolNames, step),
       model: rung.model,
       history,
       maxSteps: STEP_MAX_STEPS,
@@ -190,6 +227,18 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
       ...(big && rung.model !== big ? { stepUp: { model: big } } : {}),
       ctx: {
         ...base.ctx,
+        // Steps that run side by side each know which files are theirs.
+        ...(scope
+          ? {
+              onFileChanged: (p: string) => {
+                scope.add(p);
+                const who = touchedBy.get(p) ?? new Set<string>();
+                who.add(step.id);
+                touchedBy.set(p, who);
+                base.ctx.onFileChanged?.(p);
+              },
+            }
+          : {}),
         step: {
           ...(step.table ? { tables: [step.table.name] } : {}),
           ...(mainFile ? { mainFile } : {}),
@@ -251,8 +300,11 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
     ];
   };
 
-  /** Runs one step up the ladder. True when it passed. */
-  const doStep = async (step: PlannedStep, second: boolean): Promise<boolean> => {
+  /** Which steps changed each file, for steps that run side by side. */
+  const touchedBy = new Map<string, Set<string>>();
+
+  /** Runs one step up the ladder. True when it passed. `scope` is set when steps run side by side. */
+  const doStep = async (step: PlannedStep, second: boolean, scope?: Set<string>): Promise<boolean> => {
     const { index, total } = position(step.id);
     if (!second && checkableBefore(step)) {
       const before = checkStep(step, root, { changed: [], overview: plan.overview });
@@ -266,6 +318,38 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
         return true;
       }
     }
+    if (o.generateTables && !second && step.kind === "table" && step.table && schemaFile) {
+      const abs = path.join(root, schemaFile);
+      let existing = "";
+      try {
+        existing = fs.readFileSync(abs, "utf8");
+      } catch {
+        // no schema file yet: the model creates it
+      }
+      const gen = existing ? generateTable(existing, step.table.name, step.table.columns) : null;
+      if (gen) {
+        const point = takeSavePoint(root);
+        appendFileTool(root, schemaFile, gen.sql);
+        const problems = checkStep(step, root, { changed: [schemaFile], overview: plan.overview });
+        if (!problems.length) {
+          update(step.id, {
+            status: "done",
+            tries: view(step.id).tries + 1,
+            note: "Written by Depo, no model call",
+          });
+          base.ctx.onFileChanged?.(schemaFile);
+          base.emit({
+            type: "writing_file",
+            text: `Step ${index} of ${total}: Depo wrote the ${step.table.name} table itself (no model call)`,
+            details: { step: step.id, path: schemaFile, generated: true, notes: gen.notes },
+            status: "succeeded",
+          });
+          return true;
+        }
+        // Not good enough: put the file back and let the model do the step.
+        if (point) restoreSavePoint(root, point);
+      }
+    }
     const sp = takeSavePoint(root);
     const earlier: string[] = [];
     let last: string[] = [];
@@ -273,7 +357,14 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
     for (const rung of rungs) {
       if (signal.aborted) return false;
       if (rung.restore && sp) {
-        const r = restoreSavePoint(root, sp);
+        // Side by side: only this step's own files go back, never a file another step also changed.
+        const r = scope
+          ? restoreFiles(
+              root,
+              sp,
+              [...scope].filter((f) => (touchedBy.get(f)?.size ?? 0) <= 1),
+            )
+          : restoreSavePoint(root, sp);
         if (r.restored.length || r.removed.length)
           base.emit({
             type: "retrying",
@@ -295,9 +386,9 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
         details: { step: step.id, try: tries, model: rung.model },
         status: "started",
       });
-      const res = await tryStep(step, rung, earlier, sp);
+      const res = await tryStep(step, rung, earlier, sp, scope);
       if (signal.aborted) return false;
-      const changed = sp ? changedSince(root, sp) : res.changed;
+      const changed = sp ? changedSince(root, sp, scope) : res.changed;
       last = res.error
         ? [res.error]
         : checkStep(step, root, { changed, overview: plan.overview, acceptUnchanged: res.acceptUnchanged });
@@ -321,7 +412,14 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
       earlier.push(last[0] ?? "");
     }
     // Every rung failed: keep the work only if it compiles, so the next steps start from sound code.
-    if (sp && compileProblems(root, changedSince(root, sp)).length) restoreSavePoint(root, sp);
+    if (sp && compileProblems(root, changedSince(root, sp, scope)).length)
+      if (scope)
+        restoreFiles(
+          root,
+          sp,
+          [...scope].filter((f) => (touchedBy.get(f)?.size ?? 0) <= 1),
+        );
+      else restoreSavePoint(root, sp);
     const why = clip(firstLine(last[0] ?? "it did not pass Depo's check"), 200);
     update(step.id, { status: "blocked", note: why });
     base.emit({
@@ -334,11 +432,30 @@ export async function runStepPlan(o: StepRunOptions): Promise<StepRunResult> {
   };
 
   // 1. Every step in order; a step that fails every rung is parked.
-  for (const s of buildSteps()) {
-    if (signal.aborted) break;
-    const step = steps.get(s.id);
-    if (!step || s.status === "done") continue;
-    await doStep(step, false);
+  const width = Math.max(1, Math.floor(o.parallel ?? 1));
+  const queue = buildSteps().filter((s) => s.status !== "done");
+  while (queue.length && !signal.aborted) {
+    const first = queue.shift() as PlanStep;
+    const firstStep = steps.get(first.id);
+    if (!firstStep) continue;
+    // Pages are separate files and do not wait for one another: up to `width` run at once.
+    const group: PlannedStep[] = [firstStep];
+    if (width > 1 && firstStep.kind === "page")
+      while (group.length < width && queue[0] && steps.get(queue[0].id)?.kind === "page") {
+        const next = steps.get((queue.shift() as PlanStep).id);
+        if (next) group.push(next);
+      }
+    if (group.length === 1) {
+      await doStep(firstStep, false);
+      continue;
+    }
+    base.emit({
+      type: "planning",
+      text: `${group.length} pages are built at the same time: ${group.map((g) => g.title).join("; ")}`,
+      details: { parallel: group.map((g) => g.id) },
+      status: "info",
+    });
+    await Promise.all(group.map((g) => doStep(g, false, new Set<string>())));
   }
   // 2. Parked steps again: later steps often made what they were missing.
   for (const s of buildSteps().filter((x) => x.status === "blocked")) {

@@ -140,13 +140,14 @@ describe("Terminal service", () => {
     const run = await e.terminal.run({ projectId, command: "echo one && echo two && echo three" });
     await e.terminal.settled(run.id);
     const all = e.terminal.read(run.id);
-    expect(all.lines.map((l: TerminalLine) => l.text)).toEqual(["one", "two", "three"]);
+    // cmd.exe keeps the space before "&&" in `echo one && echo two`.
+    expect(all.lines.map((l: TerminalLine) => l.text.trimEnd())).toEqual(["one", "two", "three"]);
     expect(all.run.state).toBe("succeeded");
     expect(e.terminal.read(run.id, 2).lines.map((l) => l.text)).toEqual(["three"]);
     await e.stop("restart");
     engine = createEngine({ dataRoot, token: TEST_TOKEN, heartbeatMs: 60_000 });
     const again = engine.terminal.read(run.id);
-    expect(again.lines.map((l) => l.text)).toEqual(["one", "two", "three"]);
+    expect(again.lines.map((l) => l.text.trimEnd())).toEqual(["one", "two", "three"]);
     expect(again.run.exitCode).toBe(0);
     expect(engine.terminal.list(projectId)[0]?.id).toBe(run.id);
     expect(() => engine?.terminal.read("job_missing")).toThrow("That run no longer exists.");

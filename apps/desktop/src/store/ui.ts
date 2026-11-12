@@ -12,6 +12,7 @@ export type CenterTab =
   | "diagrams"
   | "slides"
   | "agent-lab"
+  | "showcase"
   | "skills"
   | "models"
   | "knowledge"

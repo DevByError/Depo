@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { namedFiles } from "./step-prompt";
 
 /**
  * What the owner's request names that is not in the code yet: API routes ("GET /api/skills/search")
@@ -183,9 +184,34 @@ export function stillToDo(
 ): string[] {
   const missing = missingParts(request, root);
   if (missing.length) return missing;
+  const misplaced = misplacedFiles(request, root, changed);
+  if (misplaced.length) return misplaced;
   // A follow-up is judged by its own words: "how does the login work?" after "build a login"
   // asks for no change.
   return !changed.length && asksForChange(o.latest ?? request, o.hasReferences) ? [NOTHING_CHANGED] : [];
+}
+
+/**
+ * The request names a file that exists ("add multiply to src/math.ts") and the run wrote a file
+ * with the same name somewhere else (be/src/math.ts) instead of changing the named one. A small
+ * model does this when it is unsure of a path; the owner then gets a copy in the wrong folder and
+ * the named file untouched. Returns one line per such file, for the "not done" note.
+ */
+export function misplacedFiles(request: string, root: string, changed: string[]): string[] {
+  if (!changed.length) return [];
+  const out: string[] = [];
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const done = new Set(changed.map(norm));
+  for (const named of namedFiles(root, request)) {
+    if (done.has(named)) continue;
+    const base = path.posix.basename(named);
+    const elsewhere = [...done].filter((c) => c !== named && path.posix.basename(c) === base);
+    if (elsewhere.length)
+      out.push(
+        `${named} (the request names it and it exists, but you wrote ${elsewhere.join(", ")} instead: read ${named} and make the change there, then delete ${elsewhere.join(", ")})`,
+      );
+  }
+  return out;
 }
 
 /** The parts of the request that are not in the code yet, as short lines for the model. */

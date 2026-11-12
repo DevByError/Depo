@@ -21,6 +21,7 @@ export const TAB_COMMANDS: { id: CenterTab; label: string; keywords: string }[] 
   { id: "diagrams", label: "Diagrams", keywords: "mermaid erd flow" },
   { id: "slides", label: "Slides", keywords: "deck pitch presentation" },
   { id: "agent-lab", label: "Agent Lab", keywords: "agents versions evaluate compare promote" },
+  { id: "showcase", label: "Showcase", keywords: "demo manager features versions overview numbers" },
   { id: "skills", label: "Skills", keywords: "mcp extensions" },
   { id: "models", label: "Models", keywords: "ollama gpu download" },
   { id: "knowledge", label: "Knowledge", keywords: "packs docs osv" },
