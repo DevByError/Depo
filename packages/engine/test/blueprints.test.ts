@@ -295,7 +295,9 @@ describe("the blueprint library", () => {
   );
 
   test("react-web-app: typecheck and tests pass after an install (structure only when packages cannot be installed)", () => {
-    const root = path.join(temp("depo bp web"), "shop web");
+    // The long form of the folder: a CI runner's temp folder is a short name ("RUNNER~1") that vitest
+    // cannot match to the setup file it is asked to load.
+    const root = path.join(fs.realpathSync.native(temp("depo bp web")), "shop web");
     writeBlueprint(
       root,
       findBlueprint("react-web-app") as NonNullable<ReturnType<typeof findBlueprint>>,

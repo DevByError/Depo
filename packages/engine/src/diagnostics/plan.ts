@@ -380,6 +380,8 @@ export function planDiagnostics(
           env: {
             CARGO_TARGET_DIR: path.join(o.cacheDir, "cargo", safeKey(o.cacheKey)),
             CARGO_NET_OFFLINE: "true",
+            // Plain text for the parser, whatever the environment forces (CI sets "always").
+            CARGO_TERM_COLOR: "never",
           },
           timeoutMs: 8 * MINUTE,
           parse: parseCargoShort,

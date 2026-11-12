@@ -592,3 +592,25 @@ describe("diagnostics service and the agent tool", () => {
     expect(text).toContain("Not checked: mypy.");
   });
 });
+
+describe("output as real environments print it (seen on the Windows CI runner)", () => {
+  const ctx = { root: "/proj", cwd: "/proj" };
+
+  test("cargo's coloured short output is read", () => {
+    const out =
+      "src/main.rs:3:20: \u001b[1m\u001b[38;5;9merror[E0425]\u001b[0m\u001b[1m: cannot find value `y` in this scope\u001b[0m\n";
+    expect(parseCargoShort(out, ctx)).toMatchObject([
+      { file: "src/main.rs", line: 3, column: 20, severity: "error", code: "E0425" },
+    ]);
+  });
+
+  test("go vet on Windows names its tool vet.exe", () => {
+    const out =
+      "# example.com/demo/sub\r\nvet.exe: sub/sub.go:4:9: undefined: undefinedThing\r\nmain.go:7:2: fmt.Printf format %d has arg s of wrong type string\r\n";
+    const found = parseGoVet(out, ctx);
+    expect(found.map((p) => [p.file, p.line, p.severity])).toEqual([
+      ["sub/sub.go", 4, "error"],
+      ["main.go", 7, "warning"],
+    ]);
+  });
+});

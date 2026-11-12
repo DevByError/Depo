@@ -296,10 +296,15 @@ export function parsePyrightJson(out: string, ctx: ParseContext): Problem[] | nu
 const GO_COMPILE =
   /syntax error|undefined:|cannot use|declared and not used|imported and not used|missing return|not enough arguments|too many arguments|redeclared|is not used|cannot find package|no required module/;
 
+/** Colour codes some environments force on (CARGO_TERM_COLOR=always on CI). */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the escape character is the point
+const ANSI = /\u001b\[[0-9;]*m/g;
+
 export function parseGoVet(out: string, ctx: ParseContext): Problem[] {
   const res: Problem[] = [];
-  for (const raw of out.split("\n")) {
-    const m = /^(vet: )?(\S.*?\.go):(\d+):(?:(\d+):)? (.*)$/.exec(raw.replace(/\r$/, ""));
+  for (const raw of out.replace(ANSI, "").split("\n")) {
+    // Windows prints "vet.exe: file.go:4:9: ..." where other systems print "vet: ...".
+    const m = /^(vet(?:\.exe)?: )?(\S.*?\.go):(\d+):(?:(\d+):)? (.*)$/.exec(raw.replace(/\r$/, ""));
     if (!m) continue;
     // "vet: " marks type-check errors (the package does not compile); the rest are vet findings.
     const message = m[5] as string;
@@ -323,7 +328,7 @@ export function parseGoVet(out: string, ctx: ParseContext): Problem[] {
 
 export function parseCargoShort(out: string, ctx: ParseContext): Problem[] {
   const res: Problem[] = [];
-  for (const raw of out.split("\n")) {
+  for (const raw of out.replace(ANSI, "").split("\n")) {
     const m = /^(.+?):(\d+):(\d+): (error|warning)(?:\[(\w+)\])?: (.*)$/.exec(raw.replace(/\r$/, ""));
     if (!m) continue;
     res.push(
