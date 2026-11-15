@@ -1,5 +1,7 @@
 # Depo
 
+![Platform](https://img.shields.io/badge/platform-Windows-0078D6) ![Local AI](https://img.shields.io/badge/AI-100%25%20local-0F766E) ![Agents](https://img.shields.io/badge/agents-15%20specialists-F5B83D) ![Tauri](https://img.shields.io/badge/Tauri%202-React-24C8DB) ![Bun](https://img.shields.io/badge/engine-Bun-000000)
+
 A fully local, multi-agent AI coding studio for Windows. Describe the software you want; a team of local AI agents plans, designs, builds, tests, secures and documents it, and **you approve every change before it touches your real files**. No cloud models, no accounts, no cost per token. Depo itself has no login; it builds systems that can have one.
 
 ![Depo, early build](docs/screenshots/phase0-dark.png)
